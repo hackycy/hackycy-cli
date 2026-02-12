@@ -1,0 +1,50 @@
+{
+  "name": "pkg-placeholder",
+  "type": "module",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.28.2",
+  "description": "_description_",
+  "trustedDependencies": [
+    "eslint",
+    "simple-git-hooks",
+    "lint-staged"
+  ],
+  "author": "hackycy <hackycy@outlook.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/hackycy/pkg-placeholder#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hackycy/pkg-placeholder.git"
+  },
+  "bugs": "https://github.com/hackycy/pkg-placeholder/issues",
+  "keywords": [],
+  "sideEffects": false,
+  "module": "src/index.ts",
+  "scripts": {
+    "build": "nr -r build",
+    "dev": "nr -r dev",
+    "lint": "eslint --cache .",
+    "release": "bumpp",
+    "test": "nr -r test",
+    "typecheck": "tsc",
+    "prepare": "simple-git-hooks"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^6.2.0",
+    "@types/bun": "latest",
+    "@types/node": "^24.10.0",
+    "bumpp": "^10.3.1",
+    "eslint": "^9.39.1",
+    "lint-staged": "^16.2.6",
+    "publint": "^0.3.17",
+    "simple-git-hooks": "^2.13.1",
+    "typescript": "^5.1.6"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged"
+  },
+  "lint-staged": {
+    "*": "npx eslint --fix"
+  }
+}
