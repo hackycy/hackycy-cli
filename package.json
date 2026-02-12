@@ -26,9 +26,12 @@
     "dev": "bun --watch src/index.ts",
     "lint": "eslint --cache .",
     "release": "bumpp",
-    "test": "bun src/index.ts",
+    "test": "bun src/cli.ts",
     "typecheck": "tsc",
     "prepare": "simple-git-hooks"
+  },
+  "dependencies": {
+    "cac": "^6.7.14"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^6.2.0",
