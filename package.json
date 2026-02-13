@@ -19,10 +19,13 @@
   "keywords": [
     "cli"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "sideEffects": false,
   "module": "src/index.ts",
   "scripts": {
-    "build": "bun build",
+    "build": "bun src/cli.ts",
     "dev": "bun --watch src/index.ts",
     "lint": "eslint --cache .",
     "release": "bumpp",
@@ -31,7 +34,10 @@
     "prepare": "simple-git-hooks"
   },
   "dependencies": {
-    "cac": "^6.7.14"
+    "@clack/prompts": "^1.0.1",
+    "ansis": "^4.2.0",
+    "cac": "^6.7.14",
+    "dayjs": "^1.11.19"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^6.2.0",
@@ -45,9 +51,6 @@
     "typescript": "^5.1.6"
   },
   "simple-git-hooks": {
-    "pre-commit": "npx lint-staged"
-  },
-  "lint-staged": {
-    "*": "npx eslint --fix"
+    "pre-commit": "bun run lint"
   }
 }

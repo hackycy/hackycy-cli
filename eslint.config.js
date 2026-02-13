@@ -5,5 +5,8 @@ export default antfu(
   {
     type: 'lib',
     ignores: ['CLAUDE.md'],
+    rules: {
+      'no-console': 'off',
+    },
   },
 )
