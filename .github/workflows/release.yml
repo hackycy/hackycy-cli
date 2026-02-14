@@ -1,15 +1,94 @@
-name: Release
+name: Release Binaries
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # macOS
+          - os: macos-latest
+            target: darwin-x64
+            artifact: ycy-macos-x64
+          - os: macos-latest
+            target: darwin-arm64
+            artifact: ycy-macos-arm64
+          # Linux
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact: ycy-linux-x64
+          - os: ubuntu-latest
+            target: linux-arm64
+            artifact: ycy-linux-arm64
+          # Windows
+          - os: windows-latest
+            target: windows-x64
+            artifact: ycy-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build binary
+        run: |
+          bun build ./src/cli.ts \
+            --compile \
+            --minify \
+            --sourcemap \
+            --target bun-${{ matrix.target }} \
+            --outfile ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
   release:
-    uses: sxzz/workflows/.github/workflows/release.yml@v1
-    with:
-      publish: true
+    needs: build
+    runs-on: ubuntu-latest
     permissions:
       contents: write
-      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List downloaded files
+        run: |
+          ls -R dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            dist/ycy-macos-x64/ycy-macos-x64
+            dist/ycy-macos-arm64/ycy-macos-arm64
+            dist/ycy-linux-x64/ycy-linux-x64
+            dist/ycy-linux-arm64/ycy-linux-arm64
+            dist/ycy-windows-x64.exe/ycy-windows-x64.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
