@@ -37,7 +37,8 @@
     "@clack/prompts": "^1.0.1",
     "ansis": "^4.2.0",
     "cac": "^6.7.14",
-    "dayjs": "^1.11.19"
+    "dayjs": "^1.11.19",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^6.2.0",
@@ -51,6 +52,6 @@
     "typescript": "^5.1.6"
   },
   "simple-git-hooks": {
-    "pre-commit": "bun run lint"
+    "pre-commit": "npx run lint"
   }
 }
