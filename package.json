@@ -25,7 +25,6 @@
   "sideEffects": false,
   "module": "src/index.ts",
   "scripts": {
-    "build": "bun src/cli.ts",
     "dev": "bun --watch src/index.ts",
     "lint": "eslint --cache .",
     "release": "bumpp",
