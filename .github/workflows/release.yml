@@ -45,6 +45,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build binary
+        shell: bash
         run: |
           bun build ./src/cli.ts \
             --compile \
