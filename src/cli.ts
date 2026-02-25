@@ -50,7 +50,8 @@ cli
 cli
   .command('update', 'Update cli to the latest version')
   .action(async () => {
-    // TODO
+    const { updateCli } = await import('./update')
+    await updateCli()
   })
 
 cli.help()
