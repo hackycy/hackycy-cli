@@ -47,6 +47,12 @@ cli
     })
   })
 
+cli
+  .command('update', 'Update cli to the latest version')
+  .action(async () => {
+    // TODO
+  })
+
 cli.help()
 cli.version(version)
 
