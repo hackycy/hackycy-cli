@@ -61,6 +61,13 @@ cli
   })
 
 cli
+  .command('zip <directory>', 'Zip a directory into a zip file')
+  .option('-o, --open', 'Reveal the zip file in file explorer after creation')
+  .action(async (_directory: string, _options: GlobalCLIOptions) => {
+    await import('./zip')
+  })
+
+cli
   .command('update', 'Update cli to the latest version')
   .action(async () => {
     const { updateCli } = await import('./update')

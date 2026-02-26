@@ -9,6 +9,7 @@
         "ansis": "^4.2.0",
         "cac": "^6.7.14",
         "dayjs": "^1.11.19",
+        "reveal-file": "^0.1.2",
         "xlsx": "^0.18.5",
       },
       "devDependencies": {
@@ -631,6 +632,8 @@
     "resolve-pkg-maps": ["resolve-pkg-maps@1.0.0", "", {}, "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw=="],
 
     "restore-cursor": ["restore-cursor@5.1.0", "", { "dependencies": { "onetime": "^7.0.0", "signal-exit": "^4.1.0" } }, "sha512-oMA2dcrw6u0YfxJQXm342bFKX/E4sG9rbTzO9ptUcR/e8A33cHuvStiYOwH7fszkZlZ1z/ta9AAoPk2F4qIOHA=="],
+
+    "reveal-file": ["reveal-file@0.1.2", "", { "bin": { "reveal-file": "cli.js" } }, "sha512-jxc3moFSgx8oZr2UYw6QlG33BxMRv5apbC2ooXN816wq+1dfBX8XHFJodLInyr+WxBXOkER5q7xiF+/O1RDCYQ=="],
 
     "rfdc": ["rfdc@1.4.1", "", {}, "sha512-q1b3N5QkRUWUl7iyylaaj3kOpIT0N2i9MqIEQXP73GVsN9cw3fdx8X63cEmWhJGi2PPCF23Ijp7ktmd39rawIA=="],
 
