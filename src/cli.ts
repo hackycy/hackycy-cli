@@ -1,5 +1,6 @@
 import type { DidOptions } from './did'
 import type { Json2ExcelOptions } from './json2excel'
+import type { ServeOptions } from './serve'
 import process from 'node:process'
 import { cac } from 'cac'
 import { version } from '../package.json'
@@ -44,6 +45,18 @@ cli
     await json2excel({
       root: jsonFile,
       keyPath: options.keyPath,
+    })
+  })
+
+cli
+  .command('serve <directory>', 'Serve static files from a directory')
+  .option('-p, --port <number>', 'Port to serve on', { default: 1204 })
+  .option('-a, --address <string>', 'Address to bind to', { default: '0.0.0.0' })
+  .action(async (directory: string, options: GlobalCLIOptions & Omit<ServeOptions, 'directory'>) => {
+    const { serve } = await import('./serve')
+    await serve({
+      directory,
+      ...options,
     })
   })
 

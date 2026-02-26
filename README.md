@@ -4,7 +4,7 @@
 
 hackycy的脚手架工具集
 
-## Installation
+## 安装
 
 ### macOS & Linux
 
