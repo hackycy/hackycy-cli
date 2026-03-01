@@ -1,1 +1,0 @@
-export { findMyDid } from './did'

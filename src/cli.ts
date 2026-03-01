@@ -50,9 +50,15 @@ cli
 
 cli
   .command('zip <directory>', 'Zip a directory into a zip file')
-  .option('-o, --open', 'Reveal the zip file in file explorer after creation')
-  .action(async (_directory: string, _options: GlobalCLIOptions) => {
-    await import('./zip')
+  .option('-w, --without-open', 'Do not open the zip file after creation')
+  .option('-d, --with-dir', 'Include the directory name as a top-level folder in the zip')
+  .action(async (directory: string, options: GlobalCLIOptions & { withoutOpen?: boolean, withDir?: boolean }) => {
+    const { zip } = await import('./zip')
+    await zip({
+      directory,
+      open: !options.withoutOpen,
+      withDir: options.withDir ?? false,
+    })
   })
 
 cli
@@ -60,6 +66,15 @@ cli
   .action(async () => {
     const { updateCli } = await import('./update')
     await updateCli()
+  })
+
+// fallback command for unknown commands
+cli
+  .command('*', 'Unknown command')
+  .action(() => {
+    console.error('Unknown command')
+    cli.help()
+    process.exit(1)
   })
 
 cli.help()
