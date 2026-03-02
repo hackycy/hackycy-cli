@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { cancel, intro, outro, spinner } from '@clack/prompts'
+import process from 'node:process'
+import { cancel, intro, isCancel, outro, select, spinner, text } from '@clack/prompts'
 import ansis from 'ansis'
 import { zip as fflateZip } from 'fflate'
 import revealFile from 'reveal-file'
@@ -42,25 +43,67 @@ async function collectAllFiles(
   }
 }
 
-async function resolveZipDestination(dir: string): Promise<{ destination: string, file: string }> {
-  let absDir = path.resolve(dir)
-  const file = path.basename(absDir)
+async function resolveZipDestination(dir: string): Promise<{ input: string, file: string }> {
+  const originalDir = path.resolve(dir)
+  let absDir = originalDir
+
+  const selectInputDirs: string[] = [absDir]
+
+  let isNodeProject = false
 
   // file dir has package.json, look node project
   try {
     // check if package.json exists in the directory
     const pkgPath = path.join(absDir, 'package.json')
     await fs.access(pkgPath)
+    isNodeProject = true
+
     // if exists, check has "dist" folder, use it as zip source
     const distPath = path.join(absDir, 'dist')
-    await fs.access(distPath)
-    absDir = distPath
+    const distStat = await fs.stat(distPath)
+    if (distStat.isDirectory()) {
+      absDir = distPath
+      selectInputDirs.unshift(absDir)
+    }
   }
   catch {
     // ignore, fallback to default behavior
   }
 
-  return { destination: absDir, file }
+  if (selectInputDirs.length > 1) {
+    const selectedDir = await select({
+      message: 'Multiple directories found. Select the one to zip:',
+      options: selectInputDirs.map(dir => ({ value: dir, label: path.relative(process.cwd(), dir) })),
+    })
+
+    if (isCancel(selectedDir)) {
+      cancel('Operation cancelled.')
+      process.exit(0)
+    }
+  }
+
+  let file = path.basename(originalDir)
+  if (!isNodeProject) {
+    file = path.basename(absDir)
+  }
+
+  // prompt output zip file name, default is the directory name
+  const input = await text({
+    message: 'Enter the name for the zip file (without .zip extension):',
+    initialValue: file,
+    validate(value) {
+      return !value || value.trim() === '' ? 'File name cannot be empty' : undefined
+    },
+  })
+
+  if (isCancel(input)) {
+    cancel('Operation cancelled.')
+    process.exit(0)
+  }
+
+  file = input.trim()
+
+  return { input: absDir, file }
 }
 
 export async function zip(options: ZipOptions): Promise<void> {
@@ -68,7 +111,7 @@ export async function zip(options: ZipOptions): Promise<void> {
   intro(ansis.bold('Zip Directory'))
 
   // Resolve and validate input directory
-  const { destination: absDir, file } = await resolveZipDestination(options.directory)
+  const { input: absDir, file } = await resolveZipDestination(options.directory)
   // Validate directory exists and is a directory
   try {
     const stat = await fs.stat(absDir)
@@ -82,8 +125,7 @@ export async function zip(options: ZipOptions): Promise<void> {
     return
   }
 
-  // Output zip is placed next to the original input directory: <dirname>.zip
-  // Use origDir (not absDir) so dist-redirect doesn't affect the output location
+  // Output zip is placed in the resolved input directory: <dirname>.zip
   const outputPath = path.join(absDir, `${file}.zip`)
 
   // Phase 1: Collect files
@@ -108,6 +150,9 @@ export async function zip(options: ZipOptions): Promise<void> {
     const fflateFiles: FflateFiles = {}
     for (const entry of fileEntries) {
       // ZIP spec requires forward slashes; path.sep may be '\' on Windows
+      if (entry.absolute === outputPath)
+        continue
+
       const relKey = entry.relative.split(path.sep).join('/')
       // withDir: wrap files under <dirname>/ prefix; default is flat (no prefix)
       const zipKey = options.withDir ? `${file}/${relKey}` : relKey
