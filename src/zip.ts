@@ -1,11 +1,13 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
-import { cancel, intro, isCancel, outro, select, spinner, text } from '@clack/prompts'
+import { cancel, intro, isCancel, multiselect, outro, select, spinner, text } from '@clack/prompts'
 import ansis from 'ansis'
 import { zip as fflateZip } from 'fflate'
 import revealFile from 'reveal-file'
 import { printTitle } from './utils'
+
+const DEFAULT_GLOB_PATTERN = '**/*'
 
 export interface ZipOptions {
   directory: string
@@ -28,24 +30,31 @@ function zipAsync(files: FflateFiles): Promise<Uint8Array> {
 
 async function collectAllFiles(
   dir: string,
-  root: string,
-  collected: Array<{ relative: string, absolute: string }>,
-): Promise<void> {
-  const entries = await fs.readdir(dir, { withFileTypes: true })
-  for (const entry of entries) {
-    const absolutePath = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      await collectAllFiles(absolutePath, root, collected)
-    }
-    else if (entry.isFile()) {
-      collected.push({ relative: path.relative(root, absolutePath), absolute: absolutePath })
+  patterns: string | string[] = '**/*',
+): Promise<Array<{ relative: string, absolute: string }>> {
+  const patternList = Array.isArray(patterns) ? patterns : [patterns]
+  const seen = new Set<string>()
+  const collected: Array<{ relative: string, absolute: string }> = []
+
+  for (const pattern of patternList) {
+    const glob = new Bun.Glob(pattern)
+    for await (const file of glob.scan({ cwd: dir, onlyFiles: true })) {
+      const absolute = path.join(dir, file)
+      if (!seen.has(absolute)) {
+        seen.add(absolute)
+        collected.push({ relative: file, absolute })
+      }
     }
   }
+
+  return collected
 }
 
-async function resolveZipDestination(dir: string): Promise<{ input: string, file: string }> {
+async function resolveZipOptions(dir: string): Promise<{ input: string, file: string, glob: string[] }> {
   const originalDir = path.resolve(dir)
   let absDir = originalDir
+
+  let glob: string[] = [DEFAULT_GLOB_PATTERN]
 
   const selectInputDirs: string[] = [absDir]
 
@@ -73,15 +82,37 @@ async function resolveZipDestination(dir: string): Promise<{ input: string, file
   if (selectInputDirs.length > 1) {
     const selectedDir = await select({
       message: 'Multiple directories found. Select the one to zip:',
-      options: selectInputDirs.map(dir => ({ value: dir, label: path.relative(process.cwd(), dir) })),
+      options: selectInputDirs.map(dir => ({ value: dir, label: path.relative(process.cwd(), dir) || '.' })),
     })
 
     if (isCancel(selectedDir)) {
       cancel('Operation cancelled.')
       process.exit(0)
     }
+
+    absDir = path.resolve(selectedDir)
   }
 
+  // multiselect for glob patterns, default is **/*
+  const selectedPatterns = await multiselect({
+    message: 'Select file patterns to include in the zip:',
+    options: [
+      { value: DEFAULT_GLOB_PATTERN, label: 'All files (default)' },
+      { value: '*.html', label: 'HTML files' },
+    ],
+    initialValues: [DEFAULT_GLOB_PATTERN],
+  })
+
+  if (isCancel(selectedPatterns)) {
+    cancel('Operation cancelled.')
+    process.exit(0)
+  }
+
+  if (!selectedPatterns.includes(DEFAULT_GLOB_PATTERN)) {
+    glob = selectedPatterns.length > 0 ? selectedPatterns : [DEFAULT_GLOB_PATTERN]
+  }
+
+  // default zip file name is the directory name, if withDir option is not set
   let file = path.basename(originalDir)
   if (!isNodeProject) {
     file = path.basename(absDir)
@@ -103,7 +134,7 @@ async function resolveZipDestination(dir: string): Promise<{ input: string, file
 
   file = fileOutput.trim()
 
-  return { input: absDir, file }
+  return { input: absDir, file, glob }
 }
 
 export async function zip(options: ZipOptions): Promise<void> {
@@ -111,7 +142,7 @@ export async function zip(options: ZipOptions): Promise<void> {
   intro(ansis.bold('Zip Directory'))
 
   // Resolve and validate input directory
-  const { input: absDir, file } = await resolveZipDestination(options.directory)
+  const { input: absDir, file, glob } = await resolveZipOptions(options.directory)
   // Validate directory exists and is a directory
   try {
     const stat = await fs.stat(absDir)
@@ -131,15 +162,22 @@ export async function zip(options: ZipOptions): Promise<void> {
   // Phase 1: Collect files
   const collectSpin = spinner()
   collectSpin.start('Collecting files...')
-  const fileEntries: Array<{ relative: string, absolute: string }> = []
+  let fileEntries: Array<{ relative: string, absolute: string }> = []
   try {
-    await collectAllFiles(absDir, absDir, fileEntries)
+    fileEntries = await collectAllFiles(absDir, glob)
   }
   catch (err) {
     collectSpin.stop('File collection failed.')
     cancel(`Error reading directory: ${err instanceof Error ? err.message : String(err)}`)
     return
   }
+
+  if (fileEntries.length === 0) {
+    collectSpin.stop('No files found to zip.')
+    cancel('No files matched the selected patterns.')
+    return
+  }
+
   collectSpin.stop(`Collected ${fileEntries.length} file${fileEntries.length !== 1 ? 's' : ''}`)
 
   // Phase 2: Read files and compress
