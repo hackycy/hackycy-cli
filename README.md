@@ -18,6 +18,12 @@ curl -fsSL https://raw.githubusercontent.com/hackycy-collection/hackycy-cli/main
 powershell -c "irm https://raw.githubusercontent.com/hackycy-collection/hackycy-cli/main/scripts/install.ps1 | iex"
 ```
 
+## 运行
+
+``` bash
+$ ycy --help
+```
+
 ## License
 
 [MIT](./LICENSE) License © [hackycy](https://github.com/hackycy)
