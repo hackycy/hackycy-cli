@@ -51,21 +51,21 @@ cli
 cli
   .command('zip <directory>', 'Zip a directory into a zip file')
   .option('-w, --without-open', 'Do not open the zip file after creation')
-  .option('-d, --with-dir', 'Include the directory name as a top-level folder in the zip')
-  .action(async (directory: string, options: GlobalCLIOptions & { withoutOpen?: boolean, withDir?: boolean }) => {
+  .option('-d, --with-dir <dir>', 'Include the directory name as a top-level folder in the zip')
+  .action(async (directory: string, options: GlobalCLIOptions & { withoutOpen?: boolean, withDir?: string }) => {
     const { zip } = await import('./zip')
     await zip({
       directory,
       open: !options.withoutOpen,
-      withDir: options.withDir ?? false,
+      withDir: options.withDir,
     })
   })
 
 cli
-  .command('update', 'Update cli to the latest version')
+  .command('upgrade', 'Upgrade cli to the latest version')
   .action(async () => {
-    const { updateCli } = await import('./update')
-    await updateCli()
+    const { upgradeCli } = await import('./upgrade')
+    await upgradeCli()
   })
 
 // fallback command for unknown commands

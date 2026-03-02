@@ -10,7 +10,7 @@ import { printTitle } from './utils'
 export interface ZipOptions {
   directory: string
   open?: boolean
-  withDir?: boolean
+  withDir?: string
 }
 
 type FflateFiles = Parameters<typeof fflateZip>[0]
@@ -155,7 +155,7 @@ export async function zip(options: ZipOptions): Promise<void> {
 
       const relKey = entry.relative.split(path.sep).join('/')
       // withDir: wrap files under <dirname>/ prefix; default is flat (no prefix)
-      const zipKey = options.withDir ? `${file}/${relKey}` : relKey
+      const zipKey = options.withDir ? `${options.withDir}/${relKey}` : relKey
       fflateFiles[zipKey] = await Bun.file(entry.absolute).bytes()
     }
     zipData = await zipAsync(fflateFiles)

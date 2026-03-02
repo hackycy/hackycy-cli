@@ -2,9 +2,10 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
-import { intro, log, outro, spinner } from '@clack/prompts'
+import { log, outro, spinner } from '@clack/prompts'
 import ansis from 'ansis'
 import { version as currentVersion } from '../package.json'
+import { printTitle } from './utils'
 
 const REPO = 'hackycy-collection/hackycy-cli'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
@@ -81,8 +82,8 @@ async function replaceBinary(tempFile: string, targetPath: string): Promise<void
   }
 }
 
-export async function updateCli(): Promise<void> {
-  intro(ansis.bold('Update ycy CLI'))
+export async function upgradeCli(): Promise<void> {
+  printTitle()
 
   const spin = spinner()
 
