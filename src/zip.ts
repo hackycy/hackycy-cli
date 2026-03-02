@@ -88,7 +88,7 @@ async function resolveZipDestination(dir: string): Promise<{ input: string, file
   }
 
   // prompt output zip file name, default is the directory name
-  const input = await text({
+  const fileOutput = await text({
     message: 'Enter the name for the zip file (without .zip extension):',
     initialValue: file,
     validate(value) {
@@ -96,12 +96,12 @@ async function resolveZipDestination(dir: string): Promise<{ input: string, file
     },
   })
 
-  if (isCancel(input)) {
+  if (isCancel(fileOutput)) {
     cancel('Operation cancelled.')
     process.exit(0)
   }
 
-  file = input.trim()
+  file = fileOutput.trim()
 
   return { input: absDir, file }
 }
