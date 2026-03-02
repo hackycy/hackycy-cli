@@ -70,10 +70,9 @@ cli
 
 // fallback command for unknown commands
 cli
-  .command('*', 'Unknown command')
+  .command('', 'Unknown command')
   .action(() => {
-    console.error('Unknown command')
-    cli.help()
+    cli.outputHelp()
     process.exit(1)
   })
 
