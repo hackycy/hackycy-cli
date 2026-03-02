@@ -73,7 +73,7 @@ cli
   .command('', 'Unknown command')
   .action(() => {
     cli.outputHelp()
-    process.exit(1)
+    process.exit(0)
   })
 
 cli.help()
