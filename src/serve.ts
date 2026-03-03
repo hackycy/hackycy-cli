@@ -387,12 +387,12 @@ export async function serve(opt: ServeOptions): Promise<void> {
   const url = `http://${displayAddress}:${server.port}`
 
   const msgs: string[] = []
-  msgs.push(`  ${ansis.dim('Local')}     ${ansis.cyan.underline(url)}`)
+  msgs.push(`  ${ansis.dim('Local')}     ${ansis.cyan(url)}`)
 
   if (opt.address === '0.0.0.0') {
     const lanAddrs = getLanAddresses()
     for (const addr of lanAddrs) {
-      msgs.push(`  ${ansis.dim('Network')}   ${ansis.cyan.underline(`http://${addr}:${server.port}`)}`)
+      msgs.push(`  ${ansis.dim('Network')}   ${ansis.cyan(`http://${addr}:${server.port}`)}`)
     }
   }
 
