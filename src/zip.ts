@@ -3,7 +3,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { cancel, intro, isCancel, multiselect, outro, select, spinner, text } from '@clack/prompts'
 import ansis from 'ansis'
-import { zip as fflateZip } from 'fflate'
+import { zipSync as fflateZipSync } from 'fflate'
 import revealFile from 'reveal-file'
 import { printTitle } from './utils'
 
@@ -15,17 +15,10 @@ export interface ZipOptions {
   withDir?: string
 }
 
-type FflateFiles = Parameters<typeof fflateZip>[0]
+type FflateFiles = Parameters<typeof fflateZipSync>[0]
 
-function zipAsync(files: FflateFiles): Promise<Uint8Array> {
-  return new Promise((resolve, reject) => {
-    fflateZip(files, { level: 6 }, (err, data) => {
-      if (err)
-        reject(err)
-      else
-        resolve(data)
-    })
-  })
+function isUint8ArrayLike(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array
 }
 
 async function collectAllFiles(
@@ -40,6 +33,17 @@ async function collectAllFiles(
     const glob = new Bun.Glob(pattern)
     for await (const file of glob.scan({ cwd: dir, onlyFiles: true })) {
       const absolute = path.join(dir, file)
+      let stat
+      try {
+        stat = await fs.lstat(absolute)
+      }
+      catch {
+        continue
+      }
+
+      if (!stat.isFile())
+        continue
+
       if (!seen.has(absolute)) {
         seen.add(absolute)
         collected.push({ relative: file, absolute })
@@ -185,7 +189,8 @@ export async function zip(options: ZipOptions): Promise<void> {
   compressSpin.start('Compressing...')
   let zipData: Uint8Array
   try {
-    const fflateFiles: FflateFiles = {}
+    const fflateFiles: FflateFiles = Object.create(null) as FflateFiles
+    let includedCount = 0
     for (const entry of fileEntries) {
       // ZIP spec requires forward slashes; path.sep may be '\' on Windows
       if (entry.absolute === outputPath)
@@ -194,9 +199,25 @@ export async function zip(options: ZipOptions): Promise<void> {
       const relKey = entry.relative.split(path.sep).join('/')
       // withDir: wrap files under <dirname>/ prefix; default is flat (no prefix)
       const zipKey = options.withDir ? `${options.withDir}/${relKey}` : relKey
-      fflateFiles[zipKey] = await Bun.file(entry.absolute).bytes()
+
+      const fileBuffer = await Bun.file(entry.absolute).arrayBuffer()
+      const fileBytes = new Uint8Array(fileBuffer)
+
+      if (!isUint8ArrayLike(fileBytes)) {
+        throw new Error(`Invalid file bytes for: ${entry.relative}`)
+      }
+
+      fflateFiles[zipKey] = fileBytes
+      includedCount += 1
     }
-    zipData = await zipAsync(fflateFiles)
+
+    if (includedCount === 0) {
+      compressSpin.stop('No files available to compress.')
+      cancel('No valid files matched after filtering.')
+      return
+    }
+
+    zipData = fflateZipSync(fflateFiles, { level: 6 })
   }
   catch (err) {
     compressSpin.stop('Compression failed.')
