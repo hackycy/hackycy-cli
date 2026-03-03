@@ -1,7 +1,7 @@
 {
   "name": "hackycy-cli",
   "type": "module",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "hackycy的脚手架工具",
   "trustedDependencies": [
     "eslint",
