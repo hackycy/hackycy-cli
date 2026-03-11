@@ -86,15 +86,31 @@ async function resolveSafePath(root: string, urlPath: string): Promise<string | 
   return candidate
 }
 
-// ─── File Download ────────────────────────────────────────────────────────────
+// ─── File Serving ─────────────────────────────────────────────────────────────
+
+function isInlineMimeType(mimeType: string): boolean {
+  const base = mimeType.split(';')[0]!.trim().toLowerCase()
+  const [type, subtype] = base.split('/')
+  if (!type || !subtype)
+    return false
+  if (['text', 'image', 'video', 'audio'].includes(type))
+    return true
+  if (type === 'application')
+    return ['pdf', 'json', 'xml', 'javascript', 'xhtml+xml', 'atom+xml', 'rss+xml', 'ld+json'].includes(subtype)
+  return false
+}
 
 async function serveFile(filePath: string, stat: Awaited<ReturnType<typeof fs.stat>>): Promise<Response> {
   const file = Bun.file(filePath)
+  const mimeType = file.type || 'application/octet-stream'
   const encoded = encodeURIComponent(path.basename(filePath)).replace(/'/g, '%27')
+  const disposition = isInlineMimeType(mimeType)
+    ? `inline; filename="${encoded}"; filename*=UTF-8''${encoded}`
+    : `attachment; filename="${encoded}"; filename*=UTF-8''${encoded}`
   return new Response(file, {
     headers: {
-      'Content-Type': file.type || 'application/octet-stream',
-      'Content-Disposition': `attachment; filename="${encoded}"; filename*=UTF-8''${encoded}`,
+      'Content-Type': mimeType,
+      'Content-Disposition': disposition,
       'Content-Length': String(stat.size),
       'Last-Modified': stat.mtime.toUTCString(),
     },
@@ -307,14 +323,34 @@ async function serveDirectory(dirPath: string, urlPath: string): Promise<Respons
   return new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }
 
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+
+const CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Max-Age': '86400',
+}
+
+function withCors(res: Response): Response {
+  for (const [key, value] of Object.entries(CORS_HEADERS)) {
+    res.headers.set(key, value)
+  }
+  return res
+}
+
 // ─── Request Router ───────────────────────────────────────────────────────────
 
 async function handleRequest(req: Request, root: string): Promise<Response> {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS_HEADERS })
+  }
+
   const url = new URL(req.url)
   const safePath = await resolveSafePath(root, url.pathname)
 
   if (safePath === null) {
-    return new Response('403 Forbidden', { status: 403, headers: { 'Content-Type': 'text/plain' } })
+    return withCors(new Response('403 Forbidden', { status: 403, headers: { 'Content-Type': 'text/plain' } }))
   }
 
   let stat: Awaited<ReturnType<typeof fs.stat>>
@@ -322,14 +358,14 @@ async function handleRequest(req: Request, root: string): Promise<Response> {
     stat = await fs.stat(safePath)
   }
   catch {
-    return new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } })
+    return withCors(new Response('404 Not Found', { status: 404, headers: { 'Content-Type': 'text/plain' } }))
   }
 
   if (stat.isDirectory()) {
-    return serveDirectory(safePath, url.pathname)
+    return withCors(await serveDirectory(safePath, url.pathname))
   }
 
-  return serveFile(safePath, stat)
+  return withCors(await serveFile(safePath, stat))
 }
 
 // ─── Main Export ──────────────────────────────────────────────────────────────
