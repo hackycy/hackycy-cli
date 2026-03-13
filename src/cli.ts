@@ -62,27 +62,6 @@ cli
   })
 
 cli
-  .command('cc-switch [subcommand]', 'Manage Claude environment variables')
-  .option('-e, --env <string>', 'Environment variable name (e.g., ANTHROPIC_API_KEY)')
-  .action(async (subcommand: string | undefined, options: GlobalCLIOptions & { env?: string }) => {
-    const { ccSwitchView, ccSwitchSet } = await import('./cc-switch')
-
-    if (subcommand === 'view') {
-      await ccSwitchView()
-    }
-    else if (subcommand === 'set') {
-      await ccSwitchSet(options)
-    }
-    else {
-      cli.outputHelp()
-      console.log()
-      console.log('Subcommands:')
-      console.log('  view    View Claude environment configuration')
-      console.log('  set     Set Claude environment variable')
-    }
-  })
-
-cli
   .command('upgrade', 'Upgrade cli to the latest version')
   .action(async () => {
     const { upgradeCli } = await import('./upgrade')
