@@ -165,97 +165,183 @@ function buildDirectoryHtml(urlPath: string, entries: DirectoryEntry[]): string 
     : ''
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0f1117;
+      --fg: #e2e8f0;
+      --border: #2d3748;
+      --hover-bg: #1e293b;
+      --row-border: #1e293b;
+      --brand: #22d3ee;
+      --title: #f1f5f9;
+      --breadcrumb: #94a3b8;
+      --link: #38bdf8;
+      --muted: #64748b;
+      --file-fg: #e2e8f0;
+      --footer: #334155;
+      --empty: #475569;
+      --btn-bg: #1e293b;
+      --btn-fg: #94a3b8;
+      --btn-border: #2d3748;
+    }
+    [data-theme="light"] {
+      --bg: #f8fafc;
+      --fg: #1e293b;
+      --border: #e2e8f0;
+      --hover-bg: #f1f5f9;
+      --row-border: #e2e8f0;
+      --brand: #0891b2;
+      --title: #0f172a;
+      --breadcrumb: #64748b;
+      --link: #0284c7;
+      --muted: #94a3b8;
+      --file-fg: #334155;
+      --footer: #94a3b8;
+      --empty: #94a3b8;
+      --btn-bg: #e2e8f0;
+      --btn-fg: #475569;
+      --btn-border: #cbd5e1;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f1117;
-      color: #e2e8f0;
+      background: var(--bg);
+      color: var(--fg);
       padding: 2rem;
       min-height: 100vh;
       font-size: 14px;
+      transition: background 0.2s, color 0.2s;
     }
     .header {
       margin-bottom: 1.5rem;
       padding-bottom: 1rem;
-      border-bottom: 1px solid #2d3748;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
     }
+    .header-left { flex: 1; min-width: 0; }
     .brand {
       font-size: 0.7rem;
       font-weight: 700;
       letter-spacing: 0.15em;
       text-transform: uppercase;
-      color: #22d3ee;
+      color: var(--brand);
       margin-bottom: 0.5rem;
     }
     .page-title {
       font-size: 1.1rem;
       font-weight: 600;
-      color: #f1f5f9;
+      color: var(--title);
       word-break: break-all;
     }
     .breadcrumb {
       margin-top: 0.5rem;
       font-size: 0.8rem;
-      color: #94a3b8;
+      color: var(--breadcrumb);
     }
-    .breadcrumb a { color: #38bdf8; text-decoration: none; }
+    .breadcrumb a { color: var(--link); text-decoration: none; }
     .breadcrumb a:hover { text-decoration: underline; }
+    .theme-btn {
+      flex-shrink: 0;
+      margin-top: 0.1rem;
+      padding: 0.35rem 0.65rem;
+      background: var(--btn-bg);
+      color: var(--btn-fg);
+      border: 1px solid var(--btn-border);
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.8rem;
+      line-height: 1;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+      white-space: nowrap;
+    }
+    .theme-btn:hover { opacity: 0.8; }
     table { width: 100%; border-collapse: collapse; }
     thead th {
       text-align: left;
       padding: 0.5rem 0.75rem;
-      color: #64748b;
+      color: var(--muted);
       font-size: 0.7rem;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      border-bottom: 1px solid #2d3748;
+      border-bottom: 1px solid var(--border);
     }
     thead th.right { text-align: right; }
     tbody tr { transition: background 0.1s; }
-    tbody tr:hover { background: #1e293b; }
+    tbody tr:hover { background: var(--hover-bg); }
     tbody td {
       padding: 0.55rem 0.75rem;
-      border-bottom: 1px solid #1e293b;
+      border-bottom: 1px solid var(--row-border);
       vertical-align: middle;
     }
     .name-cell { display: flex; align-items: center; gap: 0.5rem; }
     .icon { flex-shrink: 0; }
-    .dir-link a { color: #38bdf8; text-decoration: none; font-weight: 500; }
+    .dir-link a { color: var(--link); text-decoration: none; font-weight: 500; }
     .dir-link a:hover { text-decoration: underline; }
-    .file-link a { color: #e2e8f0; text-decoration: none; }
-    .file-link a:hover { color: #38bdf8; text-decoration: underline; }
-    .parent-link a { color: #64748b; text-decoration: none; }
-    .parent-link a:hover { color: #94a3b8; text-decoration: underline; }
+    .file-link a { color: var(--file-fg); text-decoration: none; }
+    .file-link a:hover { color: var(--link); text-decoration: underline; }
+    .parent-link a { color: var(--muted); text-decoration: none; }
+    .parent-link a:hover { color: var(--breadcrumb); text-decoration: underline; }
     .size-col {
-      color: #64748b;
+      color: var(--muted);
       text-align: right;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
     }
     .date-col {
-      color: #64748b;
+      color: var(--muted);
       text-align: right;
       white-space: nowrap;
       font-size: 0.8rem;
       font-variant-numeric: tabular-nums;
     }
-    .footer { margin-top: 1.25rem; font-size: 0.72rem; color: #334155; }
-    .empty-state { padding: 2rem; text-align: center; color: #475569; font-style: italic; }
+    .footer { margin-top: 1.25rem; font-size: 0.72rem; color: var(--footer); }
+    .empty-state { padding: 2rem; text-align: center; color: var(--empty); font-style: italic; }
   </style>
+  <script>
+    (function() {
+      var saved = localStorage.getItem('theme');
+      if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    })();
+  </script>
 </head>
 <body>
   <div class="header">
-    <div class="brand">HACKYCY CLI &mdash; File Server</div>
-    <div class="page-title">${title}</div>
-    <div class="breadcrumb">${breadcrumb}</div>
+    <div class="header-left">
+      <div class="brand">HACKYCY CLI &mdash; File Server</div>
+      <div class="page-title">${title}</div>
+      <div class="breadcrumb">${breadcrumb}</div>
+    </div>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Toggle theme">&#9790;</button>
   </div>
+  <script>
+    function toggleTheme() {
+      var html = document.documentElement;
+      var btn = document.getElementById('themeBtn');
+      if (html.getAttribute('data-theme') === 'dark') {
+        html.setAttribute('data-theme', 'light');
+        localStorage.setItem('theme', 'light');
+        btn.textContent = '\\u2600';
+      } else {
+        html.setAttribute('data-theme', 'dark');
+        localStorage.setItem('theme', 'dark');
+        btn.textContent = '\\u263E';
+      }
+    }
+    (function() {
+      var btn = document.getElementById('themeBtn');
+      var theme = document.documentElement.getAttribute('data-theme');
+      btn.textContent = theme === 'light' ? '\\u2600' : '\\u263E';
+    })();
+  </script>
   <table>
     <thead>
       <tr>
