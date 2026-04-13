@@ -1,3 +1,52 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+`hackycy-cli` (invoked as `ycy`) is a personal developer CLI toolkit with four commands:
+- `ycy did <directory>` — scan a directory tree for Git repos and generate a commit history report
+- `ycy serve <directory>` — static file HTTP server with directory listing UI (default port 1204)
+- `ycy zip <directory>` — interactively zip a directory with glob-pattern filtering
+- `ycy upgrade` — self-update by fetching the latest release from GitHub
+
+## Commands
+
+```sh
+bun run dev        # watch-mode dev run (src/index.ts)
+bun run lint       # ESLint with cache
+bun run typecheck  # tsc type-check only (no emit)
+bun run release    # bumpp version bump + tag
+bun src/cli.ts     # run CLI directly (manual testing)
+```
+
+No automated tests exist; manual testing is done with `bun src/cli.ts`.
+
+## Architecture
+
+**Entry point**: `src/cli.ts` — registers all commands using `cac`. Each command module is lazy-loaded via dynamic `import()` to keep startup fast.
+
+**One file per command**: `src/did.ts`, `src/serve.ts`, `src/zip.ts`, `src/upgrade.ts`. Each exports a typed options interface and a main async function called by `cli.ts`.
+
+**Shared utilities**: `src/utils.ts` — `clearScreen()`, `printTitle()`, `hyperlinker()` (OSC 8 terminal links).
+
+**Key dependencies**:
+- `@clack/prompts` — interactive terminal UI (spinners, selects, text inputs)
+- `cac` — CLI argument parsing
+- `ansis` — terminal colors
+- `dayjs` — date math in `did`
+- `fflate` — zip compression in `zip`
+- `reveal-file` — open Finder/Explorer after zip
+
+**Runtime APIs used**: `Bun.spawn` (git), `Bun.serve()` (static server), `Bun.file`/`Bun.write`, `Bun.Glob`, `Bun.semver`
+
+**TypeScript config**: `noEmit: true` — Bun transpiles at runtime, `tsc` is type-check only. Module resolution is `Preserve` (bundler mode).
+
+## Release / Distribution
+
+Builds are distributed as pre-compiled native binaries for macOS (x64/arm64), Linux (x64/arm64), and Windows (x64) via GitHub Releases. The `upgrade` command handles self-replacement by downloading the matching binary artifact.
+
+---
 
 Default to using Bun instead of Node.js.
 
