@@ -62,6 +62,13 @@ cli
   })
 
 cli
+  .command('rp', 'Run package.json scripts')
+  .action(async (options: GlobalCLIOptions) => {
+    const { rp } = await import('./rp')
+    await rp({ passthroughArgs: options['--'] ?? [] })
+  })
+
+cli
   .command('upgrade', 'Upgrade cli to the latest version')
   .action(async () => {
     const { upgradeCli } = await import('./upgrade')
