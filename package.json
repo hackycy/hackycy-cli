@@ -38,8 +38,7 @@
     "cac": "^6.7.14",
     "dayjs": "^1.11.19",
     "fflate": "^0.8.2",
-    "reveal-file": "^0.1.2",
-    "xlsx": "^0.18.5"
+    "reveal-file": "^0.1.2"
   },
   "devDependencies": {
     "@antfu/eslint-config": "^6.7.3",
