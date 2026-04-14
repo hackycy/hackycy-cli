@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `ycy did <directory>` — scan a directory tree for Git repos and generate a commit history report
 - `ycy serve <directory>` — static file HTTP server with directory listing UI (default port 1204)
 - `ycy zip <directory>` — interactively zip a directory with glob-pattern filtering
+- `ycy rp` - run package.json scripts
 - `ycy upgrade` — self-update by fetching the latest release from GitHub
 
 ## Commands
