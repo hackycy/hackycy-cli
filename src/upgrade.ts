@@ -9,6 +9,7 @@ import { printTitle } from './utils'
 
 const REPO = 'hackycy-collection/hackycy-cli'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
+const CHECKSUMS_FILE = 'SHA256SUMS'
 
 function compareVersions(a: string, b: string): number {
   return Bun.semver.order(a, b)
@@ -34,12 +35,102 @@ function getArtifactName(): string {
   return platform === 'win32' ? `${name}.exe` : name
 }
 
-async function replaceBinary(tempFile: string, targetPath: string): Promise<void> {
-  const backupPath = `${targetPath}.backup`
+function clearQuarantine(filePath: string): void {
+  if (process.platform !== 'darwin') {
+    return
+  }
+
+  const result = Bun.spawnSync(['xattr', '-d', 'com.apple.quarantine', filePath], {
+    stdout: 'ignore',
+    stderr: 'ignore',
+  })
+
+  if (result.exitCode !== 0 && result.exitCode !== 1) {
+    throw new Error('Failed to clear macOS quarantine attribute.')
+  }
+}
+
+function parseChecksumsFile(content: string): Map<string, string> {
+  const checksums = new Map<string, string>()
+
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+
+    const hash = trimmed.slice(0, 64)
+    const fileName = trimmed.slice(64).trimStart().replace(/^\*/, '').trim()
+
+    if (!/^[a-f0-9]{64}$/i.test(hash) || !fileName) {
+      continue
+    }
+
+    checksums.set(fileName, hash.toLowerCase())
+  }
+
+  return checksums
+}
+
+async function sha256Hex(data: ArrayBuffer | Uint8Array): Promise<string> {
+  const input = data instanceof Uint8Array ? data : new Uint8Array(data)
+  const digest = await crypto.subtle.digest('SHA-256', input)
+  return Array.from(new Uint8Array(digest))
+    .map(byte => byte.toString(16).padStart(2, '0'))
+    .join('')
+}
+
+function decodeOutput(output: Uint8Array<ArrayBufferLike> | undefined): string {
+  if (!output) {
+    return ''
+  }
+
+  return new TextDecoder().decode(output).trim()
+}
+
+function verifyBinaryExecutable(filePath: string, expectedVersion: string): void {
+  const result = Bun.spawnSync([filePath, '--version'], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+
+  if (result.exitCode !== 0) {
+    const stderr = decodeOutput(result.stderr)
+    throw new Error(stderr || 'Installed binary failed to execute self-check.')
+  }
+
+  const actualVersion = decodeOutput(result.stdout)
+  const expectedOutput = `ycy/${expectedVersion}`
+
+  if (!actualVersion.startsWith(expectedOutput)) {
+    throw new Error(`Installed binary reported unexpected version: ${actualVersion || '<empty>'}`)
+  }
+}
+
+function finalizeBackup(backupPath: string | null): void {
+  if (backupPath && fs.existsSync(backupPath)) {
+    fs.unlinkSync(backupPath)
+  }
+}
+
+function restoreBackup(targetPath: string, backupPath: string | null): void {
+  if (!backupPath || !fs.existsSync(backupPath)) {
+    return
+  }
+
+  if (fs.existsSync(targetPath)) {
+    fs.unlinkSync(targetPath)
+  }
+
+  fs.renameSync(backupPath, targetPath)
+}
+
+async function replaceBinary(tempFile: string, targetPath: string): Promise<string | null> {
+  const backupPath = fs.existsSync(targetPath) ? `${targetPath}.backup` : null
 
   try {
     // Remove any existing backup
-    if (fs.existsSync(backupPath)) {
+    if (backupPath && fs.existsSync(backupPath)) {
       fs.unlinkSync(backupPath)
     }
 
@@ -49,7 +140,9 @@ async function replaceBinary(tempFile: string, targetPath: string): Promise<void
     }
 
     // Backup current binary
-    fs.renameSync(targetPath, backupPath)
+    if (backupPath) {
+      fs.renameSync(targetPath, backupPath)
+    }
 
     try {
       // Move new binary into place
@@ -66,14 +159,12 @@ async function replaceBinary(tempFile: string, targetPath: string): Promise<void
       }
     }
 
-    // Remove backup
-    fs.unlinkSync(backupPath)
+    clearQuarantine(targetPath)
+    return backupPath
   }
   catch (err) {
     // Restore backup if something went wrong
-    if (fs.existsSync(backupPath) && !fs.existsSync(targetPath)) {
-      fs.renameSync(backupPath, targetPath)
-    }
+    restoreBackup(targetPath, backupPath)
     // Clean up temp file
     if (fs.existsSync(tempFile)) {
       fs.unlinkSync(tempFile)
@@ -107,7 +198,10 @@ export async function upgradeCli(): Promise<void> {
       return
     }
 
-    const release = await response.json() as { tag_name: string }
+    const release = await response.json() as {
+      tag_name: string
+      assets?: Array<{ name?: string, digest?: string }>
+    }
     const latestVersion = release.tag_name.replace(/^v/, '')
 
     // 2. Compare versions
@@ -126,6 +220,32 @@ export async function upgradeCli(): Promise<void> {
 
     const artifactName = getArtifactName()
     const downloadUrl = `https://github.com/${REPO}/releases/download/v${latestVersion}/${artifactName}`
+    let expectedHash = release.assets
+      ?.find(asset => asset.name === artifactName)
+      ?.digest
+      ?.replace(/^sha256:/, '')
+
+    if (!expectedHash) {
+      const checksumsUrl = `https://github.com/${REPO}/releases/download/v${latestVersion}/${CHECKSUMS_FILE}`
+
+      const checksumsResponse = await fetch(checksumsUrl)
+      if (!checksumsResponse.ok) {
+        downloadSpin.stop('Download failed.')
+        log.error(`Failed to download checksums: HTTP ${checksumsResponse.status}`)
+        outro('Update aborted.')
+        return
+      }
+
+      const checksums = parseChecksumsFile(await checksumsResponse.text())
+      expectedHash = checksums.get(artifactName)
+    }
+
+    if (!expectedHash) {
+      downloadSpin.stop('Download failed.')
+      log.error(`Missing checksum for ${artifactName}.`)
+      outro('Update aborted.')
+      return
+    }
 
     const downloadResponse = await fetch(downloadUrl)
     if (!downloadResponse.ok) {
@@ -144,9 +264,26 @@ export async function upgradeCli(): Promise<void> {
       return
     }
 
+    const actualHash = await sha256Hex(arrayBuffer)
+    if (actualHash !== expectedHash) {
+      downloadSpin.stop('Download failed.')
+      log.error('Checksum verification failed.')
+      outro('Update aborted.')
+      return
+    }
+
     // Write to temp file
-    const tempFile = path.join(os.tmpdir(), `ycy-update-${Date.now()}`)
+    const tempFileName = process.platform === 'win32'
+      ? `ycy-update-${Date.now()}.exe`
+      : `ycy-update-${Date.now()}`
+    const tempFile = path.join(os.tmpdir(), tempFileName)
     await Bun.write(tempFile, arrayBuffer)
+
+    if (process.platform !== 'win32') {
+      fs.chmodSync(tempFile, 0o755)
+    }
+    clearQuarantine(tempFile)
+    verifyBinaryExecutable(tempFile, latestVersion)
 
     downloadSpin.stop('Download complete!')
 
@@ -155,7 +292,21 @@ export async function upgradeCli(): Promise<void> {
     replaceSpin.start('Installing update...')
 
     const currentExePath = process.execPath
-    await replaceBinary(tempFile, currentExePath)
+    const backupPath = await replaceBinary(tempFile, currentExePath)
+
+    try {
+      const installedHash = await sha256Hex(await Bun.file(currentExePath).arrayBuffer())
+      if (installedHash !== expectedHash) {
+        throw new Error('Installed binary checksum verification failed.')
+      }
+
+      verifyBinaryExecutable(currentExePath, latestVersion)
+      finalizeBackup(backupPath)
+    }
+    catch (error) {
+      restoreBackup(currentExePath, backupPath)
+      throw error
+    }
 
     replaceSpin.stop('Installation complete!')
 

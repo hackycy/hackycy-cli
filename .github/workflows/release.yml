@@ -57,6 +57,13 @@ jobs:
             --target bun-${{ matrix.target }} \
             --outfile ${{ matrix.artifact }}
 
+      - name: Smoke test binary
+        run: ./${{ matrix.artifact }} --version
+
+      - name: Verify macOS binary signature
+        if: startsWith(matrix.target, 'darwin-')
+        run: codesign -dv ${{ matrix.artifact }}
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +90,14 @@ jobs:
         run: |
           ls -R dist/
 
+      - name: Generate checksums
+        run: |
+          : > dist/SHA256SUMS
+          for file in dist/*/*; do
+            sha256sum "$file" | awk -v name="$(basename "$file")" '{ print $1 "  " name }' >> dist/SHA256SUMS
+          done
+          cat dist/SHA256SUMS
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -94,5 +109,6 @@ jobs:
             dist/ycy-linux-x64/ycy-linux-x64
             dist/ycy-linux-arm64/ycy-linux-arm64
             dist/ycy-windows-x64.exe/ycy-windows-x64.exe
+            dist/SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
