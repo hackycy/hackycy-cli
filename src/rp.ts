@@ -1,6 +1,6 @@
 import path from 'node:path'
 import process from 'node:process'
-import { cancel, intro, isCancel, select } from '@clack/prompts'
+import { cancel, intro, isCancel, log, select } from '@clack/prompts'
 import ansis from 'ansis'
 import { printTitle } from './utils'
 
@@ -95,6 +95,9 @@ export async function rp(options: RpOptions = {}): Promise<void> {
   }
 
   const cmd = [selectedPm, 'run', selectedScript]
+  log.info(ansis.green(cmd.join(' ')))
+  console.log() // Add an empty line for better readability
+
   if (options.passthroughArgs && options.passthroughArgs.length > 0) {
     cmd.push('--', ...options.passthroughArgs)
   }
