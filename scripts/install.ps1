@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "hackycy-collection/hackycy-cli"
+$Repo = "hackycy/hackycy-cli"
 $BinaryName = "ycy.exe"
 $InstallDir = "$env:USERPROFILE\.ycy-cli\bin"
 $ChecksumsFile = "SHA256SUMS"

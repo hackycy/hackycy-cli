@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="hackycy-collection/hackycy-cli"
+REPO="hackycy/hackycy-cli"
 INSTALL_DIR="$HOME/.ycy-cli/bin"
 BINARY_NAME="ycy"
 CHECKSUMS_FILE="SHA256SUMS"

@@ -10,12 +10,12 @@
   ],
   "author": "hackycy <hackycy@outlook.com>",
   "license": "MIT",
-  "homepage": "https://github.com/hackycy-collection/hackycy-cli#readme",
+  "homepage": "https://github.com/hackycy/hackycy-cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hackycy-collection/hackycy-cli.git"
+    "url": "git+https://github.com/hackycy/hackycy-cli.git"
   },
-  "bugs": "https://github.com/hackycy-collection/hackycy-cli/issues",
+  "bugs": "https://github.com/hackycy/hackycy-cli/issues",
   "keywords": [
     "cli"
   ],

@@ -7,7 +7,7 @@ import ansis from 'ansis'
 import { version as currentVersion } from '../package.json'
 import { printTitle } from './utils'
 
-const REPO = 'hackycy-collection/hackycy-cli'
+const REPO = 'hackycy/hackycy-cli'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`
 const CHECKSUMS_FILE = 'SHA256SUMS'
 
