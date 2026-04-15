@@ -25,7 +25,7 @@ No automated tests exist; manual testing is done with `bun src/cli.ts`.
 
 ## Architecture
 
-**Entry point**: `src/cli.ts` — registers all commands using `cac`. Each command module is lazy-loaded via dynamic `import()` to keep startup fast.
+**Entry point**: `src/cli.ts` — registers all commands using `commander`. Each command module is lazy-loaded via dynamic `import()` to keep startup fast.
 
 **One file per command**: `src/did.ts`, `src/serve.ts`, `src/zip.ts`, `src/upgrade.ts`. Each exports a typed options interface and a main async function called by `cli.ts`.
 
@@ -33,7 +33,7 @@ No automated tests exist; manual testing is done with `bun src/cli.ts`.
 
 **Key dependencies**:
 - `@clack/prompts` — interactive terminal UI (spinners, selects, text inputs)
-- `cac` — CLI argument parsing
+- `commander` — CLI argument parsing
 - `ansis` — terminal colors
 - `dayjs` — date math in `did`
 - `fflate` — zip compression in `zip`
