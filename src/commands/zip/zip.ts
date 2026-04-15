@@ -1,3 +1,4 @@
+import type { ZipOptions } from './types'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
@@ -5,15 +6,9 @@ import { cancel, intro, isCancel, multiselect, outro, select, spinner, text } fr
 import ansis from 'ansis'
 import { zipSync as fflateZipSync } from 'fflate'
 import revealFile from 'reveal-file'
-import { printTitle } from './utils'
+import { printTitle } from '../../shared/utils'
 
 const DEFAULT_GLOB_PATTERN = '**/*'
-
-export interface ZipOptions {
-  directory: string
-  open?: boolean
-  withDir?: string
-}
 
 type FflateFiles = Parameters<typeof fflateZipSync>[0]
 

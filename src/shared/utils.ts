@@ -36,3 +36,10 @@ export function hyperlinker(text: string, uri?: string): string {
 
   return [OSC, '8', SEP, SEP, uri, BEL, text, OSC, '8', SEP, SEP, BEL].join('')
 }
+
+export function parseIntArg(value: string): number {
+  const parsed = Number.parseInt(value, 10)
+  if (Number.isNaN(parsed))
+    throw new Error(`'${value}' is not a valid integer`)
+  return parsed
+}

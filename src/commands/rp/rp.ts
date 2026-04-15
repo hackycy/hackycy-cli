@@ -1,14 +1,9 @@
+import type { PackageManager, RpOptions } from './types'
 import path from 'node:path'
 import process from 'node:process'
 import { cancel, intro, isCancel, log, select } from '@clack/prompts'
 import ansis from 'ansis'
-import { printTitle } from './utils'
-
-export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun'
-
-export interface RpOptions {
-  passthroughArgs?: string[]
-}
+import { printTitle } from '../../shared/utils'
 
 const LOCKFILE_PM_MAP: Array<[string, PackageManager]> = [
   ['pnpm-lock.yaml', 'pnpm'],

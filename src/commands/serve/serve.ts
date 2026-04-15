@@ -1,17 +1,12 @@
 import type { Dirent } from 'node:fs'
+import type { ServeOptions } from './types'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
 import { cancel, intro, note, outro } from '@clack/prompts'
 import ansis from 'ansis'
-import { printTitle } from './utils'
-
-export interface ServeOptions {
-  directory: string
-  port: number
-  address: string
-}
+import { printTitle } from '../../shared/utils'
 
 interface DirectoryEntry {
   name: string

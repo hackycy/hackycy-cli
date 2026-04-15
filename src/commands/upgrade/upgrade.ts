@@ -4,8 +4,8 @@ import path from 'node:path'
 import process from 'node:process'
 import { log, outro, spinner } from '@clack/prompts'
 import ansis from 'ansis'
-import { version as currentVersion } from '../package.json'
-import { printTitle } from './utils'
+import { version as currentVersion } from '../../../package.json'
+import { printTitle } from '../../shared/utils'
 
 const REPO = 'hackycy/hackycy-cli'
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`

@@ -1,12 +1,9 @@
+import type { DidOptions } from './types'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { cancel, isCancel, log, select, spinner, text } from '@clack/prompts'
 import dayjs from 'dayjs'
-import { printTitle } from './utils'
-
-export interface DidOptions {
-  depth: number
-}
+import { printTitle } from '../../shared/utils'
 
 interface CommitLogRow {
   repository: string

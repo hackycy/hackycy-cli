@@ -4,12 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`hackycy-cli` (invoked as `ycy`) is a personal developer CLI toolkit with four commands:
-- `ycy did <directory>` — scan a directory tree for Git repos and generate a commit history report
-- `ycy serve <directory>` — static file HTTP server with directory listing UI (default port 1204)
-- `ycy zip <directory>` — interactively zip a directory with glob-pattern filtering
-- `ycy rp` - run package.json scripts
-- `ycy upgrade` — self-update by fetching the latest release from GitHub
+`hackycy-cli` (invoked as `ycy`) is a personal developer CLI toolkit
 
 ## Commands
 
@@ -25,11 +20,30 @@ No automated tests exist; manual testing is done with `bun src/cli.ts`.
 
 ## Architecture
 
-**Entry point**: `src/cli.ts` — registers all commands using `commander`. Each command module is lazy-loaded via dynamic `import()` to keep startup fast.
+**Entry point**: `src/cli.ts` — thin orchestrator that calls `register(program)` for each command module and sets up `errorHandler`. No command logic lives here.
 
-**One file per command**: `src/did.ts`, `src/serve.ts`, `src/zip.ts`, `src/upgrade.ts`. Each exports a typed options interface and a main async function called by `cli.ts`.
+**Directory layout**:
+```
+src/
+├── cli.ts                    # program setup, errorHandler only
+├── shared/
+│   └── utils.ts              # clearScreen, printTitle, hyperlinker, parseIntArg
+└── commands/
+    └── <name>/
+        ├── index.ts          # exports register(program: Command): void
+        ├── types.ts          # exported option interfaces (omit if no shared types)
+        └── <name>.ts         # implementation (lazy-imported inside action handlers)
+```
 
-**Shared utilities**: `src/utils.ts` — `clearScreen()`, `printTitle()`, `hyperlinker()` (OSC 8 terminal links).
+**Command registration**: every command (and future sub-command group) must export `register(program: Command): void` from its `index.ts`. `cli.ts` imports and calls these; it never contains inline command logic.
+
+**Multi-level commands**: commands are grouped by functional domain (e.g. `ycy foo bar`). A sub-command group gets its own directory under `commands/`, with the same `index.ts` / `types.ts` / implementation layout. Sub-group `register` receives the parent `Command` object and calls `parent.addCommand(...)` directly.
+
+**Lazy loading**: heavy implementation files are always dynamically imported (`await import('./did')`) inside action handlers, never at module top-level, to keep startup time fast.
+
+**Shared utilities**: `src/shared/utils.ts` — `clearScreen()`, `printTitle()`, `hyperlinker()` (OSC 8 terminal links), `parseIntArg()`. This is the only global utility module; group-specific helpers live alongside the group's own files.
+
+**Types**: each command group keeps its exported option interfaces in its own `types.ts`. Internal-only types stay in the implementation file. Do not create a global `src/types.ts`.
 
 **Key dependencies**:
 - `@clack/prompts` — interactive terminal UI (spinners, selects, text inputs)
@@ -80,77 +94,3 @@ test("hello world", () => {
   expect(1).toBe(1);
 });
 ```
-
-## Frontend
-
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
-
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
