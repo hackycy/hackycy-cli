@@ -9,7 +9,7 @@
 
     // Bundler mode
     "moduleResolution": "bundler",
-    "types": ["@types/node", "bun"],
+    "types": ["@types/node", "bun", "@types/react"],
     "allowImportingTsExtensions": true,
 
     "allowJs": true,

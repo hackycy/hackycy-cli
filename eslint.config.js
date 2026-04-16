@@ -7,6 +7,7 @@ export default antfu(
     ignores: ['CLAUDE.md'],
     rules: {
       'no-console': 'off',
+      'ts/explicit-function-return-type': 'off',
     },
   },
 )
