@@ -88,6 +88,14 @@ function decodeOutput(output: Uint8Array<ArrayBufferLike> | undefined): string {
   return new TextDecoder().decode(output).trim()
 }
 
+function isExpectedVersionOutput(actualVersion: string, expectedVersion: string): boolean {
+  if (!actualVersion) {
+    return false
+  }
+
+  return actualVersion === expectedVersion || actualVersion.startsWith(`ycy/${expectedVersion}`)
+}
+
 function verifyBinaryExecutable(filePath: string, expectedVersion: string): void {
   const result = Bun.spawnSync([filePath, '--version'], {
     stdout: 'pipe',
@@ -100,9 +108,8 @@ function verifyBinaryExecutable(filePath: string, expectedVersion: string): void
   }
 
   const actualVersion = decodeOutput(result.stdout)
-  const expectedOutput = `ycy/${expectedVersion}`
 
-  if (!actualVersion.startsWith(expectedOutput)) {
+  if (!isExpectedVersionOutput(actualVersion, expectedVersion)) {
     throw new Error(`Installed binary reported unexpected version: ${actualVersion || '<empty>'}`)
   }
 }

@@ -64,7 +64,7 @@ function Assert-BinaryVersion {
         throw "Installed binary failed to execute self-check."
     }
 
-    if ($actualVersion -notlike "ycy/$ExpectedVersion*") {
+    if ($actualVersion -ne $ExpectedVersion -and $actualVersion -notlike "ycy/$ExpectedVersion*") {
         throw "Installed binary reported unexpected version: $actualVersion"
     }
 }

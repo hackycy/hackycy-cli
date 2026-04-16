@@ -122,6 +122,7 @@ verify_file_hash() {
 verify_binary() {
   local file_path="${1}"
   local expected_version="ycy/${VERSION#v}"
+  local plain_expected_version="${VERSION#v}"
   local actual_version
 
   if ! actual_version=$("$file_path" --version 2>/dev/null); then
@@ -129,6 +130,7 @@ verify_binary() {
   fi
 
   case "$actual_version" in
+    "$plain_expected_version") ;;
     "$expected_version"*) ;;
     *) return 1 ;;
   esac
