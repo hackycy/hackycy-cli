@@ -40,6 +40,7 @@
     "fflate": "^0.8.2",
     "ink": "^7.0.0",
     "react": "^19.2.5",
+    "react-devtools-core": "^7.0.1",
     "reveal-file": "^0.1.2"
   },
   "devDependencies": {
