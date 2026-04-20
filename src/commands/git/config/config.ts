@@ -2,8 +2,11 @@ import process from 'node:process'
 
 import * as p from '@clack/prompts'
 import ansis from 'ansis'
+import { render } from 'ink'
+import React from 'react'
 import { printTitle } from '../../../shared/utils'
 import { addInstance, listInstances, removeInstance } from '../fork/config'
+import { InstanceList } from './components/InstanceList'
 
 export async function runForkConfigAdd(): Promise<void> {
   printTitle()
@@ -120,28 +123,24 @@ export async function runForkConfigRemove(): Promise<void> {
 
 export async function runForkConfigList(): Promise<void> {
   printTitle()
-  p.intro(ansis.cyan('Fork Config — Instances'))
+  console.log(ansis.dim('Fork Config — Instances'))
+  console.log()
 
   const instances = await listInstances()
-  const entries = Object.entries(instances)
 
-  if (entries.length === 0) {
+  if (Object.keys(instances).length === 0) {
     p.log.info('No instances configured. Run "ycy git config add" to add one.')
     p.outro('')
     return
   }
 
-  for (const [name, inst] of entries) {
-    const tokenPreview = inst.token.length > 4
-      ? `${inst.token.slice(0, 4)}***`
-      : '***'
-    p.log.info(
-      `${ansis.bold(name)}\n`
-      + `  Host:  ${inst.host}\n`
-      + `  Type:  ${inst.type}\n`
-      + `  Token: ${tokenPreview}`,
-    )
-  }
-
-  p.outro(`${entries.length} instance(s) configured`)
+  let unmount: (() => void) | undefined
+  const inst = render(
+    React.createElement(InstanceList, {
+      instances,
+      onDone: () => unmount?.(),
+    }),
+  )
+  unmount = inst.unmount
+  await inst.waitUntilExit()
 }
