@@ -4,11 +4,11 @@ import { parseIntArg } from '../../../shared/utils'
 
 export function register(parent: Command): void {
   parent
-    .command('ls <directory>')
-    .description('List recent git commits across repositories')
+    .command('act <directory>')
+    .description('Show recent git activity across repositories')
     .option('--days <number>', 'Number of days to search', parseIntArg)
     .action(async (directory: string, options: GitLsOptions) => {
-      const { runGitLs } = await import('./ls')
-      await runGitLs(directory, options)
+      const { runGitAct } = await import('./act')
+      await runGitAct(directory, options)
     })
 }

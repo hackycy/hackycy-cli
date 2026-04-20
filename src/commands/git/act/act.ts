@@ -184,7 +184,7 @@ export async function testGit(): Promise<boolean> {
   }
 }
 
-export async function runGitLs(directory: string, options: GitLsOptions): Promise<void> {
+export async function runGitAct(directory: string, options: GitLsOptions): Promise<void> {
   const root = path.resolve(directory)
 
   let rootStat
@@ -276,13 +276,15 @@ async function promptForAuthors(commits: CommitRecord[]): Promise<CommitRecord[]
     return commits
   }
 
+  const initialValues = authors.length > 3 ? [] : authors
+
   const selectedAuthors = await multiselect({
     message: 'Filter by authors:',
     options: authors.map(author => ({
       value: author,
       label: author,
     })),
-    initialValues: authors,
+    initialValues,
     required: true,
   })
 
