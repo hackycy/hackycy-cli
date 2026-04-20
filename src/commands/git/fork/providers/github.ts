@@ -3,16 +3,18 @@ import type { Provider } from '../types'
 export const githubProvider: Provider = {
   type: 'github',
 
-  getArchiveUrl(host: string, owner: string, repo: string, ref: string): string {
-    if (host === 'github.com') {
+  getArchiveUrl(baseUrl: string, owner: string, repo: string, ref: string): string {
+    if (baseUrl === 'https://github.com') {
       return `https://api.github.com/repos/${owner}/${repo}/tarball/${ref}`
     }
     // GitHub Enterprise
-    return `https://${host}/api/v3/repos/${owner}/${repo}/tarball/${ref}`
+    return `${baseUrl}/api/v3/repos/${owner}/${repo}/tarball/${ref}`
   },
 
-  async getDefaultBranch(host: string, owner: string, repo: string, token?: string): Promise<string> {
-    const apiBase = host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`
+  async getDefaultBranch(baseUrl: string, owner: string, repo: string, token?: string): Promise<string> {
+    const apiBase = baseUrl === 'https://github.com'
+      ? 'https://api.github.com'
+      : `${baseUrl}/api/v3`
     const headers: Record<string, string> = { Accept: 'application/vnd.github.v3+json' }
     if (token)
       headers.Authorization = `Bearer ${token}`
@@ -24,10 +26,12 @@ export const githubProvider: Provider = {
     return data.default_branch
   },
 
-  buildCloneUrl(host: string, owner: string, repo: string, token?: string): string {
+  buildCloneUrl(baseUrl: string, owner: string, repo: string, token?: string): string {
+    const withoutScheme = baseUrl.replace(/^https?:\/\//, '')
+    const scheme = baseUrl.startsWith('https') ? 'https' : 'http'
     if (token)
-      return `https://${token}@${host}/${owner}/${repo}.git`
-    return `https://${host}/${owner}/${repo}.git`
+      return `${scheme}://${token}@${withoutScheme}/${owner}/${repo}.git`
+    return `${baseUrl}/${owner}/${repo}.git`
   },
 
   buildArchiveHeaders(token?: string): Record<string, string> {

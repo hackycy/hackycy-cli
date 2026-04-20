@@ -14,7 +14,20 @@ export async function readConfig(): Promise<ForkConfig> {
   if (!(await file.exists())) {
     return { salt: generateSalt(), instances: {} }
   }
-  return file.json()
+  const config: ForkConfig = await file.json()
+  // Migrate legacy entries where scheme was embedded in host (e.g. "http://172.16.8.239:23081")
+  let dirty = false
+  for (const [, instance] of Object.entries(config.instances)) {
+    if (instance.host.includes('://')) {
+      const url = new URL(instance.host)
+      instance.scheme = url.protocol.slice(0, -1) as 'http' | 'https'
+      instance.host = url.host
+      dirty = true
+    }
+  }
+  if (dirty)
+    await writeConfig(config)
+  return config
 }
 
 export async function writeConfig(config: ForkConfig): Promise<void> {
@@ -28,11 +41,12 @@ export async function addInstance(
   host: string,
   type: 'github' | 'gitlab',
   token: string,
+  scheme: 'http' | 'https' = 'https',
 ): Promise<void> {
   const config = await readConfig()
   const key = await deriveKey(config.salt)
   const encryptedToken = encrypt(token, key)
-  config.instances[name] = { host, type, token: encryptedToken }
+  config.instances[name] = { host, scheme, type, token: encryptedToken }
   await writeConfig(config)
 }
 

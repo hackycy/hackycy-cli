@@ -1,5 +1,6 @@
 export interface InstanceConfig {
   host: string
+  scheme?: 'http' | 'https' // default 'https'
   type: 'github' | 'gitlab'
   token: string // encrypted
 }
@@ -19,8 +20,8 @@ export interface ParsedRepo {
 
 export interface Provider {
   type: 'github' | 'gitlab'
-  getArchiveUrl: (host: string, owner: string, repo: string, ref: string) => string
-  getDefaultBranch: (host: string, owner: string, repo: string, token?: string) => Promise<string>
-  buildCloneUrl: (host: string, owner: string, repo: string, token?: string) => string
+  getArchiveUrl: (baseUrl: string, owner: string, repo: string, ref: string) => string
+  getDefaultBranch: (baseUrl: string, owner: string, repo: string, token?: string) => Promise<string>
+  buildCloneUrl: (baseUrl: string, owner: string, repo: string, token?: string) => string
   buildArchiveHeaders: (token?: string) => Record<string, string>
 }

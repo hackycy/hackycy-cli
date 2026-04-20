@@ -39,6 +39,14 @@ export async function runForkConfigAdd(): Promise<void> {
             { value: 'github' as const, label: 'GitHub' },
           ],
         }),
+      scheme: () =>
+        p.select({
+          message: 'Protocol',
+          options: [
+            { value: 'https' as const, label: 'HTTPS' },
+            { value: 'http' as const, label: 'HTTP (self-hosted / no TLS)' },
+          ],
+        }),
       token: () =>
         p.password({
           message: 'Access token',
@@ -60,7 +68,7 @@ export async function runForkConfigAdd(): Promise<void> {
   s.start('Saving configuration...')
 
   try {
-    await addInstance(result.name, result.host, result.type, result.token)
+    await addInstance(result.name, result.host, result.type, result.token, result.scheme)
     s.stop('Configuration saved')
     p.outro(`Instance ${ansis.cyan(result.name)} (${result.host}) added successfully`)
   }
@@ -118,7 +126,7 @@ export async function runForkConfigList(): Promise<void> {
   const entries = Object.entries(instances)
 
   if (entries.length === 0) {
-    p.log.info('No instances configured. Run "ycy git fork-config add" to add one.')
+    p.log.info('No instances configured. Run "ycy git config add" to add one.')
     p.outro('')
     return
   }

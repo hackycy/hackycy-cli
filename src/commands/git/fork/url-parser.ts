@@ -2,6 +2,7 @@ import { getInstanceByHost, getInstanceByName } from './config'
 
 interface ResolvedRepo {
   host: string
+  scheme: string
   owner: string
   repo: string
   ref?: string
@@ -15,9 +16,10 @@ interface ResolvedRepo {
  *
  * Supported formats:
  *   1. https://github.com/owner/repo#ref
- *   2. github.com/owner/repo#ref
- *   3. alias:owner/repo#ref
- *   4. owner/repo#ref  (defaults to github.com)
+ *   2. http://172.16.8.239:23081/owner/repo#ref
+ *   3. github.com/owner/repo#ref
+ *   4. alias:owner/repo#ref
+ *   5. owner/repo#ref  (defaults to github.com)
  */
 export async function parseRepoUrl(input: string): Promise<ResolvedRepo> {
   // Extract ref (after #)
@@ -30,13 +32,15 @@ export async function parseRepoUrl(input: string): Promise<ResolvedRepo> {
   }
 
   let host: string
+  let scheme: string
   let ownerRepo: { owner: string, repo: string }
   let instanceName: string | undefined
 
   // Check if it's a full URL (has ://)
   if (rest.includes('://')) {
     const url = new URL(rest)
-    host = url.hostname
+    host = url.host // includes port (e.g. 172.16.8.239:23081)
+    scheme = url.protocol.slice(0, -1) // strip trailing ':'
     const pathStr = url.pathname.replace(/^\//, '').replace(/\.git$/, '')
     ownerRepo = splitOwnerRepo(pathStr, input)
   }
@@ -47,32 +51,44 @@ export async function parseRepoUrl(input: string): Promise<ResolvedRepo> {
     const pathPart = rest.slice(colonIdx + 1)
     const instance = await getInstanceByName(alias)
     if (!instance)
-      throw new Error(`Unknown instance alias: "${alias}". Run "ycy git fork-config add" to configure it.`)
+      throw new Error(`Unknown instance alias: "${alias}". Run "ycy git config add" to configure it.`)
 
     instanceName = alias
     host = instance.host
+    scheme = instance.scheme ?? 'https'
     ownerRepo = splitOwnerRepo(pathPart.replace(/\.git$/, ''), input)
 
-    return { host, ...ownerRepo, ref, instanceName, providerType: instance.type, token: instance.decryptedToken }
+    return {
+      host,
+      scheme,
+      ...ownerRepo,
+      ref,
+      instanceName,
+      providerType: instance.type,
+      token: instance.decryptedToken,
+    }
   }
   // Check if it has a dot (host/owner/repo)
   else if (rest.includes('/') && rest.split('/')[0]!.includes('.')) {
     const firstSlash = rest.indexOf('/')
     host = rest.slice(0, firstSlash)
+    scheme = 'https'
     const pathStr = rest.slice(firstSlash + 1).replace(/\.git$/, '')
     ownerRepo = splitOwnerRepo(pathStr, input)
   }
   // Default: owner/repo on github.com
   else {
     host = 'github.com'
+    scheme = 'https'
     ownerRepo = splitOwnerRepo(rest.replace(/\.git$/, ''), input)
   }
 
-  // Determine provider type and token from config
+  // Determine provider type and token from config (lookup by host)
   const instanceByHost = await getInstanceByHost(host)
   if (instanceByHost) {
     return {
       host,
+      scheme: instanceByHost.instance.scheme ?? scheme,
       ...ownerRepo,
       ref,
       instanceName: instanceByHost.name,
@@ -84,7 +100,7 @@ export async function parseRepoUrl(input: string): Promise<ResolvedRepo> {
   // Auto-detect provider type by host
   const providerType = detectProviderType(host)
 
-  return { host, ...ownerRepo, ref, instanceName, providerType }
+  return { host, scheme, ...ownerRepo, ref, instanceName, providerType }
 }
 
 function splitOwnerRepo(pathStr: string, originalInput: string): { owner: string, repo: string } {
@@ -101,5 +117,5 @@ function detectProviderType(host: string): 'github' | 'gitlab' {
     return 'github'
   if (host === 'gitlab.com' || host.includes('gitlab'))
     return 'gitlab'
-  throw new Error(`Cannot determine provider type for host "${host}". Run "ycy git fork-config add" to configure it.`)
+  throw new Error(`Cannot determine provider type for host "${host}". Run "ycy git config add" to configure it.`)
 }

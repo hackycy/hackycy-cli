@@ -27,8 +27,9 @@ export async function runGitFork(repoInput: string, dest?: string): Promise<void
     process.exit(1)
   }
 
-  const { host, owner, repo, providerType, token } = parsed
+  const { host, scheme, owner, repo, providerType, token } = parsed
   const provider = getProvider(providerType)
+  const baseUrl = `${scheme}://${host}`
   s.stop(`Resolved: ${ansis.dim(`${host}/${owner}/${repo}`)} ${ansis.dim(`(${providerType})`)}`)
 
   // 2. Determine destination
@@ -58,7 +59,7 @@ export async function runGitFork(repoInput: string, dest?: string): Promise<void
   if (!ref) {
     s.start('Fetching default branch...')
     try {
-      ref = await provider.getDefaultBranch(host, owner, repo, token)
+      ref = await provider.getDefaultBranch(baseUrl, owner, repo, token)
       s.stop(`Branch: ${ansis.dim(ref)}`)
     }
     catch (err) {
@@ -73,13 +74,13 @@ export async function runGitFork(repoInput: string, dest?: string): Promise<void
   s.start('Downloading archive...')
 
   try {
-    const archiveUrl = provider.getArchiveUrl(host, owner, repo, ref)
+    const archiveUrl = provider.getArchiveUrl(baseUrl, owner, repo, ref)
     const headers = provider.buildArchiveHeaders(token)
     const res = await fetch(archiveUrl, { headers, redirect: 'follow' })
 
     if (!res.ok) {
       const statusText = res.status === 401 || res.status === 403
-        ? 'Authentication failed. Check your token with "ycy git fork-config add".'
+        ? 'Authentication failed. Check your token with "ycy git config add".'
         : `${res.status} ${res.statusText}`
       throw new Error(statusText)
     }
@@ -123,7 +124,7 @@ export async function runGitFork(repoInput: string, dest?: string): Promise<void
   if (!success) {
     s.start('Falling back to git clone...')
     try {
-      const cloneUrl = provider.buildCloneUrl(host, owner, repo, token)
+      const cloneUrl = provider.buildCloneUrl(baseUrl, owner, repo, token)
       const proc = Bun.spawn(['git', 'clone', '--depth=1', '--single-branch', '--branch', ref, cloneUrl, destPath], {
         stdout: 'pipe',
         stderr: 'pipe',
