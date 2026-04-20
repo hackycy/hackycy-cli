@@ -130,7 +130,7 @@ export async function fetchCommits(
       if (proc.exitCode !== 0)
         return
 
-      const repoName = path.relative(root, repoDir) || '.'
+      const repoName = repoDir
       const lines = outText.trim().split('\n').filter(l => l.length > 0)
 
       for (const line of lines) {

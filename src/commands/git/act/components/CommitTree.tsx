@@ -1,4 +1,5 @@
 import type { CommitRecord } from '../types'
+import path from 'node:path'
 import { Box, Text } from 'ink'
 import React, { useEffect } from 'react'
 
@@ -37,45 +38,53 @@ export function CommitTree({ commits, onDone }: CommitTreeProps) {
         repositor
         {groups.length !== 1 ? 'ies' : 'y'}
       </Text>
-      <Text></Text>
-      {groups.map((group, gi) => (
-        <React.Fragment key={group.repo}>
-          <Box flexDirection="column" marginBottom={gi < groups.length - 1 ? 1 : 0}>
-            <Text>
-              <Text bold color="magenta">
-                📦
-                {' '}
-                {group.repo}
-              </Text>
-              <Text color="gray">
-                {' '}
-                (
-                {group.commits.length}
-                {' '}
-                commit
-                {group.commits.length !== 1 ? 's' : ''}
-                )
-              </Text>
-            </Text>
-            {group.commits.map((commit, ci) => {
-              const isLast = ci === group.commits.length - 1
-              const connector = isLast ? '└── ' : '├── '
-              return (
-                <React.Fragment key={`${group.repo}-${commit.date}-${ci}`}>
-                  <Text>
-                    <Text color="gray">{connector}</Text>
-                    <Text color="blue">{commit.date}</Text>
-                    <Text>  </Text>
+      <Text> </Text>
+      {groups.map((group, gi) => {
+        const repoName = path.basename(group.repo)
+        const repoDir = path.dirname(group.repo)
+        return (
+          <React.Fragment key={group.repo}>
+            <Box flexDirection="column" marginBottom={gi < groups.length - 1 ? 1 : 0}>
+              <Box flexDirection="row">
+                <Text bold color="magenta">
+                  {'📦 '}
+                  {repoName}
+                </Text>
+                <Text color="gray">
+                  {' '}
+                  (
+                  {group.commits.length}
+                  {' '}
+                  commit
+                  {group.commits.length !== 1 ? 's' : ''}
+                  )
+                </Text>
+              </Box>
+              <Box flexDirection="row">
+                <Text color="gray" dimColor>
+                  {'   '}
+                  {repoDir}
+                  {path.sep}
+                </Text>
+              </Box>
+              {group.commits.map((commit, ci) => {
+                const isLast = ci === group.commits.length - 1
+                const connector = isLast ? '└─' : '├─'
+                return (
+                  <Box key={`${group.repo}-${commit.date}-${ci}`} flexDirection="row">
+                    <Text color="gray">{`   ${connector} `}</Text>
+                    <Text color="cyan">{commit.date}</Text>
+                    <Text color="gray">{' │ '}</Text>
                     <Text color="yellow">{commit.author}</Text>
-                    <Text>  </Text>
+                    <Text color="gray">{' │ '}</Text>
                     <Text>{commit.message}</Text>
-                  </Text>
-                </React.Fragment>
-              )
-            })}
-          </Box>
-        </React.Fragment>
-      ))}
+                  </Box>
+                )
+              })}
+            </Box>
+          </React.Fragment>
+        )
+      })}
     </Box>
   )
 }
