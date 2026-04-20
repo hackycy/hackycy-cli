@@ -693,6 +693,71 @@ export async function buildSourceSelectionModel(packageRoot: string): Promise<So
   }
 }
 
+function parseRemoteUrlToName(url: string): string | undefined {
+  let repoPath: string | undefined
+
+  // SSH: git@github.com:user/project.git
+  const sshMatch = url.match(/^[^@]+@[^:]+:(.+)$/)
+  if (sshMatch) {
+    repoPath = sshMatch[1]
+  }
+
+  // HTTPS: https://github.com/user/project.git
+  if (!repoPath) {
+    try {
+      const parsed = new URL(url)
+      repoPath = parsed.pathname.replace(/^\//, '')
+    }
+    catch {
+      return undefined
+    }
+  }
+
+  if (!repoPath)
+    return undefined
+
+  // Strip .git suffix and convert slashes to hyphens
+  repoPath = repoPath.replace(/\.git$/, '').replace(/\//g, '-')
+
+  return sanitizeFileName(repoPath) || undefined
+}
+
+export async function resolveGitRemoteName(rootDir: string): Promise<string | undefined> {
+  try {
+    const proc = Bun.spawn(['git', 'remote', '-v'], {
+      cwd: rootDir,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+
+    const output = await new Response(proc.stdout).text()
+    const exitCode = await proc.exited
+
+    if (exitCode !== 0)
+      return undefined
+
+    const lines = output.split('\n').filter(Boolean)
+    if (lines.length === 0)
+      return undefined
+
+    // Prefer origin, otherwise take the first remote
+    const preferredLine = lines.find(l => /^origin\s/.test(l)) ?? lines[0]
+    if (!preferredLine)
+      return undefined
+
+    // Format: "origin\thttps://github.com/user/project.git (fetch)"
+    const parts = preferredLine.split(/\s+/)
+    const url = parts[1]
+    if (!url)
+      return undefined
+
+    return parseRemoteUrlToName(url)
+  }
+  catch {
+    return undefined
+  }
+}
+
 export type {
   CandidateDirectory,
   PackageSelection,

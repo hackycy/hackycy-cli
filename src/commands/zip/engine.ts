@@ -12,6 +12,7 @@ import {
   describeProjectKind,
   inspectWorkspaceRoot,
   normalizeRelativePath,
+  resolveGitRemoteName,
   sanitizeFileName,
 } from './discovery'
 
@@ -44,6 +45,8 @@ interface ZipPlanningSession {
   selectedSource?: string
   globPatterns?: string[]
   outputFileName?: string
+  /** undefined = not yet fetched, null = fetched but no remote found, string = resolved name */
+  gitRemoteName?: string | null
 }
 
 interface SelectPackageStep {
@@ -96,6 +99,9 @@ function summarizeItems(values: string[], maxItems = 2): string {
 }
 
 function defaultOutputName(session: ZipPlanningSession): string {
+  if (session.gitRemoteName)
+    return session.gitRemoteName
+
   const fallback = session.packageName ?? path.basename(session.packageRoot ?? session.rootDir)
   return sanitizeFileName(fallback)
 }
@@ -117,6 +123,14 @@ async function hydrateSourceSelection(session: ZipPlanningSession): Promise<ZipP
     packageName: sourceSelection.packageName ?? session.packageName,
     sourceSelection,
   }
+}
+
+async function hydrateGitRemoteName(session: ZipPlanningSession): Promise<ZipPlanningSession> {
+  if (session.gitRemoteName !== undefined)
+    return session
+
+  const gitRemoteName = await resolveGitRemoteName(session.rootDir)
+  return { ...session, gitRemoteName: gitRemoteName ?? null }
 }
 
 function buildPackageStep(session: ZipPlanningSession): SelectPackageStep {
@@ -271,12 +285,13 @@ export async function resolveZipPlanningStep(session: ZipPlanningSession): Promi
   }
 
   if (!hydratedSession.outputFileName) {
+    const gitHydratedSession = await hydrateGitRemoteName(hydratedSession)
     return {
-      session: hydratedSession,
+      session: gitHydratedSession,
       step: {
         type: 'edit-output-file',
         message: 'Enter the name for the zip file (without .zip extension):',
-        initialValue: defaultOutputName(hydratedSession),
+        initialValue: defaultOutputName(gitHydratedSession),
       },
     }
   }
