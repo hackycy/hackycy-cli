@@ -2,10 +2,10 @@ import type { RmOptions } from './types'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import process from 'node:process'
-import { cancel, confirm, intro, isCancel, outro, select, spinner } from '@clack/prompts'
+import { cancel, confirm, intro, isCancel, multiselect, outro, select, spinner } from '@clack/prompts'
 import ansis from 'ansis'
 import { printTitle } from '../../shared/utils'
-import { scanForCandidates } from './scanner'
+import { CLEAN_ACTIONS } from './rules'
 
 async function deletePaths(targets: string[]): Promise<void> {
   const spin = spinner()
@@ -77,38 +77,67 @@ export async function rm(paths: string[], options: RmOptions): Promise<void> {
     return
   }
 
-  // Smart mode: scan current directory for cleanable targets
+  // Smart mode: select a clean action, scan, then multiselect targets
   const cwd = process.cwd()
   const depth = options.depth ?? 5
 
-  const scanSpin = spinner()
-  scanSpin.start('Scanning for cleanable targets...')
-  const candidates = await scanForCandidates(cwd, depth)
-  scanSpin.stop(
-    candidates.length > 0
-      ? `Found ${candidates.length} target${candidates.length !== 1 ? 's' : ''}`
-      : 'No cleanable targets found.',
-  )
-
-  if (candidates.length === 0) {
-    outro('Nothing to clean.')
-    return
-  }
-
-  const selected = await select({
-    message: 'Select item to delete',
-    options: candidates.map(c => ({
-      value: c.path,
-      label: path.relative(cwd, c.path),
-      hint: `[${c.rule.category}] ${c.rule.label}`,
+  const actionChoice = await select({
+    message: 'Select a clean action',
+    options: CLEAN_ACTIONS.map(a => ({
+      value: a.id,
+      label: a.label,
     })),
   })
 
-  if (isCancel(selected)) {
+  if (isCancel(actionChoice)) {
     cancel('Cancelled.')
     return
   }
 
-  await deletePaths([selected as string])
+  const action = CLEAN_ACTIONS.find(a => a.id === actionChoice)!
+
+  const scanSpin = spinner()
+  scanSpin.start('Scanning...')
+  const targets = await action.scan(cwd, depth)
+  scanSpin.stop(
+    targets.length > 0
+      ? `Found ${targets.length} target${targets.length !== 1 ? 's' : ''}`
+      : 'No targets found.',
+  )
+
+  if (targets.length === 0) {
+    outro('Nothing to clean.')
+    return
+  }
+
+  let toDelete: string[]
+
+  if (options.force) {
+    toDelete = targets
+  }
+  else {
+    const selected = await multiselect({
+      message: 'Select items to delete',
+      options: targets.map(p => ({
+        value: p,
+        label: path.relative(cwd, p),
+      })),
+      initialValues: targets,
+    })
+
+    if (isCancel(selected)) {
+      cancel('Cancelled.')
+      return
+    }
+
+    toDelete = selected as string[]
+
+    if (toDelete.length === 0) {
+      cancel('Nothing selected.')
+      return
+    }
+  }
+
+  await deletePaths(toDelete)
   outro(ansis.green('Done!'))
 }

@@ -1,13 +1,7 @@
-export interface CleanRule {
+export interface CleanAction {
   id: string
   label: string
-  category: string
-  match: (entryName: string, parentDir: string) => boolean | Promise<boolean>
-}
-
-export interface CleanCandidate {
-  rule: CleanRule
-  path: string
+  scan: (cwd: string, depth: number) => Promise<string[]>
 }
 
 export interface RmOptions {
