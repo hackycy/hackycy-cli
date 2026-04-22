@@ -1,5 +1,5 @@
 export type PackageManager = 'npm' | 'yarn' | 'pnpm' | 'bun'
 
-export interface RpOptions {
+export interface RunOptions {
   passthroughArgs?: string[]
 }
