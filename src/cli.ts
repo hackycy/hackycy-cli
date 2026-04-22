@@ -1,6 +1,7 @@
 import process from 'node:process'
 import { Command } from 'commander'
 import { version } from '../package.json'
+import { register as registerExport } from './commands/export'
 import { register as registerGit } from './commands/git'
 import { register as registerRm } from './commands/rm'
 import { register as registerRun } from './commands/run'
@@ -26,6 +27,7 @@ const program = new Command()
   .name('ycy')
   .version(version)
 
+registerExport(program)
 registerGit(program)
 registerRm(program)
 registerServe(program)
