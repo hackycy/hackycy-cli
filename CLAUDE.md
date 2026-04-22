@@ -47,6 +47,7 @@ src/
 
 **Key dependencies**:
 - `@clack/prompts` — interactive terminal UI (spinners, selects, text inputs)
+- `ink` - react for interactive command-line apps
 - `commander` — CLI argument parsing
 - `ansis` — terminal colors
 - `dayjs` — date math in `did`
