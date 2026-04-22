@@ -3,7 +3,7 @@ import { Command } from 'commander'
 import { version } from '../package.json'
 import { register as registerGit } from './commands/git'
 import { register as registerRm } from './commands/rm'
-import { register as registerRp } from './commands/rp'
+import { register as registerRun } from './commands/run'
 import { register as registerServe } from './commands/serve'
 import { register as registerUpgrade } from './commands/upgrade'
 import { register as registerZip } from './commands/zip'
@@ -30,7 +30,7 @@ registerGit(program)
 registerRm(program)
 registerServe(program)
 registerZip(program)
-registerRp(program)
+registerRun(program)
 registerUpgrade(program)
 
 program.on('command:*', (operands) => {

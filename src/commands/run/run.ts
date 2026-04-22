@@ -24,7 +24,7 @@ async function detectPackageManager(cwd: string): Promise<PackageManager | null>
   return null
 }
 
-export async function rp(options: RpOptions = {}): Promise<void> {
+export async function run(options: RpOptions = {}): Promise<void> {
   const cwd = process.cwd()
   const pkgPath = path.join(cwd, 'package.json')
 
