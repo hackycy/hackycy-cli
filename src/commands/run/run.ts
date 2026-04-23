@@ -25,7 +25,7 @@ async function detectPackageManager(cwd: string): Promise<PackageManager | null>
 }
 
 export async function run(options: RunOptions = {}): Promise<void> {
-  const cwd = process.cwd()
+  const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd()
   const pkgPath = path.join(cwd, 'package.json')
 
   const pkgFile = Bun.file(pkgPath)
