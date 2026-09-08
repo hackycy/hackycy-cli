@@ -3,6 +3,7 @@ package terminal
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -79,7 +80,7 @@ func (runtime *Runtime) Capabilities() Capabilities {
 
 // Open starts a per-command terminal run.
 func (runtime *Runtime) Open(ctx context.Context) ExperienceRun {
-	return runtime.open(ctx, defaultConsoleDescriptor())
+	return runtime.open(ctx, defaultConsoleDescriptor(), false)
 }
 
 // OpenConsole starts a run with command-owned safe Console context. The
@@ -89,14 +90,14 @@ func (runtime *Runtime) OpenConsole(ctx context.Context, descriptor ConsoleDescr
 	if err != nil {
 		return nil, err
 	}
-	return runtime.open(ctx, descriptor), nil
+	return runtime.open(ctx, descriptor, true), nil
 }
 
-func (runtime *Runtime) open(ctx context.Context, descriptor ConsoleDescriptor) ExperienceRun {
+func (runtime *Runtime) open(ctx context.Context, descriptor ConsoleDescriptor, eagerRich bool) *runtimeRun {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return &runtimeRun{
+	run := &runtimeRun{
 		runtime: runtime,
 		ctx:     ctx,
 		console: descriptor,
@@ -108,6 +109,14 @@ func (runtime *Runtime) open(ctx context.Context, descriptor ConsoleDescriptor) 
 		ledger:      NewTranscriptLedger(runtime.transcriptOptions),
 		checkpoints: make(map[string]struct{}),
 	}
+	if eagerRich && run.richEnabled() {
+		// OpenConsole has not committed semantic state yet. A renderer that
+		// cannot start at this point can therefore safely degrade to Plain.
+		if _, err := run.ensureRich(); err != nil {
+			run.disableRich()
+		}
+	}
+	return run
 }
 
 // DiagnosticWriter coordinates normal diagnostic records with the active Rich UI.
@@ -264,7 +273,9 @@ func (run *runtimeRun) Milestone(document PresentationDocument) error {
 }
 
 // Finish commits one finite command outcome and emits its optional result once.
-func (run *runtimeRun) Finish(outcome FinishOutcome, document *PresentationDocument) error {
+// FinishRequest is the production semantic form; the legacy outcome/document
+// shape remains accepted so command adapters can migrate independently.
+func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) error {
 	run.operation.Lock()
 	defer run.operation.Unlock()
 	if run.state == runClosed {
@@ -273,19 +284,69 @@ func (run *runtimeRun) Finish(outcome FinishOutcome, document *PresentationDocum
 	if run.state == runFinished {
 		return ErrExperienceRunFinished
 	}
-	if !outcome.valid() {
-		return ErrInvalidFinishOutcome
+	request, result, legacy, err := finishRequestFromValue(value, documents...)
+	if err != nil {
+		return err
+	}
+	normalized, err := normalizeFinishRequest(request)
+	if err != nil {
+		if legacy && !request.Outcome.valid() {
+			return ErrInvalidFinishOutcome
+		}
+		return err
 	}
 
 	run.state = runFinished
 	run.finishedByFinish = true
-	run.recordTranscript(TranscriptEvent{Kind: TranscriptOutcome, Outcome: outcome})
+	run.recordTranscript(TranscriptEvent{
+		Kind:     TranscriptOutcome,
+		Outcome:  normalized.Outcome,
+		Location: normalized.Location,
+		Summary:  normalized.Summary.transcriptText(),
+	})
 	run.freezeTranscript()
-	restoreErr := run.stopRich()
-	if document == nil {
-		return errors.Join(run.richFailure, restoreErr)
+	var outcomeErr error
+	if run.controller != nil {
+		outcomeErr = run.controller.outcome(run.ctx, normalized)
+		if outcomeErr != nil {
+			// An unexpected renderer termination uses the same recovery path as
+			// interactive operations: preserve the renderer error, restore the
+			// terminal, replay the bounded transcript, and fall back to Plain for
+			// the durable result.
+			outcomeErr = run.recoverRichFailure(outcomeErr)
+		}
 	}
-	return errors.Join(run.richFailure, restoreErr, run.writeResult(*document))
+	restoreErr := run.stopRich()
+	if result == nil {
+		return errors.Join(outcomeErr, run.richFailure, restoreErr)
+	}
+	return errors.Join(outcomeErr, run.richFailure, restoreErr, run.writeResult(*result))
+}
+
+func finishRequestFromValue(value any, documents ...*PresentationDocument) (FinishRequest, *PresentationDocument, bool, error) {
+	if len(documents) > 1 {
+		return FinishRequest{}, nil, false, fmt.Errorf("%w: at most one durable result is allowed", ErrInvalidFinishRequest)
+	}
+	var result *PresentationDocument
+	if len(documents) == 1 {
+		result = documents[0]
+	}
+	switch request := value.(type) {
+	case FinishRequest:
+		return request, result, false, nil
+	case *FinishRequest:
+		if request == nil {
+			return FinishRequest{}, nil, false, fmt.Errorf("%w: request is nil", ErrInvalidFinishRequest)
+		}
+		return *request, result, false, nil
+	case FinishOutcome:
+		// Existing adapters pass a durable Result as the second argument. Keep
+		// it out of the new completion projection until the adapter provides an
+		// explicit FinishRequest in its own migration slice.
+		return FinishRequest{Outcome: request}, result, true, nil
+	default:
+		return FinishRequest{}, nil, false, fmt.Errorf("%w: unsupported request type %T", ErrInvalidFinishRequest, value)
+	}
 }
 
 // ResultCheckpoint writes one stable service-command checkpoint while leaving

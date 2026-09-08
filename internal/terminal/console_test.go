@@ -1,10 +1,12 @@
 package terminal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -28,6 +30,35 @@ func TestOpenConsoleNormalizesSafeBoundedDescriptorBeforeRichUse(t *testing.T) {
 	}
 	if concrete.console.Command != "YCY CONFIG" || concrete.console.Target != "profile�" || concrete.console.Status != "READY" || len(concrete.console.Metadata) != 1 || concrete.console.Metadata[0] != (ConsoleMetadata{Label: "workspace", Value: "repo"}) {
 		t.Fatalf("console descriptor = %#v", concrete.console)
+	}
+}
+
+func TestOpenConsoleRichPreflightFailureFallsBackToPlain(t *testing.T) {
+	var diagnostics bytes.Buffer
+	runtime := NewExperience(ExperienceOptions{
+		Capabilities: Capabilities{Interaction: RichInteractive},
+		Input:        strings.NewReader("project\n"),
+		Diagnostics:  &diagnostics,
+	})
+	run, err := runtime.OpenConsole(context.Background(), ConsoleDescriptor{
+		Command: "YCY / config",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "workspace", Name: "Workspace"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenConsole() error = %v", err)
+	}
+	concrete := run.(*runtimeRun)
+	if concrete.controller != nil || !concrete.richDisabled {
+		t.Fatalf("preflight fallback state = controller:%v disabled:%v", concrete.controller, concrete.richDisabled)
+	}
+	answer, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Workspace"})
+	if err != nil || answer.Value != "project" {
+		t.Fatalf("Plain fallback Ask() = (%#v, %v)", answer, err)
+	}
+	if err := run.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 }
 
@@ -118,6 +149,102 @@ func TestConsoleCompactViewRetainsOrderedRowsAndActiveRegion(t *testing.T) {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("compact view missing %q: %q", needle, view)
 		}
+	}
+}
+
+func TestConsoleInitialFormCatalogIsCompleteAndOrdered(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY / config",
+		Target:  "profile setup",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "workspace", Name: "Workspace", Detail: "choose project"},
+			{ID: "token", Name: "Access token", Detail: "credential", Sensitive: true},
+			{ID: "confirm", Name: "Confirm", Detail: "apply changes"},
+		},
+	})
+
+	if len(model.formRows) != 3 || len(model.statusRows) != 3 {
+		t.Fatalf("initial catalog rows = (%d form, %d status), want three each", len(model.formRows), len(model.statusRows))
+	}
+	if model.formRows[0].state != PhaseActive || model.formRows[1].state != PhasePending || model.formRows[2].state != PhasePending {
+		t.Fatalf("initial catalog states = %#v, want active then pending", model.formRows)
+	}
+	if model.formRows[1].detail != "[redacted]" {
+		t.Fatalf("sensitive catalog detail = %q, want redacted", model.formRows[1].detail)
+	}
+
+	view := model.View().Content
+	for _, needle := range []string{"Workspace", "choose project", "Access token", "[redacted]", "Confirm", "apply changes", "◆ ACTIVE", "○ PENDING"} {
+		if !strings.Contains(view, needle) {
+			t.Fatalf("initial catalog view missing %q: %q", needle, view)
+		}
+	}
+	workspace := strings.Index(view, "Workspace")
+	token := strings.Index(view, "Access token")
+	confirm := strings.Index(view, "Confirm")
+	if workspace < 0 || token < workspace || confirm < token {
+		t.Fatalf("initial catalog order = %q", view)
+	}
+}
+
+func TestConsoleCatalogAskReusesExistingRows(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY / config",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "workspace", Name: "Workspace", Detail: "choose project"},
+			{ID: "token", Name: "Access token", Detail: "credential", Sensitive: true},
+		},
+	})
+	response := make(chan richAskResult, 1)
+	_, _ = model.Update(richShowFormMsg{
+		id:       1,
+		form:     consoleTestForm{},
+		answer:   func() InteractionAnswer { return InteractionAnswer{Value: "project"} },
+		step:     consoleFormStep{catalogID: "workspace", id: 1, name: "Workspace", detail: "text input", state: PhaseActive},
+		response: response,
+		ack:      make(chan struct{}),
+	})
+	if len(model.formRows) != 2 || len(model.statusRows) != 2 {
+		t.Fatalf("catalog rows after Ask = (%d form, %d status), want two each", len(model.formRows), len(model.statusRows))
+	}
+	if model.statusRows[0].state != PhaseActive || model.statusRows[1].state != PhasePending {
+		t.Fatalf("catalog states after Ask = %#v", model.statusRows)
+	}
+	_, _ = model.Update(richFormSubmittedMsg{id: 1})
+	<-response
+	if model.statusRows[0].state != PhaseCompleted || !strings.Contains(model.View().Content, "Access token") {
+		t.Fatalf("catalog row was not retained after completion: %#v\n%s", model.statusRows, model.View().Content)
+	}
+}
+
+func TestConsoleTrackReplacesFormCatalogWithWorkCatalog(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY / config",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "workspace", Name: "Workspace", Detail: "choose project"},
+			{ID: "confirm", Name: "Confirm", Detail: "apply changes"},
+		},
+	})
+
+	_, _ = model.Update(richStartTrackMsg{
+		label: "Apply profile",
+		phases: []OperationPhase{
+			{ID: "validate", Name: "Validate", State: PhasePending},
+			{ID: "write", Name: "Write", State: PhasePending},
+		},
+		requestCancel: func() error { return nil },
+		ack:           make(chan struct{}),
+	})
+
+	if len(model.formRows) != 0 || len(model.statusRows) != 2 {
+		t.Fatalf("work replacement rows = (%d form, %d status), want no form and two work rows", len(model.formRows), len(model.statusRows))
+	}
+	if model.statusRows[0].phase != "Validate" || model.statusRows[1].phase != "Write" || model.statusRows[0].state != PhasePending || model.statusRows[1].state != PhasePending {
+		t.Fatalf("work catalog = %#v", model.statusRows)
+	}
+	view := model.View().Content
+	if strings.Contains(view, "Workspace") || strings.Contains(view, "Confirm") || !strings.Contains(view, "Validate") || !strings.Contains(view, "Write") {
+		t.Fatalf("form/work rows mixed in view: %q", view)
 	}
 }
 
@@ -321,6 +448,125 @@ func TestConsoleTrackRowsRetainCatalogOrderAndFinalDetailsAfterActiveRegionChang
 	if !strings.Contains(view, "✓ DONE") || !strings.Contains(view, "Follow-up context") {
 		t.Fatalf("track table or replacement active region missing: %q", view)
 	}
+}
+
+func TestConsoleOutcomeRetainsWorkRowsAndRendersBoundedSummary(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY CONFIG",
+		Target:  "profile demo",
+	})
+	_, _ = model.Update(richStartTrackMsg{
+		label: "Apply profile",
+		phases: []OperationPhase{
+			{ID: "validate", Name: "Validate", State: PhaseCompleted, Detail: "validated"},
+			{ID: "write", Name: "Write", State: PhaseCompleted, Detail: "persisted"},
+		},
+		requestCancel: func() error { return nil },
+		ack:           make(chan struct{}),
+	})
+
+	request := FinishRequest{
+		Outcome:  Succeeded,
+		Location: "profile demo",
+		Summary:  PresentationDocument{Blocks: []PresentationBlock{{Role: VisualRolePlain, Text: "Profile applied"}}},
+	}
+	_ = updateRichOutcome(t, model, request)
+	if model.mode != richOutcomeMode {
+		t.Fatalf("outcome mode = %v, want richOutcomeMode", model.mode)
+	}
+	if len(model.statusRows) != 2 || model.statusRows[0].phase != "Validate" || model.statusRows[1].phase != "Write" {
+		t.Fatalf("final Work rows = %#v, want both rows retained", model.statusRows)
+	}
+	view := model.View().Content
+	for _, needle := range []string{"✓ SUCCEEDED", "Location: profile demo", "Profile applied", "Validate", "Write", "✓ DONE"} {
+		if !strings.Contains(view, needle) {
+			t.Fatalf("Outcome view missing %q: %q", needle, view)
+		}
+	}
+
+	lateAck := make(chan struct{})
+	_, _ = model.Update(richShowFormMsg{
+		id:   99,
+		step: consoleFormStep{name: "Late form", detail: "should be ignored", state: PhaseActive},
+		ack:  lateAck,
+	})
+	if model.mode != richOutcomeMode || model.outcome.Outcome != request.Outcome || model.outcome.Location != request.Location || strings.Contains(model.View().Content, "Late form") {
+		t.Fatalf("late form changed terminal Outcome: mode=%v outcome=%#v view=%q", model.mode, model.outcome, model.View().Content)
+	}
+}
+
+func TestConsoleOutcomeProjectsFailureAndCancellation(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		outcome    FinishOutcome
+		phaseState PhaseState
+		glyph      string
+		location   string
+		summary    string
+	}{
+		{name: "failed", outcome: Failed, phaseState: PhaseFailed, glyph: "✕ FAILED", location: "write profile", summary: "profile could not be saved"},
+		{name: "cancelled", outcome: Cancelled, phaseState: PhaseCancelled, glyph: "⊘ CANCELLED", location: "confirm profile", summary: "profile update cancelled"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+				Command: "YCY CONFIG",
+				Target:  "profile demo",
+			})
+			_, _ = model.Update(richStartTrackMsg{
+				label: "Apply profile",
+				phases: []OperationPhase{
+					{ID: "validate", Name: "Validate", State: PhaseCompleted, Detail: "validated"},
+					{ID: "write", Name: "Write", State: testCase.phaseState, Detail: testCase.summary},
+				},
+				requestCancel: func() error { return nil },
+				ack:           make(chan struct{}),
+			})
+			_ = updateRichOutcome(t, model, FinishRequest{
+				Outcome:  testCase.outcome,
+				Location: testCase.location,
+				Summary:  PresentationDocument{Blocks: []PresentationBlock{{Text: testCase.summary}}},
+			})
+
+			view := model.View().Content
+			for _, needle := range []string{testCase.glyph, "Location: " + testCase.location, testCase.summary, "Write"} {
+				if !strings.Contains(view, needle) {
+					t.Fatalf("%s Outcome view missing %q: %q", testCase.name, needle, view)
+				}
+			}
+			_, _ = model.Update(richTrackPhaseMsg{
+				phase: OperationPhase{ID: "write", Name: "Late write", State: PhaseCompleted, Detail: "must be ignored"},
+				ack:   make(chan struct{}),
+			})
+			if strings.Contains(model.View().Content, "Late write") {
+				t.Fatalf("late Work update changed %s Outcome: %q", testCase.name, model.View().Content)
+			}
+		})
+	}
+}
+
+func TestConsoleOutcomeElapsedQuitsAfterExactDwell(t *testing.T) {
+	if outcomeDwell != 800*time.Millisecond {
+		t.Fatalf("outcome dwell = %s, want 800ms", outcomeDwell)
+	}
+	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
+	_ = updateRichOutcome(t, model, FinishRequest{Outcome: Succeeded})
+	updated, quitCmd := model.Update(richOutcomeElapsedMsg{})
+	if updated != model {
+		t.Fatalf("elapsed message returned a different model: %T", updated)
+	}
+	if quitCmd == nil {
+		t.Fatal("elapsed Outcome message returned no quit command")
+	}
+	if _, ok := quitCmd().(tea.QuitMsg); !ok {
+		t.Fatalf("elapsed Outcome command returned %T, want tea.QuitMsg", quitCmd())
+	}
+}
+
+func updateRichOutcome(t *testing.T, model *richRootModel, request FinishRequest) tea.Cmd {
+	t.Helper()
+	ack := make(chan struct{})
+	_, cmd := model.Update(richShowOutcomeMsg{request: request, ack: ack})
+	return cmd
 }
 
 type consoleTestForm struct{}

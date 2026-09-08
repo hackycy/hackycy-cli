@@ -174,12 +174,14 @@ func assertForkRemoveRichPTYOutput(t *testing.T, output string, color, wide bool
 	}
 	transcript := visible[leave:]
 	ordered := []string{
-		"Load fork provider instances (completed)",
+		"ANSWERS",
 		"Selected instance: work",
+		"WORK",
+		"Load fork provider instances (completed)",
 		"Host: gitlab.example/v1",
 		`Remove instance "work": confirmed`,
 		"Remove provider instance (completed)",
-		"succeeded",
+		"OUTCOME  succeeded",
 		"Instance work removed",
 	}
 	last := 0
@@ -191,7 +193,8 @@ func assertForkRemoveRichPTYOutput(t *testing.T, output string, color, wide bool
 		last += next + len(expected)
 	}
 	if !wide {
-		if !strings.Contains(visible, "Remove instance \"work\"?") && !strings.Contains(visible, "confirmation") {
+		compact := strings.Join(strings.Fields(terminaltest.StripANSI(visible)), " ")
+		if !strings.Contains(compact, "Remove instance \"work\"?") && !strings.Contains(compact, "confirmation") {
 			t.Fatalf("compact fork remove confirmation missing: %q", output)
 		}
 	}

@@ -55,8 +55,18 @@ type RecordingSemanticRun struct {
 }
 
 // Finish records a finite command outcome and its optional result document.
-func (run *RecordingSemanticRun) Finish(outcome terminal.FinishOutcome, document *terminal.PresentationDocument) error {
-	run.record(FinishOperation, Finish{Outcome: outcome, Document: document})
+func (run *RecordingSemanticRun) Finish(value any, documents ...*terminal.PresentationDocument) error {
+	finish := Finish{Value: value, Documents: append([]*terminal.PresentationDocument(nil), documents...)}
+	if outcome, ok := value.(terminal.FinishOutcome); ok {
+		finish.Outcome = outcome
+		if len(documents) == 1 {
+			finish.Document = documents[0]
+		}
+	}
+	if request, ok := value.(terminal.FinishRequest); ok {
+		finish.Request = request
+	}
+	run.record(FinishOperation, finish)
 	return nil
 }
 
@@ -129,6 +139,9 @@ func (run *RecordingSemanticRun) record(kind OperationKind, value any) {
 
 // Finish is one recorded finite command completion request.
 type Finish struct {
-	Outcome  terminal.FinishOutcome
-	Document *terminal.PresentationDocument
+	Value     any
+	Documents []*terminal.PresentationDocument
+	Outcome   terminal.FinishOutcome
+	Document  *terminal.PresentationDocument
+	Request   terminal.FinishRequest
 }

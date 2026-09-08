@@ -17,7 +17,7 @@ func TestTranscriptLedgerNormalizesAndNumbersEvents(t *testing.T) {
 	if events[0].Label != "Project name" || events[0].Text != "value next" {
 		t.Fatalf("normalized event = %#v", events[0])
 	}
-	if got, want := ledger.Render(), "Project name: value next\ncheckpoint\n"; got != want {
+	if got, want := ledger.Render(), "ANSWERS\nProject name: value next\n\nWORK\ncheckpoint\n"; got != want {
 		t.Fatalf("render = %q, want %q", got, want)
 	}
 }
@@ -36,6 +36,10 @@ func TestTranscriptLedgerBoundsAtEventBoundariesAndMarksTruncation(t *testing.T)
 	}
 	if got := strings.Count(ledger.Render(), "... transcript truncated ..."); got != 1 {
 		t.Fatalf("truncation marker count = %d", got)
+	}
+	wantTruncated := "WORK\n" + strings.Repeat("x", 20) + "\n" + strings.Repeat("x", 20) + "\n... transcript truncated ...\n"
+	if got := ledger.Render(); got != wantTruncated {
+		t.Fatalf("truncated render = %q, want %q", got, wantTruncated)
 	}
 	before := len(events)
 	ledger.Append(TranscriptEvent{Kind: TranscriptMilestone, Text: "late"})
@@ -63,7 +67,7 @@ func TestTranscriptLedgerRetainsFinalOutcomeAfterTruncation(t *testing.T) {
 			t.Fatalf("event sequence at %d = %d, want %d", index, event.Sequence, index+1)
 		}
 	}
-	if got := ledger.Render(); !strings.HasSuffix(got, "succeeded\n") {
+	if got := ledger.Render(); !strings.HasSuffix(got, "OUTCOME  succeeded\n") {
 		t.Fatalf("render = %q, want final outcome", got)
 	}
 }
@@ -83,8 +87,51 @@ func TestTranscriptLedgerNormalizesTinyBudgetsAroundMandatoryEvents(t *testing.T
 	if events[0].Sequence != 1 || events[1].Sequence != 2 {
 		t.Fatalf("sequences = %d, %d, want 1, 2", events[0].Sequence, events[1].Sequence)
 	}
-	if got := ledger.Render(); got != "... transcript truncated ...\nfailed\n" {
+	if got := ledger.Render(); got != "WORK\n... transcript truncated ...\n\nOUTCOME  failed\n" {
 		t.Fatalf("render = %q, want marker and final outcome", got)
+	}
+}
+
+func TestTranscriptLedgerPartitionsWorkAndReusesOutcomeProjection(t *testing.T) {
+	ledger := NewTranscriptLedger(TranscriptOptions{MaxEvents: 16, MaxBytes: 4096, MaxFieldSize: 64})
+	ledger.Append(TranscriptEvent{Kind: TranscriptAsk, Label: "Workspace", Text: "repo"})
+	ledger.Append(TranscriptEvent{Kind: TranscriptAsk, Label: "Access token", Text: "[redacted]"})
+	ledger.Append(TranscriptEvent{Kind: TranscriptMilestone, Text: "checkpoint"})
+	ledger.Append(TranscriptEvent{
+		Kind:    TranscriptPhase,
+		Label:   "Write profile",
+		Text:    "saved",
+		State:   PhaseCompleted,
+		PhaseID: "write-profile",
+	})
+	ledger.Append(TranscriptEvent{
+		Kind:     TranscriptOutcome,
+		Outcome:  Succeeded,
+		Location: "workspace\x1b[31m/project",
+		Summary:  "Profile saved\n[redacted]",
+	})
+
+	want := "ANSWERS\nWorkspace: repo\nAccess token: [redacted]\n\nWORK\ncheckpoint\nWrite profile (completed): saved\n\nAT       workspace/project\nOUTCOME  succeeded: Profile saved [redacted]\n"
+	if got := ledger.Render(); got != want {
+		t.Fatalf("structured render = %q, want %q", got, want)
+	}
+}
+
+func TestTranscriptLedgerBoundsOutcomeLocationAndSummary(t *testing.T) {
+	ledger := NewTranscriptLedger(TranscriptOptions{MaxEvents: 8, MaxBytes: 4096, MaxFieldSize: 27})
+	ledger.Append(TranscriptEvent{
+		Kind:     TranscriptOutcome,
+		Outcome:  Failed,
+		Location: "location\n" + strings.Repeat("x", 64),
+		Summary:  "summary\x1b[31m " + strings.Repeat("y", 64),
+	})
+
+	events := ledger.Events()
+	if len(events) != 1 || len(events[0].Location) >= len("location "+strings.Repeat("x", 64)) || len(events[0].Summary) >= len("summary "+strings.Repeat("y", 64)) {
+		t.Fatalf("bounded outcome event = %#v", events)
+	}
+	if got := ledger.Render(); strings.Contains(got, "\x1b") {
+		t.Fatalf("structured transcript retained terminal control: %q", got)
 	}
 }
 

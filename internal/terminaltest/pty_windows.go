@@ -16,6 +16,12 @@ func StartPTY(_ *exec.Cmd) (*PTYProcess, error) {
 	return nil, ErrPTYUnsupported
 }
 
+// StartPTYWithSize reports that the controlled Unix PTY fixture is unavailable
+// on Windows.
+func StartPTYWithSize(_ *exec.Cmd, _, _ uint16) (*PTYProcess, error) {
+	return nil, ErrPTYUnsupported
+}
+
 // Resize reports that the controlled Unix PTY fixture is unavailable on Windows.
 func (process *PTYProcess) Resize(_, _ uint16) error {
 	if process == nil {

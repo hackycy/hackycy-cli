@@ -35,6 +35,11 @@ type TranscriptEvent struct {
 	PhaseID  string
 	State    PhaseState
 	Outcome  FinishOutcome
+	// Location and Summary are the bounded completion projection. They are
+	// retained separately from Text so the renderer can place them in the
+	// optional AT and OUTCOME sections without consulting stdout.
+	Location string
+	Summary  string
 }
 
 // TranscriptOptions bounds one Interaction Transcript ledger.
@@ -135,22 +140,59 @@ func (ledger *TranscriptLedger) Render() string {
 	if ledger == nil {
 		return ""
 	}
-	var output strings.Builder
+	answers := make([]string, 0)
+	work := make([]string, 0)
+	var outcome *TranscriptEvent
 	for _, event := range ledger.events {
-		line := event.renderLine()
-		if line == "" {
-			continue
+		switch event.Kind {
+		case TranscriptAsk:
+			if line := event.renderLine(); line != "" {
+				answers = append(answers, line)
+			}
+		case TranscriptMilestone, TranscriptPhase, TranscriptTruncated:
+			if line := event.renderLine(); line != "" {
+				work = append(work, line)
+			}
+		case TranscriptOutcome:
+			copy := event
+			outcome = &copy
 		}
-		output.WriteString(line)
-		output.WriteByte('\n')
 	}
-	return output.String()
+
+	sections := make([]string, 0, 4)
+	if len(answers) > 0 {
+		sections = append(sections, transcriptSection("ANSWERS", answers))
+	}
+	if len(work) > 0 {
+		sections = append(sections, transcriptSection("WORK", work))
+	}
+	if outcome != nil {
+		outcomeLines := make([]string, 0, 2)
+		if outcome.Location != "" {
+			outcomeLines = append(outcomeLines, "AT       "+outcome.Location)
+		}
+		outcomeLines = append(outcomeLines, "OUTCOME  "+outcome.renderOutcomeLine())
+		sections = append(sections, strings.Join(outcomeLines, "\n"))
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	return strings.Join(sections, "\n\n") + "\n"
+}
+
+func transcriptSection(name string, lines []string) string {
+	section := make([]string, 0, len(lines)+1)
+	section = append(section, name)
+	section = append(section, lines...)
+	return strings.Join(section, "\n")
 }
 
 func (ledger *TranscriptLedger) normalize(event TranscriptEvent) TranscriptEvent {
 	event.Label = normalizeTranscriptField(event.Label, ledger.maxFieldSize)
 	event.Text = normalizeTranscriptField(event.Text, ledger.maxFieldSize)
 	event.PhaseID = normalizeTranscriptField(event.PhaseID, ledger.maxFieldSize)
+	event.Location = normalizeTranscriptField(event.Location, ledger.maxFieldSize)
+	event.Summary = normalizeTranscriptField(event.Summary, ledger.maxFieldSize)
 	return event
 }
 
@@ -226,12 +268,20 @@ func (event TranscriptEvent) renderLine() string {
 		}
 		return event.Label + " (" + event.State.String() + "): " + event.Text
 	case TranscriptOutcome:
-		return event.Outcome.String()
+		return event.renderOutcomeLine()
 	case TranscriptTruncated:
 		return event.Text
 	default:
 		return event.Text
 	}
+}
+
+func (event TranscriptEvent) renderOutcomeLine() string {
+	line := event.Outcome.String()
+	if event.Summary != "" {
+		line += ": " + event.Summary
+	}
+	return line
 }
 
 func interactionTranscriptText(request InteractionRequest, answer InteractionAnswer) string {
@@ -287,7 +337,7 @@ func (document PresentationDocument) transcriptText() string {
 }
 
 func transcriptEventBytes(event TranscriptEvent) int {
-	return len(event.Label) + len(event.Text) + len(event.PhaseID) + 32
+	return len(event.Label) + len(event.Text) + len(event.PhaseID) + len(event.Location) + len(event.Summary) + 32
 }
 
 func normalizeTranscriptField(value string, maxBytes int) string {

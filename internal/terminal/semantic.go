@@ -38,14 +38,25 @@ type ConsoleMetadata struct {
 	Value string
 }
 
+// ConsoleFormStep is one command-owned entry in the complete pre-work form
+// catalog. It is a safe projection only; the terminal owns its state symbol
+// and interactive control rendering.
+type ConsoleFormStep struct {
+	ID        string
+	Name      string
+	Detail    string
+	Sensitive bool
+}
+
 // ConsoleDescriptor supplies the semantic identity and safe context for one
 // Rich Console run. Command adapters must provide bounded safe projections;
 // terminal owns all rendering and terminal-mode behavior.
 type ConsoleDescriptor struct {
-	Command  string
-	Target   string
-	Status   string
-	Metadata []ConsoleMetadata
+	Command     string
+	Target      string
+	Status      string
+	Metadata    []ConsoleMetadata
+	FormCatalog []ConsoleFormStep
 }
 
 // FinishOutcome is the durable semantic outcome for one finite command run.
@@ -73,6 +84,15 @@ func (outcome FinishOutcome) String() string {
 	}
 }
 
+// FinishRequest is the bounded, command-owned semantic completion request.
+// Summary is the safe outcome projection used by both the final Live View and
+// the Interaction Transcript; it is never derived from a durable Result.
+type FinishRequest struct {
+	Outcome  FinishOutcome
+	Location string
+	Summary  PresentationDocument
+}
+
 // InteractionRequest describes command intent without choosing a prompt toolkit.
 type InteractionRequest struct {
 	Kind         InteractionKind
@@ -85,6 +105,9 @@ type InteractionRequest struct {
 	CancelValues []string
 	PlainLead    string
 	PlainPrompt  string
+	// ConsoleStepID identifies the corresponding entry in the complete Form
+	// Catalog. An empty ID is retained for legacy adapters without a catalog.
+	ConsoleStepID string
 	// TranscriptLabel is the safe label used for the completed answer marker.
 	TranscriptLabel string
 	// TranscriptProject optionally maps a completed answer to a command-owned,
@@ -195,7 +218,11 @@ type ExperienceRun interface {
 	Track(TrackedOperation) error
 	Notice(PresentationDocument) error
 	Milestone(PresentationDocument) error
-	Finish(FinishOutcome, *PresentationDocument) error
+	// Finish accepts a bounded FinishRequest and an optional durable Result.
+	// The optional document remains a separate stdout channel; it is never
+	// derived into the Live View or Interaction Transcript. A FinishOutcome
+	// first argument retains source compatibility for existing adapters.
+	Finish(any, ...*PresentationDocument) error
 	// ResultCheckpoint writes one identified service-command result without
 	// closing the run or entering the interaction transcript.
 	ResultCheckpoint(string, PresentationDocument) error

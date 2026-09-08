@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,6 +17,8 @@ import (
 )
 
 var errRichUnavailable = errors.New("rich terminal is unavailable")
+
+const outcomeDwell = 800 * time.Millisecond
 
 type richController struct {
 	runtime *Runtime
@@ -247,6 +250,24 @@ func (controller *richController) finishTrack() error {
 	return controller.send(richFinishTrackMsg{ack: ack}, ack)
 }
 
+func (controller *richController) outcome(ctx context.Context, request FinishRequest) error {
+	ack := make(chan struct{})
+	if err := controller.send(richShowOutcomeMsg{request: request, ack: ack}, ack); err != nil {
+		return err
+	}
+	select {
+	case <-controller.done:
+		return controller.programErrorOrNil()
+	case <-ctx.Done():
+		// Cancellation is allowed to interrupt the fixed outcome dwell. Quit the
+		// renderer here so stopRich can still perform the normal restoration and
+		// transcript replay path.
+		controller.program.Quit()
+		<-controller.done
+		return controller.programErrorOrNil()
+	}
+}
+
 func (controller *richController) send(message tea.Msg, ack <-chan struct{}) error {
 	select {
 	case <-controller.done:
@@ -339,6 +360,7 @@ const (
 	richNoticeMode richMode = iota
 	richFormMode
 	richTrackMode
+	richOutcomeMode
 )
 
 type richRootModel struct {
@@ -359,6 +381,7 @@ type richRootModel struct {
 	answer          func() InteractionAnswer
 	response        chan<- richAskResult
 	track           *trackedState
+	outcome         FinishRequest
 	formRows        []consoleFormStep
 	statusRows      []consoleStatusRow
 	trackRowStart   int
@@ -370,11 +393,47 @@ func newRichRootModel(width, height int, color bool) *richRootModel {
 }
 
 func newRichRootModelWithConsole(width, height int, color bool, console ConsoleDescriptor) *richRootModel {
-	return &richRootModel{
+	model := &richRootModel{
 		width:   width,
 		height:  height,
 		color:   color,
 		console: console,
+	}
+	model.initializeFormCatalog()
+	return model
+}
+
+// initializeFormCatalog materializes the complete pre-work table before any
+// interaction message arrives. The first step is the current active region;
+// all later steps remain visible as pending rows.
+func (model *richRootModel) initializeFormCatalog() {
+	if len(model.console.FormCatalog) == 0 {
+		return
+	}
+	model.formRows = make([]consoleFormStep, 0, len(model.console.FormCatalog))
+	model.statusRows = make([]consoleStatusRow, 0, len(model.console.FormCatalog))
+	for index, catalogStep := range model.console.FormCatalog {
+		state := PhasePending
+		if index == 0 {
+			state = PhaseActive
+		}
+		detail := catalogStep.Detail
+		if catalogStep.Sensitive {
+			detail = "[redacted]"
+		}
+		step := consoleFormStep{
+			catalogID: catalogStep.ID,
+			name:      catalogStep.Name,
+			detail:    detail,
+			state:     state,
+			row:       index,
+		}
+		model.formRows = append(model.formRows, step)
+		model.statusRows = append(model.statusRows, consoleStatusRow{
+			state:  state,
+			phase:  step.name,
+			detail: step.detail,
+		})
 	}
 }
 
@@ -398,6 +457,10 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return model, nil
 	case richNoticeMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		model.captureLegacyIntro(value.document)
 		model.preserveTrack()
 		if len(value.document.Blocks) > 0 {
@@ -407,6 +470,10 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		close(value.ack)
 		return model, nil
 	case richMilestoneMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		model.captureLegacyIntro(value.document)
 		model.preserveTrack()
 		if len(value.document.Blocks) > 0 {
@@ -416,6 +483,10 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		close(value.ack)
 		return model, nil
 	case richShowFormMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		model.preserveTrack()
 		model.mode = richFormMode
 		model.formID = value.id
@@ -423,13 +494,27 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.answer = value.answer
 		model.response = value.response
 		step := value.step
-		step.row = len(model.statusRows)
-		model.statusRows = append(model.statusRows, consoleStatusRow{
-			state:  step.state,
-			phase:  step.name,
-			detail: step.detail,
-		})
-		model.formRows = append(model.formRows, step)
+		if row := model.formCatalogRow(step.catalogID); row >= 0 {
+			step.row = row
+			model.formRows[row].id = step.id
+			model.formRows[row].state = PhaseActive
+			model.formRows[row].detail = step.detail
+			model.statusRows[row] = consoleStatusRow{
+				state:  PhaseActive,
+				phase:  model.formRows[row].name,
+				detail: step.detail,
+			}
+		} else {
+			// Legacy adapters without a catalog retain their established
+			// append-on-Ask behavior until their command slice supplies IDs.
+			step.row = len(model.statusRows)
+			model.statusRows = append(model.statusRows, consoleStatusRow{
+				state:  step.state,
+				phase:  step.name,
+				detail: step.detail,
+			})
+			model.formRows = append(model.formRows, step)
+		}
 		model.configureForm()
 		close(value.ack)
 		return model, model.form.Init()
@@ -456,7 +541,24 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		close(value.ack)
 		return model, nil
 	case richStartTrackMsg:
-		model.preserveTrack()
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
+		// Work is a replacement phase, not an append-only continuation of the
+		// form. The first Work Catalog clears every Form row so the two catalog
+		// kinds can never mix. Sequential legacy Work operations retain their
+		// completed rows until their adapters publish one complete catalog.
+		if len(model.formRows) > 0 {
+			model.track = nil
+			model.form = nil
+			model.formRows = nil
+			model.statusRows = nil
+			model.trackRowStart = 0
+		} else {
+			model.preserveTrack()
+		}
+		model.trackRowsSynced = true
 		model.mode = richTrackMode
 		model.track = &trackedState{
 			label:  value.label,
@@ -466,11 +568,14 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			},
 		}
 		model.trackRowStart = len(model.statusRows)
-		model.trackRowsSynced = true
 		model.syncTrackRows()
 		close(value.ack)
 		return model, nil
 	case richTrackPhaseMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		if model.track != nil {
 			model.track.applyPhase(value.phase)
 			model.syncTrackRows()
@@ -478,16 +583,51 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		close(value.ack)
 		return model, nil
 	case richCancelTrackMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		if model.track != nil {
 			model.track.requestCancellation()
 		}
 		close(value.ack)
 		return model, nil
 	case richFinishTrackMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
 		if model.track != nil {
 			model.track.cancelArmed = false
 		}
 		close(value.ack)
+		return model, nil
+	case richShowOutcomeMsg:
+		if model.mode == richOutcomeMode {
+			close(value.ack)
+			return model, nil
+		}
+		// Preserve the final Work rows in the stable table before dropping the
+		// mutable tracker. Outcome is a terminal projection, so later form/work
+		// messages are acknowledged but cannot replace it.
+		if model.track != nil {
+			model.syncTrackRows()
+		}
+		model.track = nil
+		model.form = nil
+		model.formID = 0
+		model.answer = nil
+		model.response = nil
+		model.outcome = value.request
+		model.mode = richOutcomeMode
+		close(value.ack)
+		return model, tea.Tick(outcomeDwell, func(time.Time) tea.Msg {
+			return richOutcomeElapsedMsg{}
+		})
+	case richOutcomeElapsedMsg:
+		if model.mode == richOutcomeMode {
+			return model, tea.Quit
+		}
 		return model, nil
 	case tea.KeyPressMsg:
 		if model.mode == richTrackMode && model.track != nil {
@@ -698,6 +838,8 @@ func (model *richRootModel) consoleStatusLabel() string {
 	switch model.mode {
 	case richFormMode, richTrackMode:
 		return "ACTIVE"
+	case richOutcomeMode:
+		return strings.ToUpper(model.outcome.Outcome.String())
 	}
 	if model.console.Status != "" {
 		return strings.ToUpper(stripTerminalControl(model.console.Status))
@@ -751,11 +893,12 @@ func legacyIntroField(value string) string {
 }
 
 type consoleFormStep struct {
-	id     uint64
-	name   string
-	detail string
-	state  PhaseState
-	row    int
+	id        uint64
+	catalogID string
+	name      string
+	detail    string
+	state     PhaseState
+	row       int
 }
 
 func newConsoleFormStep(id uint64, request InteractionRequest) consoleFormStep {
@@ -780,7 +923,20 @@ func newConsoleFormStep(id uint64, request InteractionRequest) consoleFormStep {
 	if request.Sensitive {
 		detail = "redacted input"
 	}
-	return consoleFormStep{id: id, name: name, detail: detail, state: PhaseActive}
+	return consoleFormStep{id: id, catalogID: strings.TrimSpace(stripTerminalControl(request.ConsoleStepID)), name: name, detail: detail, state: PhaseActive}
+}
+
+func (model *richRootModel) formCatalogRow(catalogID string) int {
+	catalogID = strings.TrimSpace(stripTerminalControl(catalogID))
+	if catalogID == "" {
+		return -1
+	}
+	for index, step := range model.formRows {
+		if step.catalogID == catalogID {
+			return index
+		}
+	}
+	return -1
 }
 
 func (model *richRootModel) finishFormRow(id uint64, state PhaseState, detail string) {
@@ -889,6 +1045,11 @@ func (model *richRootModel) consoleActiveView(width int) string {
 			}
 			active = wrapText(strings.Join(parts, "\n"), width)
 		}
+	case richOutcomeMode:
+		active = model.consoleOutcomeView(width)
+	}
+	if model.mode == richOutcomeMode {
+		return active
 	}
 	if active == "" {
 		return context
@@ -897,6 +1058,34 @@ func (model *richRootModel) consoleActiveView(width int) string {
 		return active
 	}
 	return context + "\n" + active
+}
+
+func (model *richRootModel) consoleOutcomeView(width int) string {
+	styles := richStyles(model.color)
+	role := VisualRoleSuccess
+	glyph := "✓"
+	switch model.outcome.Outcome {
+	case Cancelled:
+		role = VisualRoleWarning
+		glyph = "⊘"
+	case Failed:
+		role = VisualRoleError
+		glyph = "✕"
+	}
+	parts := []string{styles[role].Render(glyph + " " + strings.ToUpper(model.outcome.Outcome.String()))}
+	if location := stripTerminalControl(model.outcome.Location); location != "" {
+		parts = append(parts, styles[VisualRoleMuted].Render("Location: ")+styles[VisualRolePlain].Render(location))
+	}
+	if len(model.outcome.Summary.Blocks) > 0 {
+		rendered := strings.TrimSuffix(renderRich(model.outcome.Summary, RichOptions{
+			Width: width,
+			Color: model.color,
+		}), "\n")
+		if rendered != "" {
+			parts = append(parts, rendered)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 func (model *richRootModel) consoleActiveHeight() int {
@@ -1088,3 +1277,10 @@ type richTrackPhaseMsg struct {
 
 type richCancelTrackMsg struct{ ack chan struct{} }
 type richFinishTrackMsg struct{ ack chan struct{} }
+
+type richShowOutcomeMsg struct {
+	request FinishRequest
+	ack     chan struct{}
+}
+
+type richOutcomeElapsedMsg struct{}

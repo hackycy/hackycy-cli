@@ -100,12 +100,14 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 	}
 	transcript := visible[leave:]
 	ordered := []string{
+		"ANSWERS",
+		"Deletion confirmation: yes",
+		"WORK",
 		"Resolve explicit targets (completed)",
 		"Targets: unsafe\\nname.txt Recursive deletion removes all contents.",
-		"Deletion confirmation: yes",
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
-		"succeeded",
+		"OUTCOME  succeeded",
 		"Done!",
 	}
 	last := 0
@@ -297,12 +299,14 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 	}
 	transcript := visible[leave:]
 	ordered := []string{
+		"ANSWERS",
 		"Cleanup action: Node project - delete ./dist",
-		"Scan cleanup targets (completed)",
 		"Selected targets: dist",
+		"WORK",
+		"Scan cleanup targets (completed)",
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
-		"succeeded",
+		"OUTCOME  succeeded",
 		"Done!",
 	}
 	last := 0

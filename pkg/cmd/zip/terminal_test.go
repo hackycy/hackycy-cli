@@ -209,9 +209,17 @@ func (run *recordingZIPRun) Notice(document terminalexperience.PresentationDocum
 
 func (*recordingZIPRun) Milestone(terminalexperience.PresentationDocument) error { return nil }
 
-func (run *recordingZIPRun) Finish(outcome terminalexperience.FinishOutcome, document *terminalexperience.PresentationDocument) error {
+func (run *recordingZIPRun) Finish(value any, documents ...*terminalexperience.PresentationDocument) error {
 	run.mu.Lock()
 	defer run.mu.Unlock()
+	var outcome terminalexperience.FinishOutcome
+	var document *terminalexperience.PresentationDocument
+	if legacy, ok := value.(terminalexperience.FinishOutcome); ok {
+		outcome = legacy
+		if len(documents) == 1 {
+			document = documents[0]
+		}
+	}
 	run.finishes = append(run.finishes, recordedZIPFinish{outcome: outcome, document: document})
 	return nil
 }

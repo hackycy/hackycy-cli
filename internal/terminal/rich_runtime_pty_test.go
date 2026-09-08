@@ -165,13 +165,30 @@ func TestRichRuntimeFinishRestoresThenReplaysBeforeDiagnosticsAndResult(t *testi
 
 	text := output.String()
 	exit := strings.LastIndex(text, "\x1b[?1049l")
-	checkpoint := strings.LastIndex(text, "checkpoint")
-	outcome := strings.LastIndex(text, "succeeded")
+	liveOutcome := strings.Index(text, "SUCCEEDED")
+	liveSummary := strings.Index(text, "safe-finish-summary")
+	transcriptCheckpoint := strings.LastIndex(text, "checkpoint")
+	transcriptOutcome := strings.LastIndex(text, "succeeded")
+	transcriptSummary := -1
+	if exit >= 0 {
+		afterExit := exit + len("\x1b[?1049l")
+		if afterExit <= len(text) {
+			transcriptSummary = strings.Index(text[afterExit:], "safe-finish-summary")
+			if transcriptSummary >= 0 {
+				transcriptSummary += afterExit
+			}
+		}
+	}
 	firstDiagnostic := strings.LastIndex(text, "first deferred diagnostic")
 	secondDiagnostic := strings.LastIndex(text, "second deferred diagnostic")
 	result := strings.LastIndex(text, "finished-result")
-	if exit < 0 || checkpoint < 0 || outcome < 0 || firstDiagnostic < 0 || secondDiagnostic < 0 || result < 0 ||
-		exit > checkpoint || checkpoint > outcome || outcome > firstDiagnostic || firstDiagnostic > secondDiagnostic || secondDiagnostic > result {
+	cursor := strings.LastIndex(text, "\x1b[?25h")
+	if exit < 0 || liveOutcome < 0 || liveSummary < 0 || transcriptCheckpoint < 0 || transcriptOutcome < 0 || transcriptSummary < 0 ||
+		firstDiagnostic < 0 || secondDiagnostic < 0 || result < 0 ||
+		liveOutcome > exit || liveSummary > exit || exit > cursor || cursor > transcriptCheckpoint ||
+		transcriptCheckpoint > transcriptOutcome || transcriptOutcome > transcriptSummary ||
+		transcriptSummary > firstDiagnostic || firstDiagnostic > secondDiagnostic ||
+		secondDiagnostic > result || liveSummary == transcriptSummary || transcriptSummary == result {
 		t.Fatalf("Rich finish ordering = %q", text)
 	}
 	if countAlternateScreen(text, "h") != 1 || countAlternateScreen(text, "l") != 1 {
@@ -389,7 +406,11 @@ func runRichFinishOrderHelper(t *testing.T) {
 	if _, err := io.WriteString(experience.DiagnosticWriter(), "second deferred diagnostic\n"); err != nil {
 		t.Fatalf("second diagnostic write = %v", err)
 	}
-	if err := run.Finish(terminal.Succeeded, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "finished-result"}}}); err != nil {
+	if err := run.Finish(terminal.FinishRequest{
+		Outcome:  terminal.Succeeded,
+		Location: "workspace/project",
+		Summary:  terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "safe-finish-summary"}}},
+	}, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "finished-result"}}}); err != nil {
 		t.Fatalf("Finish() error = %v", err)
 	}
 }

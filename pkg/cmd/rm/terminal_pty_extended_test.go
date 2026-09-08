@@ -136,11 +136,13 @@ func assertRMExtendedMutationOutput(t *testing.T, output string, color, wide boo
 	}
 	transcript := visible[leave:]
 	ordered := []string{
-		"Resolve explicit targets (completed)",
+		"ANSWERS",
 		"Deletion confirmation: yes",
+		"WORK",
+		"Resolve explicit targets (completed)",
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
-		"succeeded",
+		"OUTCOME  succeeded",
 		"Done!",
 	}
 	last := 0
