@@ -19,10 +19,13 @@ import (
 var errGitPulseRequiresInteractive = errors.New("git pulse requires an interactive terminal")
 
 const (
+	pulseWorkCatalogID  = "git-pulse-work"
 	pulsePreparePhaseID = "prepare-workspace"
 	pulseScanPhaseID    = "scan-repositories"
 	pulseFetchPhaseID   = "fetch-commits"
 	pulseBuildPhaseID   = "build-commit-tree"
+	pulseDateFormID     = "date-range"
+	pulseAuthorFormID   = "author-filter"
 
 	pulsePreparePhaseName = "Prepare workspace"
 	pulseScanPhaseName    = "Scan repositories"
@@ -61,9 +64,10 @@ func runPulse(options *Options) error {
 		Now:              options.Now,
 	})
 	if err != nil {
-		return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return errors.Join(err, run.Finish(adapter.FinishRequest(terminalexperience.Failed), nil))
 	}
 	_, workErr := module.Run(ctx, Input{Directory: options.Directory, Days: options.Days})
+	workErr = errors.Join(workErr, adapter.CloseWork())
 	if presentationErr := adapter.PresentationError(); presentationErr != nil {
 		workErr = errors.Join(workErr, presentationErr)
 	}
@@ -75,17 +79,32 @@ func runPulse(options *Options) error {
 	} else if isPulseCancellation(workErr) {
 		outcome = terminalexperience.Cancelled
 	}
-	return errors.Join(workErr, run.Finish(outcome, document))
+	return errors.Join(workErr, run.Finish(adapter.FinishRequest(outcome), document))
 }
 
 func terminalPulseConsoleDescriptor(options *Options) terminalexperience.ConsoleDescriptor {
 	directory := "workspace"
 	rangeLabel := "interactive date range"
+	formCatalog := []terminalexperience.ConsoleFormStep{
+		{ID: pulseAuthorFormID, Name: "Filter by authors", Detail: "choose authors"},
+	}
 	if options != nil {
 		directory = pulseDescriptorDirectory(options.Directory)
 		if options.Days != nil {
 			rangeLabel = fmt.Sprintf("%d days", *options.Days)
+		} else {
+			formCatalog = append([]terminalexperience.ConsoleFormStep{{
+				ID:     pulseDateFormID,
+				Name:   "Select date range",
+				Detail: "choose calendar range",
+			}}, formCatalog...)
 		}
+	} else {
+		formCatalog = append([]terminalexperience.ConsoleFormStep{{
+			ID:     pulseDateFormID,
+			Name:   "Select date range",
+			Detail: "choose calendar range",
+		}}, formCatalog...)
 	}
 	return terminalexperience.ConsoleDescriptor{
 		Command: "YCY / git pulse",
@@ -96,6 +115,7 @@ func terminalPulseConsoleDescriptor(options *Options) terminalexperience.Console
 			{Label: "directory", Value: directory},
 			{Label: "range", Value: safePulseField(rangeLabel, 80)},
 		},
+		FormCatalog: formCatalog,
 	}
 }
 
@@ -138,6 +158,13 @@ type terminalPulseAdapter struct {
 	finishOutcome   terminalexperience.FinishOutcome
 	finishDocument  *terminalexperience.PresentationDocument
 	root            string
+	work            terminalexperience.WorkSession
+	workStarted     bool
+	workClosed      bool
+	workErr         error
+	lastPhase       PhaseKind
+	hasLastPhase    bool
+	finishSummary   string
 }
 
 type terminalPulseAdapterConfig struct {
@@ -212,50 +239,90 @@ func (adapter *terminalPulseAdapter) RepositoriesFound(count int) {
 }
 
 func (adapter *terminalPulseAdapter) NoRepositories() {
-	adapter.setFinish(terminalexperience.Succeeded, pulseDocument("No Git repositories found.", terminalexperience.VisualRoleWarning))
+	adapter.setFinish(terminalexperience.Succeeded, pulseDocument("No Git repositories found.", terminalexperience.VisualRoleWarning), "No Git repositories found.")
 }
 
 func (adapter *terminalPulseAdapter) NoCommits() {
-	adapter.setFinish(terminalexperience.Succeeded, pulseDocument("No commits found in the specified date range.", terminalexperience.VisualRoleWarning))
+	adapter.setFinish(terminalexperience.Succeeded, pulseDocument("No commits found in the specified date range.", terminalexperience.VisualRoleWarning), "No commits found in the specified date range.")
 }
 
 func (adapter *terminalPulseAdapter) Cancelled() {
-	adapter.setFinish(terminalexperience.Cancelled, pulseDocument("Operation cancelled.", terminalexperience.VisualRoleWarning))
+	adapter.setFinish(terminalexperience.Cancelled, pulseDocument("Operation cancelled.", terminalexperience.VisualRoleWarning), "Operation cancelled.")
 }
 
 func (adapter *terminalPulseAdapter) Present(report Report) {
+	summary := fmt.Sprintf("Found %d %s in %d %s", report.CommitCount, pulsePlural(report.CommitCount, "commit", "commits"), len(report.Repositories), pulsePlural(len(report.Repositories), "repository", "repositories"))
 	if adapter.richOutput() {
-		adapter.setFinish(terminalexperience.Succeeded, terminalPulseRichDocumentForWidth(adapter.Root(), report, adapter.width))
+		adapter.setFinish(terminalexperience.Succeeded, terminalPulseRichDocumentForWidth(adapter.Root(), report, adapter.width), summary)
 		return
 	}
 	adapter.setFinish(terminalexperience.Succeeded, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
 		Role: terminalexperience.VisualRolePlain,
 		Text: pulseReportText(report),
-	}}})
+	}}}, summary)
 }
 
 func (adapter *terminalPulseAdapter) Start(_ context.Context, kind PhaseKind) (PhaseReporter, error) {
-	reporter := &terminalPulsePhaseReporter{
-		updates:  make(chan terminalexperience.OperationPhase, 1),
-		finished: make(chan struct{}),
-		kind:     kind,
-	}
-	go func() {
-		phaseID, phaseName := terminalPulsePhaseDefinition(kind)
-		err := adapter.run.Track(terminalexperience.TrackedOperation{
-			ID:            phaseID,
-			OperationID:   phaseID,
-			Label:         "Git Pulse",
-			Phases:        []terminalexperience.PhaseDefinition{{ID: phaseID, Name: phaseName}},
-			Updates:       reporter.updates,
-			RequestCancel: adapter.requestCancel,
-		})
-		if err != nil && adapter.requestCancel != nil {
+	work, err := adapter.ensureWork()
+	if err != nil {
+		adapter.recordPresentation(err)
+		if adapter.requestCancel != nil {
 			adapter.requestCancel()
 		}
-		reporter.complete(err)
-	}()
-	return reporter, nil
+		return nil, err
+	}
+	return &terminalPulsePhaseReporter{adapter: adapter, work: work, kind: kind}, nil
+}
+
+func (adapter *terminalPulseAdapter) ensureWork() (terminalexperience.WorkSession, error) {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	if adapter.workStarted {
+		return adapter.work, adapter.workErr
+	}
+	adapter.workStarted = true
+	work, err := terminalexperience.StartWork(adapter.run, terminalexperience.WorkCatalog{
+		ID:            pulseWorkCatalogID,
+		Label:         "Git Pulse",
+		Phases:        pulseWorkPhaseCatalog(),
+		RequestCancel: adapter.requestCancel,
+	})
+	adapter.work = work
+	adapter.workErr = err
+	return work, err
+}
+
+func (adapter *terminalPulseAdapter) CloseWork() error {
+	adapter.mu.Lock()
+	if adapter.workClosed {
+		err := adapter.workErr
+		adapter.mu.Unlock()
+		return err
+	}
+	adapter.workClosed = true
+	work := adapter.work
+	adapter.mu.Unlock()
+	if work == nil {
+		return nil
+	}
+	err := work.Close()
+	adapter.mu.Lock()
+	adapter.workErr = errors.Join(adapter.workErr, err)
+	err = adapter.workErr
+	adapter.mu.Unlock()
+	if err != nil && adapter.requestCancel != nil {
+		adapter.requestCancel()
+	}
+	return err
+}
+
+func pulseWorkPhaseCatalog() []terminalexperience.PhaseDefinition {
+	return []terminalexperience.PhaseDefinition{
+		{ID: pulsePreparePhaseID, Name: pulsePreparePhaseName},
+		{ID: pulseScanPhaseID, Name: pulseScanPhaseName},
+		{ID: pulseFetchPhaseID, Name: pulseFetchPhaseName},
+		{ID: pulseBuildPhaseID, Name: pulseBuildPhaseName},
+	}
 }
 
 func (adapter *terminalPulseAdapter) ask(request terminalexperience.InteractionRequest) (terminalexperience.InteractionAnswer, bool, error) {
@@ -316,7 +383,7 @@ func (adapter *terminalPulseAdapter) richOutput() bool {
 	return adapter.capabilities.Interaction == terminalexperience.RichInteractive && adapter.capabilities.Stdout.Terminal
 }
 
-func (adapter *terminalPulseAdapter) setFinish(outcome terminalexperience.FinishOutcome, document terminalexperience.PresentationDocument) {
+func (adapter *terminalPulseAdapter) setFinish(outcome terminalexperience.FinishOutcome, document terminalexperience.PresentationDocument, summary string) {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
 	if adapter.finishDocument != nil {
@@ -324,6 +391,7 @@ func (adapter *terminalPulseAdapter) setFinish(outcome terminalexperience.Finish
 	}
 	adapter.finishOutcome = outcome
 	adapter.finishDocument = &document
+	adapter.finishSummary = summary
 }
 
 func (adapter *terminalPulseAdapter) FinishOutcome() terminalexperience.FinishOutcome {
@@ -345,6 +413,30 @@ func (adapter *terminalPulseAdapter) FinishDocument() *terminalexperience.Presen
 	return nil
 }
 
+func (adapter *terminalPulseAdapter) FinishRequest(outcome terminalexperience.FinishOutcome) terminalexperience.FinishRequest {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	summary := adapter.finishSummary
+	if summary == "" {
+		switch outcome {
+		case terminalexperience.Cancelled:
+			summary = "Workspace inspection cancelled."
+		case terminalexperience.Failed:
+			summary = "Unable to inspect workspace commit activity."
+		default:
+			summary = "Workspace commit activity complete."
+		}
+	}
+	request := terminalexperience.FinishRequest{
+		Outcome: outcome,
+		Summary: pulseDocument(summary, terminalexperience.VisualRoleMuted),
+	}
+	if outcome != terminalexperience.Succeeded && adapter.hasLastPhase {
+		_, request.Location = terminalPulsePhaseDefinition(adapter.lastPhase)
+	}
+	return request
+}
+
 func (adapter *terminalPulseAdapter) Root() string {
 	adapter.mu.Lock()
 	defer adapter.mu.Unlock()
@@ -357,6 +449,13 @@ func (adapter *terminalPulseAdapter) recordPresentation(err error) {
 	}
 	adapter.mu.Lock()
 	adapter.presentationErr = errors.Join(adapter.presentationErr, err)
+	adapter.mu.Unlock()
+}
+
+func (adapter *terminalPulseAdapter) recordPhase(phase Phase) {
+	adapter.mu.Lock()
+	adapter.lastPhase = phase.Kind
+	adapter.hasLastPhase = true
 	adapter.mu.Unlock()
 }
 
@@ -378,6 +477,7 @@ func pulseDayRequest(prompt DayPrompt) terminalexperience.InteractionRequest {
 		PlainPrompt:     "> ",
 		Options:         options,
 		CancelValues:    []string{"", "q", "quit", "cancel"},
+		ConsoleStepID:   pulseDateFormID,
 		TranscriptLabel: "Date range",
 		ParsePlain: func(value string) (terminalexperience.InteractionAnswer, error) {
 			index, err := strconv.Atoi(strings.TrimSpace(value))
@@ -398,6 +498,7 @@ func pulseAuthorRequest(prompt AuthorPrompt) terminalexperience.InteractionReque
 		PlainPrompt:     "> ",
 		Options:         options,
 		CancelValues:    []string{"q", "quit", "cancel"},
+		ConsoleStepID:   pulseAuthorFormID,
 		TranscriptLabel: "Author filter",
 		ParsePlain: func(value string) (terminalexperience.InteractionAnswer, error) {
 			indices := strings.FieldsFunc(value, func(character rune) bool {
@@ -479,9 +580,9 @@ func pulseReportText(report Report) string {
 }
 
 type terminalPulsePhaseReporter struct {
-	updates  chan terminalexperience.OperationPhase
-	finished chan struct{}
-	kind     PhaseKind
+	adapter *terminalPulseAdapter
+	work    terminalexperience.WorkSession
+	kind    PhaseKind
 
 	mu     sync.Mutex
 	closed bool
@@ -489,31 +590,28 @@ type terminalPulsePhaseReporter struct {
 }
 
 func (reporter *terminalPulsePhaseReporter) Report(phase Phase) {
-	update := terminalPulsePhase(phase)
-	select {
-	case reporter.updates <- update:
-	case <-reporter.finished:
+	reporter.mu.Lock()
+	if reporter.closed {
+		reporter.mu.Unlock()
+		return
+	}
+	reporter.mu.Unlock()
+	reporter.adapter.recordPhase(phase)
+	if err := reporter.work.Update(terminalPulsePhase(phase)); err != nil {
+		reporter.mu.Lock()
+		reporter.err = errors.Join(reporter.err, err)
+		reporter.mu.Unlock()
+		if reporter.adapter.requestCancel != nil {
+			reporter.adapter.requestCancel()
+		}
 	}
 }
 
 func (reporter *terminalPulsePhaseReporter) Close() error {
 	reporter.mu.Lock()
-	if !reporter.closed {
-		close(reporter.updates)
-		reporter.closed = true
-	}
-	reporter.mu.Unlock()
-	<-reporter.finished
-	reporter.mu.Lock()
+	reporter.closed = true
 	defer reporter.mu.Unlock()
 	return reporter.err
-}
-
-func (reporter *terminalPulsePhaseReporter) complete(err error) {
-	reporter.mu.Lock()
-	reporter.err = err
-	reporter.mu.Unlock()
-	close(reporter.finished)
 }
 
 func terminalPulsePhase(phase Phase) terminalexperience.OperationPhase {

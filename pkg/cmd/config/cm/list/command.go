@@ -83,7 +83,7 @@ func runList(options *Options) error {
 			Role: terminal.VisualRoleActive,
 			Text: "Loading CM profiles...",
 		}}}); err != nil {
-			return errors.Join(err, run.Finish(terminal.Failed, nil))
+			return finishCMList(run, terminal.Failed, nil, err)
 		}
 	}
 	result, workErr := func() (Result, error) {
@@ -129,27 +129,13 @@ func runList(options *Options) error {
 		if terminalState == terminal.PhaseCancelled {
 			outcome = terminal.Cancelled
 		}
-		return errors.Join(err, run.Finish(outcome, nil))
-	}
-
-	if caps.Interaction == terminal.RichInteractive {
-		if err := run.Milestone(terminalCMListSummaryDocument(result)); err != nil {
-			return errors.Join(err, run.Finish(terminal.Succeeded, nil))
-		}
-		if err := run.Milestone(terminalCMListDefaultDocument(result)); err != nil {
-			return errors.Join(err, run.Finish(terminal.Succeeded, nil))
-		}
-		if len(result.Profiles) == 0 {
-			if err := run.Milestone(terminalCMListEmptyDocument()); err != nil {
-				return errors.Join(err, run.Finish(terminal.Succeeded, nil))
-			}
-		}
+		return finishCMList(run, outcome, nil, err)
 	}
 	document := terminalCMListDocument(result)
 	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
 		document = terminalCMListRichDocument(result)
 	}
-	return run.Finish(terminal.Succeeded, &document)
+	return run.Finish(terminalCMListFinishRequest(terminal.Succeeded, &result), &document)
 }
 
 const (
@@ -167,6 +153,31 @@ func cmListConsoleDescriptor() terminal.ConsoleDescriptor {
 			Value: "commit message configuration",
 		}},
 	}
+}
+
+func finishCMList(run terminal.ExperienceRun, outcome terminal.FinishOutcome, document *terminal.PresentationDocument, workErr error) error {
+	return errors.Join(workErr, run.Finish(terminalCMListFinishRequest(outcome, nil), document))
+}
+
+func terminalCMListFinishRequest(outcome terminal.FinishOutcome, result *Result) terminal.FinishRequest {
+	request := terminal.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminal.Succeeded:
+		if result != nil {
+			request.Summary = terminalCMListFinishSummaryDocument(*result)
+		}
+	case terminal.Cancelled:
+		request.Summary = terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+			Role: terminal.VisualRoleWarning,
+			Text: "Cancelled while loading CM profiles",
+		}}}
+	case terminal.Failed:
+		request.Summary = terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+			Role: terminal.VisualRoleError,
+			Text: "Unable to load CM profiles",
+		}}}
+	}
+	return request
 }
 
 var _ Reader = (*appconfig.Store)(nil)

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -396,7 +397,7 @@ func TestCMTestSafeProjectionsRemoveSecretsAndBoundResponse(t *testing.T) {
 	}
 }
 
-func TestCMTestPhaseSinkUsesTheDeclaredPhaseIDsAndNames(t *testing.T) {
+func TestCMTestPhaseSinkUsesOneCompleteDeclaredWorkCatalog(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	sink := newCMTestPhaseSink(experience.Open(context.Background()), func() {})
 	sink.begin(cmTestResolvePhaseID, cmTestResolvePhaseName, "Resolving")
@@ -407,15 +408,34 @@ func TestCMTestPhaseSinkUsesTheDeclaredPhaseIDsAndNames(t *testing.T) {
 	if err := sink.end(terminalexperience.PhaseFailed, "Provider request failed (decode)"); err != nil {
 		t.Fatalf("provider phase = %v", err)
 	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close catalog = %v", err)
+	}
 	operations := experience.Run.Operations()
-	if len(operations) != 2 {
+	if len(operations) != 1 {
 		t.Fatalf("operations = %#v", operations)
 	}
-	for index, expected := range []struct{ id, name string }{{cmTestResolvePhaseID, cmTestResolvePhaseName}, {cmTestProviderPhaseID, cmTestProviderPhaseName}} {
-		operation := operations[index].Value.(terminalexperience.TrackedOperation)
-		if operation.ID != expected.id || len(operation.Phases) != 1 || operation.Phases[0] != (terminalexperience.PhaseDefinition{ID: expected.id, Name: expected.name}) {
-			t.Fatalf("operation %d = %#v", index, operation)
-		}
+	operation := operations[0].Value.(terminalexperience.TrackedOperation)
+	if got, want := operation.ID, "config-cm-test"; got != want {
+		t.Fatalf("operation ID = %q, want %q", got, want)
+	}
+	if got, want := operation.Phases, []terminalexperience.PhaseDefinition{
+		{ID: cmTestResolvePhaseID, Name: cmTestResolvePhaseName},
+		{ID: cmTestProviderPhaseID, Name: cmTestProviderPhaseName},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("phase catalog = %#v, want %#v", got, want)
+	}
+	var updates []terminalexperience.OperationPhase
+	for update := range operation.Updates {
+		updates = append(updates, update)
+	}
+	if got, want := updates, []terminalexperience.OperationPhase{
+		{ID: cmTestResolvePhaseID, State: terminalexperience.PhaseActive, Detail: "Resolving"},
+		{ID: cmTestResolvePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Profile: work"},
+		{ID: cmTestProviderPhaseID, State: terminalexperience.PhaseActive, Detail: "waiting"},
+		{ID: cmTestProviderPhaseID, State: terminalexperience.PhaseFailed, Detail: "Provider request failed (decode)"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("phase updates = %#v, want %#v", got, want)
 	}
 }
 
@@ -427,6 +447,9 @@ func TestCMTestPhaseSinkPassesTheCommandCancellationCallback(t *testing.T) {
 	sink.begin(cmTestResolvePhaseID, cmTestResolvePhaseName, "Resolving")
 	if err := sink.end(terminalexperience.PhaseCompleted, "Profile: work"); err != nil {
 		t.Fatalf("resolve phase = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close catalog = %v", err)
 	}
 	operations := experience.Run.Operations()
 	if len(operations) != 1 {

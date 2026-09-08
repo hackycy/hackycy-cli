@@ -129,7 +129,7 @@ func assertCMTestRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
 	live := cmTestPTYText(visible[enter:leave])
-	for _, expected := range []string{"YCY / config cm test", "Resolve CM test profile", "Test CM provider", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / config cm test", "Resolve CM test profile", "Test CM provider", "STATE", "PHASE", "DETAIL", "SUCCEEDED"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Rich PTY live Console missing %q: %q", expected, output)
 		}
@@ -151,7 +151,7 @@ func assertCMTestRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	transcript := cmTestPTYText(postLive[:resultStart])
 	result := cmTestPTYText(postLive[resultStart:])
-	for _, expected := range []string{"Resolve CM test profile (completed)", "Test CM provider (completed)", "Response received", "succeeded"} {
+	for _, expected := range []string{"Resolve CM test profile (completed)", "Test CM provider (completed): Response received", "succeeded: Response received Prompt tokens: 3 Completion tokens: 2 Total tokens: 5"} {
 		if !strings.Contains(transcript, expected) {
 			t.Fatalf("Rich PTY Transcript missing %q: %q", expected, output)
 		}

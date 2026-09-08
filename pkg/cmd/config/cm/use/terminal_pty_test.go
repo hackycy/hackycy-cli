@@ -139,9 +139,10 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		"Checking profile and saving selection",
 		"Profile: work",
 		"DONE",
+		"SUCCEEDED",
 	}
 	if wide {
-		expected = append(expected, "profile selection")
+		expected = append(expected, "profile selection", "Default CM profile set")
 	} else {
 		expected = append(expected, "profile")
 	}
@@ -164,7 +165,7 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	transcript := cmUsePTYText(postLive[:resultStart])
 	result := cmUsePTYText(postLive[resultStart:])
-	for _, needle := range []string{"Set default CM profile (completed): Profile: work", "succeeded"} {
+	for _, needle := range []string{"Set default CM profile (completed): Profile: work", "succeeded: Default CM profile set"} {
 		if !strings.Contains(transcript, needle) {
 			t.Fatalf("Rich PTY Transcript omitted %q: %q", needle, output)
 		}

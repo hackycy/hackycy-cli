@@ -14,6 +14,11 @@ import (
 
 var errExportEnvRequiresInteractive = errors.New("export env requires an interactive terminal")
 
+const (
+	exportEnvWorkCatalogID = "export-env-work"
+	exportEnvSelectFormID  = "select-environment"
+)
+
 func runEnv(options *Options) error {
 	if options == nil || options.WorkingDirectory == nil || options.Terminal == nil || options.Reader == nil || options.Writer == nil {
 		return errors.New("export env options are incomplete")
@@ -28,13 +33,12 @@ func runEnv(options *Options) error {
 	}
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
-	adapter := newTerminalExportEnvAdapter(run, caps.Interaction == terminalexperience.Automation)
-	if caps.Interaction == terminalexperience.RichInteractive {
-		if err := run.Notice(terminalExportEnvIntroDocument(options)); err != nil {
-			return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
-		}
+	work, err := terminalexperience.StartWork(run, terminalExportEnvWorkCatalog(options.Output != ""))
+	if err != nil {
+		return errors.Join(err, run.Finish(terminalExportEnvFinishRequest(terminalexperience.Failed, "", 0, false, options.Output != ""), nil))
 	}
-	sink := newExportEnvPhaseSink(run, caps, options.Output != "")
+	adapter := newTerminalExportEnvAdapter(run, caps.Interaction == terminalexperience.Automation)
+	sink := newExportEnvPhaseSink(run, work, caps, options.Output != "")
 	module, err := New(Dependencies{
 		WorkingDirectory: options.WorkingDirectory,
 		Selector:         adapter,
@@ -43,7 +47,8 @@ func runEnv(options *Options) error {
 		Presenter:        adapter,
 	})
 	if err != nil {
-		return err
+		err = errors.Join(err, sink.close())
+		return errors.Join(err, run.Finish(sink.finishRequest(terminalexperience.Failed), nil))
 	}
 	observer := &runObserver{}
 	observer.phase = sink.phase
@@ -55,35 +60,26 @@ func runEnv(options *Options) error {
 		Merge:       options.Merge,
 		Output:      options.Output,
 	}, observer)
-	sink.close()
-	if sink.err != nil {
-		err = errors.Join(err, sink.err)
-	}
+	err = errors.Join(err, sink.close())
 	if result.Cancelled {
 		document := terminalExportEnvResultDocument("Cancelled", terminalexperience.VisualRoleWarning)
-		return errors.Join(err, run.Finish(terminalexperience.Cancelled, &document))
+		return errors.Join(err, run.Finish(sink.finishRequest(terminalexperience.Cancelled), &document))
 	}
 	if err != nil {
-		return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return errors.Join(err, run.Finish(sink.finishRequest(terminalexperience.Failed), nil))
 	}
 	if options.Output != "" {
-		if sink.err != nil {
-			return errors.Join(sink.err, run.Finish(terminalexperience.Failed, nil))
-		}
 		document := terminalExportEnvResultDocument("Wrote output to "+safeExportTarget(options.Output), terminalexperience.VisualRoleSuccess)
-		return run.Finish(terminalexperience.Succeeded, &document)
+		return run.Finish(sink.finishRequest(terminalexperience.Succeeded), &document)
 	}
 	// The JSON is intentionally a separate plain block so Rich styling never
 	// inserts symbols or alters its durable structure.
 	contents := observer.output
-	if sink.err != nil {
-		return errors.Join(sink.err, run.Finish(terminalexperience.Failed, nil))
-	}
 	document := terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
 		{Role: terminalexperience.VisualRoleSuccess, Text: "Exported variables:"},
 		{Role: terminalexperience.VisualRolePlain, Text: contents},
 	}}
-	return run.Finish(terminalexperience.Succeeded, &document)
+	return run.Finish(sink.finishRequest(terminalexperience.Succeeded), &document)
 }
 
 func terminalExportEnvConsoleDescriptor(options *Options) terminalexperience.ConsoleDescriptor {
@@ -106,26 +102,29 @@ func terminalExportEnvConsoleDescriptor(options *Options) terminalexperience.Con
 			{Label: "directory", Value: safeExportText(directory)},
 			{Label: "merge base .env", Value: merge},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     exportEnvSelectFormID,
+			Name:   "Select environment",
+			Detail: "choose an environment file",
+		}},
 	}
 }
 
 type exportEnvPhaseSink struct {
 	run              terminalexperience.ExperienceRun
+	work             terminalexperience.WorkSession
 	caps             terminalexperience.Capabilities
 	withOutput       bool
-	current          *exportEnvTrack
-	cluster          string
 	pendingVariables *terminalexperience.PresentationDocument
+	variableCount    int
+	hasVariableCount bool
+	lastLocation     string
+	closed           bool
 	err              error
 }
 
-type exportEnvTrack struct {
-	updates chan terminalexperience.OperationPhase
-	done    chan error
-}
-
-func newExportEnvPhaseSink(run terminalexperience.ExperienceRun, caps terminalexperience.Capabilities, withOutput bool) *exportEnvPhaseSink {
-	return &exportEnvPhaseSink{run: run, caps: caps, withOutput: withOutput}
+func newExportEnvPhaseSink(run terminalexperience.ExperienceRun, work terminalexperience.WorkSession, caps terminalexperience.Capabilities, withOutput bool) *exportEnvPhaseSink {
+	return &exportEnvPhaseSink{run: run, work: work, caps: caps, withOutput: withOutput}
 }
 
 func (sink *exportEnvPhaseSink) phase(id, name string, state terminalPhaseState, detail string) {
@@ -133,8 +132,8 @@ func (sink *exportEnvPhaseSink) phase(id, name string, state terminalPhaseState,
 		return
 	}
 	if id == "select-environment" {
+		sink.lastLocation = name
 		if state == terminalPhaseActive {
-			sink.closeTrack()
 			sink.notice(name, detail, terminalexperience.VisualRoleActive)
 			return
 		}
@@ -147,24 +146,11 @@ func (sink *exportEnvPhaseSink) phase(id, name string, state terminalPhaseState,
 		sink.milestone(terminalExportEnvPhaseDocument(name, detail, state, role))
 		return
 	}
-	cluster := "discovery"
-	if id == "read-selected-files" || id == "parse-and-merge-values" || id == "encode-json" || id == "write-output-file" {
-		cluster = "output"
-	}
-	if sink.current != nil && sink.cluster != cluster {
-		sink.closeTrack()
-	}
-	if state == terminalPhaseActive && sink.current == nil {
-		sink.startTrack(id)
-	}
-	if sink.current == nil {
-		return
-	}
-	sink.cluster = cluster
+	sink.lastLocation = name
 	update := terminalexperience.OperationPhase{ID: id, State: exportEnvPhaseState(state), Detail: detail}
-	sink.current.updates <- update
-	if state != terminalPhaseActive && sink.isTrackEnd(id) {
-		sink.closeTrack()
+	sink.err = errors.Join(sink.err, sink.work.Update(update))
+	if state != terminalPhaseActive && sink.isWorkEnd(id) {
+		sink.flushVariables()
 	}
 }
 
@@ -172,73 +158,27 @@ func (sink *exportEnvPhaseSink) selected(selection Selection, source string, mer
 	if sink.caps.Interaction != terminalexperience.RichInteractive || sink.err != nil {
 		return
 	}
-	// Selection is the boundary between discovery and output. Close the
-	// discovery Track before publishing its milestone so the runtime operation
-	// lock is not re-entered while the Track is still consuming updates.
-	sink.closeTrack()
-	if sink.err != nil {
-		return
-	}
 	sink.milestone(terminalExportEnvSelectionDocument(selection, source, merge))
 }
 
 func (sink *exportEnvPhaseSink) variables(count int) {
+	sink.variableCount = count
+	sink.hasVariableCount = true
 	if sink.caps.Interaction != terminalexperience.RichInteractive || sink.err != nil {
 		return
 	}
-	// The observer reports the variable count while the output Track is still
-	// consuming its parse phase. Defer the milestone until that Track closes so
-	// the runtime operation lock is never re-entered from an active Track.
 	document := terminalExportEnvVariableDocument(count)
 	sink.pendingVariables = &document
 }
 
-func (sink *exportEnvPhaseSink) startTrack(firstID string) {
-	definitions := []terminalexperience.PhaseDefinition{
-		{ID: "resolve-directory", Name: "Resolve directory"},
-		{ID: "discover-environment-files", Name: "Discover environment files"},
-	}
-	operationID := "export-env-discovery"
-	if firstID == "read-selected-files" {
-		definitions = []terminalexperience.PhaseDefinition{
-			{ID: "read-selected-files", Name: "Read selected files"},
-			{ID: "parse-and-merge-values", Name: "Parse and merge values"},
-			{ID: "encode-json", Name: "Encode JSON"},
-		}
-		if sink.withOutput {
-			definitions = append(definitions, terminalexperience.PhaseDefinition{ID: "write-output-file", Name: "Write output file"})
-		}
-		operationID = "export-env-output"
-	}
-	updates := make(chan terminalexperience.OperationPhase, len(definitions)+4)
-	done := make(chan error, 1)
-	sink.current = &exportEnvTrack{updates: updates, done: done}
-	sink.cluster = map[bool]string{false: "discovery", true: "output"}[firstID == "read-selected-files"]
-	go func() {
-		done <- sink.run.Track(terminalexperience.TrackedOperation{
-			ID:      operationID,
-			Label:   "Export environment",
-			Phases:  definitions,
-			Updates: updates,
-		})
-	}()
-}
-
-func (sink *exportEnvPhaseSink) isTrackEnd(id string) bool {
+func (sink *exportEnvPhaseSink) isWorkEnd(id string) bool {
 	if sink.withOutput {
 		return id == "write-output-file"
 	}
 	return id == "encode-json"
 }
 
-func (sink *exportEnvPhaseSink) closeTrack() {
-	if sink.current == nil {
-		return
-	}
-	close(sink.current.updates)
-	err := <-sink.current.done
-	sink.err = errors.Join(sink.err, err)
-	sink.current = nil
+func (sink *exportEnvPhaseSink) flushVariables() {
 	if sink.pendingVariables != nil && sink.err == nil {
 		document := *sink.pendingVariables
 		sink.pendingVariables = nil
@@ -261,8 +201,14 @@ func (sink *exportEnvPhaseSink) milestone(document terminalexperience.Presentati
 	sink.err = errors.Join(sink.err, sink.run.Milestone(document))
 }
 
-func (sink *exportEnvPhaseSink) close() {
-	sink.closeTrack()
+func (sink *exportEnvPhaseSink) close() error {
+	if sink.closed {
+		return sink.err
+	}
+	sink.closed = true
+	sink.err = errors.Join(sink.err, sink.work.Close())
+	sink.flushVariables()
+	return sink.err
 }
 
 func exportEnvPhaseState(state terminalPhaseState) terminalexperience.PhaseState {
@@ -278,23 +224,6 @@ func exportEnvPhaseState(state terminalPhaseState) terminalexperience.PhaseState
 	}
 }
 
-func terminalExportEnvIntroDocument(options *Options) terminalexperience.PresentationDocument {
-	merge := "off"
-	if options.Merge {
-		merge = "on"
-	}
-	directory := strings.TrimSpace(options.Directory)
-	if directory == "" {
-		directory = "."
-	}
-	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
-		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / export env"},
-		{Role: terminalexperience.VisualRoleTitle, Text: "Export environment"},
-		{Role: terminalexperience.VisualRoleMuted, Text: "Export .env file contents as JSON"},
-		{Role: terminalexperience.VisualRolePlain, Text: "Directory: " + safeExportText(directory) + "  Merge base .env: " + merge},
-	}}
-}
-
 func terminalExportEnvPhaseDocument(name, detail string, state terminalPhaseState, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
 	text := name
 	if detail != "" {
@@ -305,6 +234,55 @@ func terminalExportEnvPhaseDocument(name, detail string, state terminalPhaseStat
 
 func terminalExportEnvResultDocument(text string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
 	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: text}}}
+}
+
+func terminalExportEnvWorkCatalog(withOutput bool) terminalexperience.WorkCatalog {
+	phases := []terminalexperience.PhaseDefinition{
+		{ID: "resolve-directory", Name: "Resolve directory"},
+		{ID: "discover-environment-files", Name: "Discover environment files"},
+		{ID: "read-selected-files", Name: "Read selected files"},
+		{ID: "parse-and-merge-values", Name: "Parse and merge values"},
+		{ID: "encode-json", Name: "Encode JSON"},
+	}
+	if withOutput {
+		phases = append(phases, terminalexperience.PhaseDefinition{ID: "write-output-file", Name: "Write output file"})
+	}
+	return terminalexperience.WorkCatalog{
+		ID:     exportEnvWorkCatalogID,
+		Label:  "Export environment",
+		Phases: phases,
+	}
+}
+
+func (sink *exportEnvPhaseSink) finishRequest(outcome terminalexperience.FinishOutcome) terminalexperience.FinishRequest {
+	return terminalExportEnvFinishRequest(outcome, sink.lastLocation, sink.variableCount, sink.hasVariableCount, sink.withOutput)
+}
+
+func terminalExportEnvFinishRequest(outcome terminalexperience.FinishOutcome, location string, variableCount int, hasVariableCount, withOutput bool) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		if withOutput {
+			request.Summary = terminalExportEnvResultDocument("Environment export written", terminalexperience.VisualRoleSuccess)
+			return request
+		}
+		if hasVariableCount {
+			request.Summary = terminalExportEnvVariableDocument(variableCount)
+			return request
+		}
+		request.Summary = terminalExportEnvResultDocument("Environment export complete", terminalexperience.VisualRoleSuccess)
+	case terminalexperience.Cancelled:
+		if location != "" {
+			request.Location = safeExportText(location)
+		}
+		request.Summary = terminalExportEnvResultDocument("Environment export cancelled", terminalexperience.VisualRoleWarning)
+	case terminalexperience.Failed:
+		if location != "" {
+			request.Location = safeExportText(location)
+		}
+		request.Summary = terminalExportEnvResultDocument("Unable to export environment", terminalexperience.VisualRoleError)
+	}
+	return request
 }
 
 func terminalExportEnvSelectionDocument(selection Selection, source string, merge bool) terminalexperience.PresentationDocument {
@@ -381,6 +359,7 @@ func (adapter *terminalExportEnvAdapter) SelectEnvironment(message string, choic
 		Message:         message,
 		Options:         exportEnvInteractionOptions(choices),
 		CancelValues:    []string{"", "q", "quit", "cancel"},
+		ConsoleStepID:   exportEnvSelectFormID,
 		TranscriptLabel: "Selected environment",
 	})
 	if errors.Is(err, terminalexperience.ErrInteractionCancelled) || errors.Is(err, context.Canceled) {

@@ -33,9 +33,11 @@ func runTest(options *Options) error {
 	}
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
+	phases := newCMTestPhaseSink(run, cancel)
 	var presentationErr error
-	finish := func(outcome terminalexperience.FinishOutcome, document *terminalexperience.PresentationDocument, workErr error) error {
-		return errors.Join(workErr, presentationErr, run.Finish(outcome, document))
+	finish := func(outcome terminalexperience.FinishOutcome, summary terminalexperience.PresentationDocument, document *terminalexperience.PresentationDocument, workErr error) error {
+		presentationErr = errors.Join(presentationErr, phases.close())
+		return errors.Join(workErr, presentationErr, run.Finish(terminalCMTestFinishRequest(outcome, summary), document))
 	}
 
 	if caps.Interaction == terminalexperience.RichInteractive {
@@ -44,11 +46,10 @@ func runTest(options *Options) error {
 		}
 	}
 
-	phases := newCMTestPhaseSink(run, cancel)
 	phases.begin(cmTestResolvePhaseID, cmTestResolvePhaseName, "Resolving CM test profile...")
 	if err := ctx.Err(); err != nil {
 		presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCancelled, "Cancelled while resolving CM test profile"))
-		return finish(terminalexperience.Cancelled, nil, err)
+		return finish(terminalexperience.Cancelled, terminalCMTestCancellationSummary("Cancelled while resolving CM test profile"), nil, err)
 	}
 	type resolutionResult struct {
 		module  *TestModule
@@ -80,7 +81,7 @@ func runTest(options *Options) error {
 		case resolved = <-resolution:
 		default:
 			presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCancelled, "Cancelled while resolving CM test profile"))
-			return finish(terminalexperience.Cancelled, nil, ctx.Err())
+			return finish(terminalexperience.Cancelled, terminalCMTestCancellationSummary("Cancelled while resolving CM test profile"), nil, ctx.Err())
 		}
 	}
 	err = resolved.err
@@ -96,7 +97,10 @@ func runTest(options *Options) error {
 			detail = "Cancelled while resolving CM test profile"
 		}
 		presentationErr = errors.Join(presentationErr, phases.end(state, detail))
-		return finish(outcome, nil, err)
+		if outcome == terminalexperience.Cancelled {
+			return finish(outcome, terminalCMTestCancellationSummary(detail), nil, err)
+		}
+		return finish(outcome, terminalCMTestFailureSummary(detail), nil, err)
 	}
 	presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCompleted, "Profile: "+safeCMTestProfile(redactCMTestText(profile.Name, profile.APIKey))))
 
@@ -109,36 +113,32 @@ func runTest(options *Options) error {
 	phases.begin(cmTestProviderPhaseID, cmTestProviderPhaseName, providerDetail)
 	if err := ctx.Err(); err != nil {
 		presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCancelled, "Cancelled while testing CM provider"))
-		return finish(terminalexperience.Cancelled, nil, err)
+		return finish(terminalexperience.Cancelled, terminalCMTestCancellationSummary("Cancelled while testing CM provider"), nil, err)
 	}
 	result, runErr := module.testProvider(ctx, profile)
 	if runErr != nil {
 		if errors.Is(runErr, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
 			presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCancelled, "Cancelled while testing CM provider"))
-			return finish(terminalexperience.Cancelled, nil, runErr)
+			return finish(terminalexperience.Cancelled, terminalCMTestCancellationSummary("Cancelled while testing CM provider"), nil, runErr)
 		}
 		category := cmTestProviderFailureKind(runErr)
-		presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseFailed, "Provider request failed ("+string(category)+")"))
+		failureSummary := "Provider request failed (" + string(category) + ")"
+		presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseFailed, failureSummary))
 		if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 			document := terminalCMTestRichFailureDocument(result, string(category))
-			return finish(terminalexperience.Failed, &document, runErr)
+			return finish(terminalexperience.Failed, terminalCMTestFailureSummary(failureSummary), &document, runErr)
 		}
 		document := terminalCMTestDocument(result)
-		return finish(terminalexperience.Failed, &document, runErr)
+		return finish(terminalexperience.Failed, terminalCMTestFailureSummary(failureSummary), &document, runErr)
 	}
 	presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCompleted, "Response received"))
-	if caps.Interaction == terminalexperience.RichInteractive {
-		if err := run.Milestone(terminalCMTestResponseSummaryDocument(result)); err != nil {
-			presentationErr = errors.Join(presentationErr, err)
-		}
-	}
 	var document terminalexperience.PresentationDocument
 	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 		document = terminalCMTestRichDocument(result)
 	} else {
 		document = terminalCMTestDocument(result)
 	}
-	return finish(terminalexperience.Succeeded, &document, nil)
+	return finish(terminalexperience.Succeeded, terminalCMTestResponseSummaryDocument(result), &document, nil)
 }
 
 func terminalCMTestConsoleDescriptor(profile string) terminalexperience.ConsoleDescriptor {
@@ -163,47 +163,89 @@ func terminalCMTestConsoleDescriptor(profile string) terminalexperience.ConsoleD
 type cmTestPhaseSink struct {
 	run           terminalexperience.ExperienceRun
 	requestCancel context.CancelFunc
-	current       *cmTestPhaseTrack
-}
-
-type cmTestPhaseTrack struct {
-	id      string
-	updates chan terminalexperience.OperationPhase
-	done    chan error
+	updates       chan terminalexperience.OperationPhase
+	done          chan error
+	currentID     string
+	started       bool
+	closed        bool
+	closeErr      error
 }
 
 func newCMTestPhaseSink(run terminalexperience.ExperienceRun, requestCancel context.CancelFunc) *cmTestPhaseSink {
-	return &cmTestPhaseSink{run: run, requestCancel: requestCancel}
+	return &cmTestPhaseSink{
+		run:           run,
+		requestCancel: requestCancel,
+		updates:       make(chan terminalexperience.OperationPhase, 8),
+		done:          make(chan error, 1),
+	}
 }
 
-func (sink *cmTestPhaseSink) begin(id, name, detail string) {
-	if sink.current != nil {
-		_ = sink.end(terminalexperience.PhaseFailed, "Phase interrupted")
+func (sink *cmTestPhaseSink) begin(id, _ string, detail string) {
+	if sink.closed {
+		return
 	}
-	updates := make(chan terminalexperience.OperationPhase, 4)
-	done := make(chan error, 1)
-	sink.current = &cmTestPhaseTrack{id: id, updates: updates, done: done}
-	go func() {
-		done <- sink.run.Track(terminalexperience.TrackedOperation{
-			ID:            id,
-			Label:         "Test commit message provider",
-			Phases:        []terminalexperience.PhaseDefinition{{ID: id, Name: name}},
-			Updates:       updates,
-			RequestCancel: sink.requestCancel,
-		})
-	}()
-	updates <- terminalexperience.OperationPhase{ID: id, State: terminalexperience.PhaseActive, Detail: detail}
+	sink.start()
+	sink.currentID = id
+	sink.updates <- terminalexperience.OperationPhase{ID: id, State: terminalexperience.PhaseActive, Detail: detail}
 }
 
 func (sink *cmTestPhaseSink) end(state terminalexperience.PhaseState, detail string) error {
-	if sink.current == nil {
+	if sink.closed || sink.currentID == "" {
 		return nil
 	}
-	track := sink.current
-	sink.current = nil
-	track.updates <- terminalexperience.OperationPhase{ID: track.id, State: state, Detail: detail}
-	close(track.updates)
-	return <-track.done
+	sink.updates <- terminalexperience.OperationPhase{ID: sink.currentID, State: state, Detail: detail}
+	sink.currentID = ""
+	return nil
+}
+
+func (sink *cmTestPhaseSink) start() {
+	if sink.started {
+		return
+	}
+	sink.started = true
+	go func() {
+		sink.done <- sink.run.Track(terminalexperience.TrackedOperation{
+			ID:    "config-cm-test",
+			Label: "Test commit message provider",
+			Phases: []terminalexperience.PhaseDefinition{
+				{ID: cmTestResolvePhaseID, Name: cmTestResolvePhaseName},
+				{ID: cmTestProviderPhaseID, Name: cmTestProviderPhaseName},
+			},
+			Updates:       sink.updates,
+			RequestCancel: sink.requestCancel,
+		})
+	}()
+}
+
+func (sink *cmTestPhaseSink) close() error {
+	if sink.closed {
+		return sink.closeErr
+	}
+	sink.closed = true
+	if !sink.started {
+		return nil
+	}
+	close(sink.updates)
+	sink.closeErr = <-sink.done
+	return sink.closeErr
+}
+
+func terminalCMTestFinishRequest(outcome terminalexperience.FinishOutcome, summary terminalexperience.PresentationDocument) terminalexperience.FinishRequest {
+	return terminalexperience.FinishRequest{Outcome: outcome, Summary: summary}
+}
+
+func terminalCMTestCancellationSummary(text string) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+		Role: terminalexperience.VisualRoleWarning,
+		Text: text,
+	}}}
+}
+
+func terminalCMTestFailureSummary(text string) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+		Role: terminalexperience.VisualRoleError,
+		Text: text,
+	}}}
 }
 
 func terminalCMTestIntroDocument() terminalexperience.PresentationDocument {

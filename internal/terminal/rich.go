@@ -231,8 +231,16 @@ func (controller *richController) milestone(document PresentationDocument) error
 }
 
 func (controller *richController) startTrack(label string, phases []OperationPhase, requestCancel func() error) error {
+	return controller.startTrackWithFormCatalog(label, phases, requestCancel, false)
+}
+
+func (controller *richController) startWork(label string, phases []OperationPhase, requestCancel func() error) error {
+	return controller.startTrackWithFormCatalog(label, phases, requestCancel, true)
+}
+
+func (controller *richController) startTrackWithFormCatalog(label string, phases []OperationPhase, requestCancel func() error, retainFormCatalog bool) error {
 	ack := make(chan struct{})
-	return controller.send(richStartTrackMsg{label: label, phases: phases, requestCancel: requestCancel, ack: ack}, ack)
+	return controller.send(richStartTrackMsg{label: label, phases: phases, requestCancel: requestCancel, retainFormCatalog: retainFormCatalog, ack: ack}, ack)
 }
 
 func (controller *richController) updateTrack(phase OperationPhase) error {
@@ -375,17 +383,18 @@ type richRootModel struct {
 	// durable or introducing a second renderer path.
 	legacyIntro *legacyConsoleIntro
 
-	notices         []PresentationDocument
-	formID          uint64
-	form            richFormModel
-	answer          func() InteractionAnswer
-	response        chan<- richAskResult
-	track           *trackedState
-	outcome         FinishRequest
-	formRows        []consoleFormStep
-	statusRows      []consoleStatusRow
-	trackRowStart   int
-	trackRowsSynced bool
+	notices          []PresentationDocument
+	formID           uint64
+	form             richFormModel
+	answer           func() InteractionAnswer
+	response         chan<- richAskResult
+	track            *trackedState
+	trackRetainsForm bool
+	outcome          FinishRequest
+	formRows         []consoleFormStep
+	statusRows       []consoleStatusRow
+	trackRowStart    int
+	trackRowsSynced  bool
 }
 
 func newRichRootModel(width, height int, color bool) *richRootModel {
@@ -462,11 +471,13 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		model.captureLegacyIntro(value.document)
-		model.preserveTrack()
+		if model.track == nil || !model.trackRetainsForm {
+			model.preserveTrack()
+			model.mode = richNoticeMode
+		}
 		if len(value.document.Blocks) > 0 {
 			model.notices = append(model.notices, value.document)
 		}
-		model.mode = richNoticeMode
 		close(value.ack)
 		return model, nil
 	case richMilestoneMsg:
@@ -475,11 +486,13 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		model.captureLegacyIntro(value.document)
-		model.preserveTrack()
+		if model.track == nil || !model.trackRetainsForm {
+			model.preserveTrack()
+			model.mode = richNoticeMode
+		}
 		if len(value.document.Blocks) > 0 {
 			model.notices = append(model.notices, value.document)
 		}
-		model.mode = richNoticeMode
 		close(value.ack)
 		return model, nil
 	case richShowFormMsg:
@@ -487,7 +500,11 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
-		model.preserveTrack()
+		if model.track != nil && model.trackRetainsForm {
+			model.showFormCatalog()
+		} else {
+			model.preserveTrack()
+		}
 		model.mode = richFormMode
 		model.formID = value.id
 		model.form = value.form
@@ -546,10 +563,17 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		// Work is a replacement phase, not an append-only continuation of the
-		// form. The first Work Catalog clears every Form row so the two catalog
-		// kinds can never mix. Sequential legacy Work operations retain their
-		// completed rows until their adapters publish one complete catalog.
-		if len(model.formRows) > 0 {
+		// form. Ordinary Tracks clear Form rows; a controlled Work session keeps
+		// its declared Form Catalog off-screen so the two catalog kinds never
+		// mix and a later declared interaction can restore its own rows.
+		if value.retainFormCatalog {
+			model.form = nil
+			model.formID = 0
+			model.answer = nil
+			model.response = nil
+			model.statusRows = nil
+			model.trackRowStart = 0
+		} else if len(model.formRows) > 0 {
 			model.track = nil
 			model.form = nil
 			model.formRows = nil
@@ -559,6 +583,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.preserveTrack()
 		}
 		model.trackRowsSynced = true
+		model.trackRetainsForm = value.retainFormCatalog
 		model.mode = richTrackMode
 		model.track = &trackedState{
 			label:  value.label,
@@ -578,7 +603,9 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if model.track != nil {
 			model.track.applyPhase(value.phase)
-			model.syncTrackRows()
+			if model.mode == richTrackMode {
+				model.syncTrackRows()
+			}
 		}
 		close(value.ack)
 		return model, nil
@@ -611,9 +638,14 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		// mutable tracker. Outcome is a terminal projection, so later form/work
 		// messages are acknowledged but cannot replace it.
 		if model.track != nil {
-			model.syncTrackRows()
+			if model.trackRetainsForm {
+				model.showWorkCatalog()
+			} else {
+				model.syncTrackRows()
+			}
 		}
 		model.track = nil
+		model.trackRetainsForm = false
 		model.form = nil
 		model.formID = 0
 		model.answer = nil
@@ -991,6 +1023,24 @@ func (model *richRootModel) syncTrackRows() {
 	}
 }
 
+func (model *richRootModel) showFormCatalog() {
+	model.statusRows = make([]consoleStatusRow, 0, len(model.formRows))
+	for _, step := range model.formRows {
+		model.statusRows = append(model.statusRows, consoleStatusRow{
+			state:  step.state,
+			phase:  step.name,
+			detail: step.detail,
+		})
+	}
+}
+
+func (model *richRootModel) showWorkCatalog() {
+	model.statusRows = nil
+	model.trackRowStart = 0
+	model.trackRowsSynced = true
+	model.syncTrackRows()
+}
+
 func (model *richRootModel) trackLabel() string {
 	if model.track == nil || strings.TrimSpace(model.track.label) == "" {
 		return "Work"
@@ -1205,11 +1255,21 @@ func lineCount(value string) int {
 
 func (model *richRootModel) preserveTrack() {
 	model.track = nil
+	model.trackRetainsForm = false
 	model.trackRowStart = len(model.statusRows)
 	model.trackRowsSynced = false
 }
 
 func (model *richRootModel) clearForm() {
+	if model.track != nil && model.trackRetainsForm {
+		model.mode = richTrackMode
+		model.formID = 0
+		model.form = nil
+		model.answer = nil
+		model.response = nil
+		model.showWorkCatalog()
+		return
+	}
 	model.mode = richNoticeMode
 	model.formID = 0
 	model.form = nil
@@ -1264,10 +1324,11 @@ type richCancelFormMsg struct {
 }
 
 type richStartTrackMsg struct {
-	label         string
-	phases        []OperationPhase
-	requestCancel func() error
-	ack           chan struct{}
+	label             string
+	phases            []OperationPhase
+	requestCancel     func() error
+	retainFormCatalog bool
+	ack               chan struct{}
 }
 
 type richTrackPhaseMsg struct {

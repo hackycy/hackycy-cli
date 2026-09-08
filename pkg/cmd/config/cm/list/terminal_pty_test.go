@@ -140,9 +140,11 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		"Load CM profiles",
 		"Loading CM profiles",
 		"DONE",
+		"SUCCEEDED",
+		"Default profile: personal",
 	}
 	if wide {
-		expected = append(expected, "profile inventory")
+		expected = append(expected, "profile inventory", "Loaded 2 CM profiles")
 	} else {
 		expected = append(expected, "profile")
 	}
@@ -170,9 +172,7 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	result := cmListPTYText(postLive[resultStart:])
 	for _, needle := range []string{
 		"Load CM profiles (completed): Loaded 2 CM profiles",
-		"Loaded 2 CM profiles",
-		"Default profile: personal",
-		"succeeded",
+		"succeeded: Loaded 2 CM profiles Default profile: personal",
 	} {
 		if !strings.Contains(transcript, needle) {
 			t.Fatalf("Rich PTY Transcript omitted %q: %q", needle, output)

@@ -136,6 +136,44 @@ func TestForkListConsoleDescriptorProvidesOnlySafeStaticContext(t *testing.T) {
 	}
 }
 
+func TestForkListFinishRequestUsesBoundedResultSummary(t *testing.T) {
+	request := terminalForkListFinishRequest(terminalexperience.Succeeded, &Result{Instances: []Instance{{
+		Name:         "work",
+		Host:         "gitlab.example",
+		Scheme:       "https",
+		Type:         "gitlab",
+		TokenPreview: "MDEy***",
+	}}})
+	if request.Outcome != terminalexperience.Succeeded {
+		t.Fatalf("Finish outcome = %v, want succeeded", request.Outcome)
+	}
+	if got, want := request.Summary, (terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+		Role: terminalexperience.VisualRoleSuccess,
+		Text: "Loaded 1 fork provider instance",
+	}}}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Finish summary = %#v, want %#v", got, want)
+	}
+	if text := request.Summary.Blocks[0].Text; strings.Contains(text, "work") || strings.Contains(text, "MDEy") {
+		t.Fatalf("Finish summary leaked list data: %q", text)
+	}
+
+	empty := terminalForkListFinishRequest(terminalexperience.Succeeded, &Result{})
+	if got, want := empty.Summary.Blocks, []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleSuccess, Text: "Loaded 0 fork provider instances"},
+		{Role: terminalexperience.VisualRoleWarning, Text: "No instances configured. Run \"ycy config fork add\" to add one."},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("empty Finish summary = %#v, want %#v", got, want)
+	}
+
+	failed := terminalForkListFinishRequest(terminalexperience.Failed, nil)
+	if got, want := failed.Summary.Blocks, []terminalexperience.PresentationBlock{{
+		Role: terminalexperience.VisualRoleError,
+		Text: "Unable to load fork provider instances",
+	}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed Finish summary = %#v, want %#v", got, want)
+	}
+}
+
 func environmentWith(overrides map[string]string) []string {
 	environment := make([]string, 0, len(os.Environ())+len(overrides))
 	for _, entry := range os.Environ() {

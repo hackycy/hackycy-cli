@@ -27,6 +27,11 @@ func TestGitPulseConsoleDescriptorUsesSafeBoundedContext(t *testing.T) {
 			{Label: "directory", Value: "workspace"},
 			{Label: "range", Value: "7 days"},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     pulseAuthorFormID,
+			Name:   "Filter by authors",
+			Detail: "choose authors",
+		}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
@@ -36,6 +41,13 @@ func TestGitPulseConsoleDescriptorUsesSafeBoundedContext(t *testing.T) {
 		if strings.ContainsAny(field, "\r\n\t\x1b") {
 			t.Fatalf("unsafe descriptor field contains terminal control: %q", field)
 		}
+	}
+	interactive := terminalPulseConsoleDescriptor(&Options{})
+	if got, want := interactive.FormCatalog, []terminalexperience.ConsoleFormStep{
+		{ID: pulseDateFormID, Name: "Select date range", Detail: "choose calendar range"},
+		{ID: pulseAuthorFormID, Name: "Filter by authors", Detail: "choose authors"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("interactive FormCatalog = %#v, want %#v", got, want)
 	}
 }
 
@@ -70,11 +82,11 @@ func TestTerminalPulseAdapterTranslatesFormsPhasesAndPresentation(t *testing.T) 
 		t.Fatalf("operations = %#v", operations)
 	}
 	daysRequest := operations[0].Value.(terminalexperience.InteractionRequest)
-	if daysRequest.Kind != terminalexperience.InteractionSelect || daysRequest.Message != "Select date range:" || daysRequest.TranscriptLabel != "Date range" || !reflect.DeepEqual(daysRequest.CancelValues, []string{"", "q", "quit", "cancel"}) {
+	if daysRequest.Kind != terminalexperience.InteractionSelect || daysRequest.Message != "Select date range:" || daysRequest.ConsoleStepID != pulseDateFormID || daysRequest.TranscriptLabel != "Date range" || !reflect.DeepEqual(daysRequest.CancelValues, []string{"", "q", "quit", "cancel"}) {
 		t.Fatalf("days request = %#v", daysRequest)
 	}
 	authorRequest := operations[1].Value.(terminalexperience.InteractionRequest)
-	if authorRequest.Kind != terminalexperience.InteractionMultiSelect || authorRequest.TranscriptLabel != "Author filter" || !authorRequest.HasDefault || !reflect.DeepEqual(authorRequest.Default.Values, []string{"Ada", "Ben"}) {
+	if authorRequest.Kind != terminalexperience.InteractionMultiSelect || authorRequest.ConsoleStepID != pulseAuthorFormID || authorRequest.TranscriptLabel != "Author filter" || !authorRequest.HasDefault || !reflect.DeepEqual(authorRequest.Default.Values, []string{"Ada", "Ben"}) {
 		t.Fatalf("author request = %#v", authorRequest)
 	}
 	intro := operations[2].Value.(terminalexperience.PresentationDocument)
@@ -89,6 +101,10 @@ func TestTerminalPulseAdapterTranslatesFormsPhasesAndPresentation(t *testing.T) 
 	}
 	if report := adapter.FinishDocument(); report == nil || report.Blocks[0].Role != terminalexperience.VisualRoleMuted || report.Blocks[0].Text != "YCY / git pulse" {
 		t.Fatalf("report = %#v", report)
+	}
+	request := adapter.FinishRequest(adapter.FinishOutcome())
+	if request.Outcome != terminalexperience.Succeeded || len(request.Summary.Blocks) != 1 || request.Summary.Blocks[0].Text != "Found 1 commit in 1 repository" || strings.Contains(request.Summary.Blocks[0].Text, "message") {
+		t.Fatalf("FinishRequest = %#v", request)
 	}
 }
 
@@ -106,25 +122,45 @@ func TestTerminalPulseAdapterMapsCancellationAndAutomationInteraction(t *testing
 	}
 }
 
-func TestTerminalPulseAdapterBridgesTypedPhaseToTrackedOperation(t *testing.T) {
+func TestTerminalPulseFinishRequestKeepsCallerOutcomeAfterResultSelection(t *testing.T) {
+	adapter := newTerminalPulseAdapter(terminaltest.NewRecordingExperience().Open(context.Background()), func() {})
+	adapter.NoRepositories()
+	request := adapter.FinishRequest(terminalexperience.Failed)
+	if request.Outcome != terminalexperience.Failed || len(request.Summary.Blocks) != 1 || request.Summary.Blocks[0].Text != "No Git repositories found." {
+		t.Fatalf("FinishRequest = %#v", request)
+	}
+}
+
+func TestTerminalPulseAdapterBridgesTypedPhasesToOneControlledWorkCatalog(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	adapter := newTerminalPulseAdapter(experience.Open(context.Background()), func() {})
-	reporter, err := adapter.Start(context.Background(), PhaseScan)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
+	for _, phase := range []PhaseKind{PhasePrepare, PhaseScan, PhaseFetch, PhaseBuild} {
+		reporter, err := adapter.Start(context.Background(), phase)
+		if err != nil {
+			t.Fatalf("Start(%d) error = %v", phase, err)
+		}
+		reporter.Report(Phase{Kind: phase, State: PhaseCompleted})
+		if err := reporter.Close(); err != nil {
+			t.Fatalf("Close(%d) error = %v", phase, err)
+		}
 	}
-	reporter.Report(Phase{Kind: PhaseScan, State: PhaseActive, Root: "/workspace", Repository: "/workspace/project", Completed: 1})
-	if err := reporter.Close(); err != nil {
-		t.Fatalf("Close() error = %v", err)
+	if err := adapter.CloseWork(); err != nil {
+		t.Fatalf("CloseWork() error = %v", err)
 	}
 
 	operations := experience.Run.Operations()
-	if len(operations) != 1 || operations[0].Kind != terminaltest.TrackOperation {
+	if len(operations) != 6 || operations[0].Kind != terminaltest.StartWorkOperation || operations[1].Kind != terminaltest.WorkUpdateOperation || operations[2].Kind != terminaltest.WorkUpdateOperation || operations[3].Kind != terminaltest.WorkUpdateOperation || operations[4].Kind != terminaltest.WorkUpdateOperation || operations[5].Kind != terminaltest.WorkCloseOperation {
 		t.Fatalf("operations = %#v", operations)
 	}
-	operation := operations[0].Value.(terminalexperience.TrackedOperation)
-	if operation.Label != "Git Pulse" || operation.ID != pulseScanPhaseID || !reflect.DeepEqual(operation.Phases, []terminalexperience.PhaseDefinition{{ID: pulseScanPhaseID, Name: pulseScanPhaseName}}) {
-		t.Fatalf("tracked operation = %#v", operation)
+	catalog := operations[0].Value.(terminalexperience.WorkCatalog)
+	if catalog.Label != "Git Pulse" || catalog.ID != pulseWorkCatalogID || !reflect.DeepEqual(catalog.Phases, pulseWorkPhaseCatalog()) {
+		t.Fatalf("Work Catalog = %#v", catalog)
+	}
+	for index, phaseID := range []string{pulsePreparePhaseID, pulseScanPhaseID, pulseFetchPhaseID, pulseBuildPhaseID} {
+		update := operations[index+1].Value.(terminalexperience.OperationPhase)
+		if update.ID != phaseID || update.State != terminalexperience.PhaseCompleted {
+			t.Fatalf("Work update %d = %#v", index, update)
+		}
 	}
 }
 
@@ -133,12 +169,8 @@ func TestTerminalPulseTrackFailureRequestsCommandCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	adapter := newTerminalPulseAdapter(&failingPulseTrackRun{trackFailure: trackFailure}, cancel)
-	reporter, err := adapter.Start(ctx, PhaseScan)
-	if err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	if err := reporter.Close(); !errors.Is(err, trackFailure) {
-		t.Fatalf("Close() error = %v, want renderer failure", err)
+	if _, err := adapter.Start(ctx, PhaseScan); !errors.Is(err, trackFailure) {
+		t.Fatalf("Start() error = %v, want renderer failure", err)
 	}
 	select {
 	case <-ctx.Done():
@@ -276,6 +308,64 @@ func TestRunPulseDateCancellationUsesTheEstablishedExitZeroResult(t *testing.T) 
 	}
 }
 
+func TestRunPulsePreservesEmptyAndPrepareFailureResultsWithControlledWork(t *testing.T) {
+	newExperience := func(stdout, stderr *bytes.Buffer) *terminalexperience.Runtime {
+		return terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+			Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},
+			Output:       stdout,
+			Diagnostics:  stderr,
+		})
+	}
+	t.Run("no repositories", func(t *testing.T) {
+		workspace := t.TempDir()
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		err := runPulse(&Options{
+			Context:          context.Background(),
+			Directory:        workspace,
+			WorkingDirectory: func() (string, error) { return workspace, nil },
+			Terminal:         newExperience(stdout, stderr),
+			Git:              &gitprocess.Runner{},
+			Now:              time.Now,
+		})
+		if err != nil || stdout.String() != "No Git repositories found.\n" {
+			t.Fatalf("no repositories = (%v, stdout=%q, stderr=%q)", err, stdout.String(), stderr.String())
+		}
+	})
+	t.Run("no commits", func(t *testing.T) {
+		workspace := t.TempDir()
+		initializeStandalonePulseRepository(t, workspace, "Ada", "ada@example.test", "old commit")
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		days := -1
+		err := runPulse(&Options{
+			Context:          context.Background(),
+			Directory:        workspace,
+			Days:             &days,
+			WorkingDirectory: func() (string, error) { return workspace, nil },
+			Terminal:         newExperience(stdout, stderr),
+			Git:              &gitprocess.Runner{},
+			Now:              time.Now,
+		})
+		if err != nil || stdout.String() != "No commits found in the specified date range.\n" {
+			t.Fatalf("no commits = (%v, stdout=%q, stderr=%q)", err, stdout.String(), stderr.String())
+		}
+	})
+	t.Run("prepare failure", func(t *testing.T) {
+		workspace := t.TempDir()
+		stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+		err := runPulse(&Options{
+			Context:          context.Background(),
+			Directory:        "missing",
+			WorkingDirectory: func() (string, error) { return workspace, nil },
+			Terminal:         newExperience(stdout, stderr),
+			Git:              &gitprocess.Runner{},
+			Now:              time.Now,
+		})
+		if err == nil || stdout.Len() != 0 {
+			t.Fatalf("prepare failure = (%v, stdout=%q, stderr=%q)", err, stdout.String(), stderr.String())
+		}
+	})
+}
+
 func TestTerminalPulseAutomationWritesOnlySafePartialWarningsToDiagnostics(t *testing.T) {
 	var stdout, diagnostics bytes.Buffer
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
@@ -300,6 +390,10 @@ type failingPulseTrackRun struct {
 
 func (run *failingPulseTrackRun) Track(terminalexperience.TrackedOperation) error {
 	return run.trackFailure
+}
+
+func (run *failingPulseTrackRun) StartWork(terminalexperience.WorkCatalog) (terminalexperience.WorkSession, error) {
+	return nil, run.trackFailure
 }
 
 type countingPulseWriter struct {

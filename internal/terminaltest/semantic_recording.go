@@ -118,6 +118,13 @@ func (run *RecordingSemanticRun) Track(operation terminal.TrackedOperation) erro
 	return nil
 }
 
+// StartWork records one controlled Work Catalog and returns a synchronous
+// recorder for its updates.
+func (run *RecordingSemanticRun) StartWork(catalog terminal.WorkCatalog) (terminal.WorkSession, error) {
+	run.record(StartWorkOperation, catalog)
+	return &recordingWorkSession{run: run}, nil
+}
+
 // Close records terminal cleanup.
 func (run *RecordingSemanticRun) Close() error {
 	run.record(CloseOperation, nil)
@@ -136,6 +143,22 @@ func (run *RecordingSemanticRun) record(kind OperationKind, value any) {
 	defer run.mu.Unlock()
 	run.operations = append(run.operations, Operation{Kind: kind, Value: value})
 }
+
+type recordingWorkSession struct {
+	run *RecordingSemanticRun
+}
+
+func (session *recordingWorkSession) Update(phase terminal.OperationPhase) error {
+	session.run.record(WorkUpdateOperation, phase)
+	return nil
+}
+
+func (session *recordingWorkSession) Close() error {
+	session.run.record(WorkCloseOperation, nil)
+	return nil
+}
+
+var _ terminal.WorkSessionStarter = (*RecordingSemanticRun)(nil)
 
 // Finish is one recorded finite command completion request.
 type Finish struct {

@@ -248,6 +248,84 @@ func TestConsoleTrackReplacesFormCatalogWithWorkCatalog(t *testing.T) {
 	}
 }
 
+func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY / git pulse",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "date-range", Name: "Select date range", Detail: "choose calendar range"},
+			{ID: "author-filter", Name: "Filter by authors", Detail: "choose authors"},
+		},
+	})
+	work := []OperationPhase{
+		{ID: "prepare", Name: "Prepare workspace", State: PhasePending},
+		{ID: "scan", Name: "Scan repositories", State: PhasePending},
+		{ID: "fetch", Name: "Fetch commits", State: PhasePending},
+		{ID: "build", Name: "Build commit tree", State: PhasePending},
+	}
+	_, _ = model.Update(richStartTrackMsg{
+		label:             "Git Pulse",
+		phases:            work,
+		requestCancel:     func() error { return nil },
+		retainFormCatalog: true,
+		ack:               make(chan struct{}),
+	})
+	if len(model.formRows) != 2 || len(model.statusRows) != 4 {
+		t.Fatalf("initial controlled catalogs = (%d form, %d work rows)", len(model.formRows), len(model.statusRows))
+	}
+	workView := model.View().Content
+	if strings.Contains(workView, "Select date range") || strings.Contains(workView, "Filter by authors") || !strings.Contains(workView, "Scan repositories") || !strings.Contains(workView, "Build commit tree") {
+		t.Fatalf("initial controlled Work view mixed catalogs: %q", workView)
+	}
+
+	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "prepare", State: PhaseCompleted, Detail: "Workspace ready"}, ack: make(chan struct{})})
+	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "scan", State: PhaseActive, Detail: "Found 2 repositories"}, ack: make(chan struct{})})
+	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "scan", State: PhaseCompleted, Detail: "Found 2 repositories"}, ack: make(chan struct{})})
+
+	dateResponse := make(chan richAskResult, 1)
+	_, _ = model.Update(richShowFormMsg{
+		id:       1,
+		form:     consoleTestForm{},
+		answer:   func() InteractionAnswer { return InteractionAnswer{Value: "1"} },
+		step:     consoleFormStep{id: 1, catalogID: "date-range", name: "Select date range", detail: "single selection", state: PhaseActive},
+		response: dateResponse,
+		ack:      make(chan struct{}),
+	})
+	dateView := model.View().Content
+	if !strings.Contains(dateView, "Select date range") || !strings.Contains(dateView, "Filter by authors") || strings.Contains(dateView, "Scan repositories") || strings.Contains(dateView, "Fetch commits") {
+		t.Fatalf("date Form view mixed catalogs: %q", dateView)
+	}
+	_, _ = model.Update(richFormSubmittedMsg{id: 1})
+	<-dateResponse
+	if model.mode != richTrackMode || len(model.formRows) != 2 || len(model.statusRows) != 4 {
+		t.Fatalf("date completion did not restore Work catalog: mode=%d form=%d work=%d", model.mode, len(model.formRows), len(model.statusRows))
+	}
+
+	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "fetch", State: PhaseActive, Detail: "Reading repositories"}, ack: make(chan struct{})})
+	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "fetch", State: PhaseCompleted, Detail: "Read 2 of 2 repositories"}, ack: make(chan struct{})})
+	authorResponse := make(chan richAskResult, 1)
+	_, _ = model.Update(richShowFormMsg{
+		id:       2,
+		form:     consoleTestForm{},
+		answer:   func() InteractionAnswer { return InteractionAnswer{Values: []string{"Ada"}} },
+		step:     consoleFormStep{id: 2, catalogID: "author-filter", name: "Filter by authors", detail: "multiple selection", state: PhaseActive},
+		response: authorResponse,
+		ack:      make(chan struct{}),
+	})
+	authorView := model.View().Content
+	if !strings.Contains(authorView, "Select date range") || !strings.Contains(authorView, "Filter by authors") || strings.Contains(authorView, "Fetch commits") || strings.Contains(authorView, "Build commit tree") {
+		t.Fatalf("author Form view mixed catalogs: %q", authorView)
+	}
+	if model.formRows[0].state != PhaseCompleted || model.formRows[1].state != PhaseActive {
+		t.Fatalf("form states after Work/Form/Work transition = %#v", model.formRows)
+	}
+	_, _ = model.Update(richFormSubmittedMsg{id: 2})
+	<-authorResponse
+	finalWorkView := model.View().Content
+	if strings.Contains(finalWorkView, "Select date range") || strings.Contains(finalWorkView, "Filter by authors") || !strings.Contains(finalWorkView, "Fetch commits") || !strings.Contains(finalWorkView, "Build commit tree") {
+		t.Fatalf("restored Work view mixed catalogs: %q", finalWorkView)
+	}
+}
+
 func TestConsoleNormalizedProjectionKeepsMetadataSingleLineAndWithinWidth(t *testing.T) {
 	longValue := strings.Repeat("workspace-value ", 8) + "\nwith another line"
 	runtime := NewExperience(ExperienceOptions{})

@@ -67,6 +67,15 @@ func terminalCMListSummaryDocument(result Result) terminalexperience.Presentatio
 	}}}
 }
 
+func terminalCMListFinishSummaryDocument(result Result) terminalexperience.PresentationDocument {
+	blocks := append([]terminalexperience.PresentationBlock(nil), terminalCMListSummaryDocument(result).Blocks...)
+	blocks = append(blocks, terminalCMListDefaultDocument(result).Blocks...)
+	if len(result.Profiles) == 0 {
+		blocks = append(blocks, terminalCMListEmptyDocument().Blocks...)
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
 func terminalCMListDefaultDocument(result Result) terminalexperience.PresentationDocument {
 	for _, profile := range result.Profiles {
 		if !profile.Default || !cmListValueSafe(profile.Name) {

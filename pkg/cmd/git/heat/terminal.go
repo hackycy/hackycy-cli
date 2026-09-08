@@ -123,19 +123,13 @@ func runHeat(options *Options) error {
 		if isHeatCancellation(workErr) {
 			outcome = terminalexperience.Cancelled
 		}
-		return errors.Join(workErr, run.Finish(outcome, nil))
-	}
-
-	if caps.Interaction == terminalexperience.RichInteractive {
-		if err := run.Milestone(terminalHeatSummaryDocument(result)); err != nil {
-			return errors.Join(err, run.Finish(terminalexperience.Succeeded, nil))
-		}
+		return errors.Join(workErr, run.Finish(terminalGitHeatFinishRequest(outcome, Result{}), nil))
 	}
 	document := terminalGitHeatDocument(result)
 	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 		document = terminalGitHeatRichDocumentForWidth(result, options.Width)
 	}
-	return run.Finish(terminalexperience.Succeeded, &document)
+	return run.Finish(terminalGitHeatFinishRequest(terminalexperience.Succeeded, result), &document)
 }
 
 const (
@@ -313,6 +307,25 @@ func terminalHeatSummaryDocument(result Result) terminalexperience.PresentationD
 		Role: terminalexperience.VisualRoleSuccess,
 		Text: safeHeatText(fmt.Sprintf("Ranked %d %s from %s", count, target, report.RangeLabel)),
 	}}}
+}
+
+func terminalGitHeatFinishRequest(outcome terminalexperience.FinishOutcome, result Result) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalHeatSummaryDocument(result)
+	case terminalexperience.Cancelled:
+		request.Summary = terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleWarning,
+			Text: "Repository heat cancelled",
+		}}}
+	case terminalexperience.Failed:
+		request.Summary = terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleError,
+			Text: "Unable to complete repository heat",
+		}}}
+	}
+	return request
 }
 
 func terminalGitHeatRichRow(rank int, mark TimeMark, row PathHeat, report Report, now time.Time) string {

@@ -65,7 +65,7 @@ func executeUse(options *Options) error {
 			Role: terminalexperience.VisualRoleActive,
 			Text: "Setting default CM profile...",
 		}}}); err != nil {
-			return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+			return finishCMUse(run, terminalexperience.Failed, nil, err)
 		}
 	}
 
@@ -114,14 +114,14 @@ func executeUse(options *Options) error {
 		}
 	}
 	if workErr != nil {
-		return errors.Join(workErr, run.Finish(terminalexperience.Failed, nil))
+		return finishCMUse(run, terminalexperience.Failed, nil, workErr)
 	}
 
 	document := terminalCMUseDocument(result)
 	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 		document = terminalCMUseRichDocument(result)
 	}
-	return run.Finish(terminalexperience.Succeeded, &document)
+	return run.Finish(terminalCMUseFinishRequest(terminalexperience.Succeeded), &document)
 }
 
 const (
@@ -139,6 +139,27 @@ func cmUseConsoleDescriptor() terminalexperience.ConsoleDescriptor {
 			Value: "commit message configuration",
 		}},
 	}
+}
+
+func finishCMUse(run terminalexperience.ExperienceRun, outcome terminalexperience.FinishOutcome, document *terminalexperience.PresentationDocument, workErr error) error {
+	return errors.Join(workErr, run.Finish(terminalCMUseFinishRequest(outcome), document))
+}
+
+func terminalCMUseFinishRequest(outcome terminalexperience.FinishOutcome) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleSuccess,
+			Text: "Default CM profile set",
+		}}}
+	case terminalexperience.Failed:
+		request.Summary = terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleError,
+			Text: "Unable to set default CM profile",
+		}}}
+	}
+	return request
 }
 
 func terminalCMUseDocument(result UseResult) terminalexperience.PresentationDocument {

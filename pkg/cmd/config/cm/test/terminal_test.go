@@ -127,3 +127,21 @@ func TestTerminalCMTestRichPresentationBoundsTheResponseAndKeepsUsageOutOfPlainR
 		t.Fatalf("response Transcript summary = %q", transcript)
 	}
 }
+
+func TestCMTestFinishRequestUsesSafeOutcomeSummary(t *testing.T) {
+	prompt, completion := 3.0, 2.0
+	succeeded := terminalCMTestFinishRequest(terminalexperience.Succeeded, terminalCMTestResponseSummaryDocument(TestResult{
+		Content: "response body must not enter the summary",
+		usage:   &cmTestTokenUsage{PromptTokens: &prompt, CompletionTokens: &completion},
+	}))
+	if got, want := terminalexperience.RenderPlain(succeeded.Summary), "Response received\nPrompt tokens: 3  Completion tokens: 2  Total tokens: 5\n"; got != want {
+		t.Fatalf("success Finish summary = %q, want %q", got, want)
+	}
+	if strings.Contains(terminalexperience.RenderPlain(succeeded.Summary), "response body") {
+		t.Fatalf("success Finish summary leaked response content: %q", terminalexperience.RenderPlain(succeeded.Summary))
+	}
+	failed := terminalCMTestFinishRequest(terminalexperience.Failed, terminalCMTestFailureSummary("Provider request failed (decode)"))
+	if got, want := terminalexperience.RenderPlain(failed.Summary), "Provider request failed (decode)\n"; got != want {
+		t.Fatalf("failed Finish summary = %q, want %q", got, want)
+	}
+}

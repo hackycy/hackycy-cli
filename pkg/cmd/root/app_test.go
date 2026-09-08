@@ -163,10 +163,14 @@ func TestRichTerminalDiscoveryPreservesVersionAndRawCompletion(t *testing.T) {
 	output := &bytes.Buffer{}
 	errors := &bytes.Buffer{}
 	app, err := newTestApp(BuildInfo{Version: "0.0.0-dev"}, testDependencies{
-		Out:          output,
-		Err:          errors,
-		Capabilities: terminal.Capabilities{Interaction: terminal.RichInteractive},
-		Logging:      logging.NewRuntime(logging.Options{Writer: errors}),
+		Out: output,
+		Err: errors,
+		Capabilities: terminal.Capabilities{
+			Interaction: terminal.RichInteractive,
+			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+		},
+		Logging: logging.NewRuntime(logging.Options{Writer: errors}),
 	})
 	if err != nil {
 		t.Fatalf("New returned an error: %v", err)
@@ -174,6 +178,9 @@ func TestRichTerminalDiscoveryPreservesVersionAndRawCompletion(t *testing.T) {
 
 	if outcome := app.Execute(context.Background(), []string{"--help"}); outcome.Code != 0 || !strings.Contains(output.String(), "Ycy command line interface") || errors.Len() != 0 {
 		t.Fatalf("help outcome = %#v, stdout = %q, stderr = %q", outcome, output.String(), errors.String())
+	}
+	if strings.Contains(output.String(), "\x1b[?1049") || strings.Contains(output.String(), "ANSWERS") || strings.Contains(output.String(), "WORK") || strings.Contains(output.String(), "OUTCOME") {
+		t.Fatalf("help entered a Console lifecycle: %q", output.String())
 	}
 
 	output.Reset()

@@ -87,3 +87,27 @@ func TestCMUseConsoleDescriptorProvidesOnlySafeStaticContext(t *testing.T) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
 	}
 }
+
+func TestCMUseFinishRequestUsesCommandOwnedSafeOutcomeSummary(t *testing.T) {
+	succeeded := terminalCMUseFinishRequest(terminalexperience.Succeeded)
+	if got, want := succeeded, (terminalexperience.FinishRequest{
+		Outcome: terminalexperience.Succeeded,
+		Summary: terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleSuccess,
+			Text: "Default CM profile set",
+		}}},
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("succeeded Finish request = %#v, want %#v", got, want)
+	}
+
+	failed := terminalCMUseFinishRequest(terminalexperience.Failed)
+	if got, want := failed, (terminalexperience.FinishRequest{
+		Outcome: terminalexperience.Failed,
+		Summary: terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleError,
+			Text: "Unable to set default CM profile",
+		}}},
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed Finish request = %#v, want %#v", got, want)
+	}
+}

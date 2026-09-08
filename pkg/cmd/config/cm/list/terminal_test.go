@@ -126,12 +126,30 @@ func TestCMListConsoleDescriptorProvidesOnlySafeStaticContext(t *testing.T) {
 	}
 }
 
-func TestTerminalCMListDefaultMilestoneUsesOnlySafeMatchingName(t *testing.T) {
-	document := terminalCMListDefaultDocument(Result{Profiles: []Profile{{Name: " work ", Default: true}}})
-	if got := terminalexperience.RenderPlain(document); got != "Default profile: work\n" {
-		t.Fatalf("safe default milestone = %q", got)
+func TestCMListFinishRequestUsesOnlySafeSummaries(t *testing.T) {
+	request := terminalCMListFinishRequest(terminalexperience.Succeeded, &Result{Profiles: []Profile{{Name: " work ", Default: true}}})
+	if request.Outcome != terminalexperience.Succeeded {
+		t.Fatalf("Finish outcome = %v, want succeeded", request.Outcome)
 	}
-	if document := terminalCMListDefaultDocument(Result{Profiles: []Profile{{Name: "bad\nname", Default: true}}}); len(document.Blocks) != 0 {
-		t.Fatalf("unsafe default milestone = %#v", document)
+	if got, want := terminalexperience.RenderPlain(request.Summary), "Loaded 1 CM profile\nDefault profile: work\n"; got != want {
+		t.Fatalf("safe Finish summary = %q, want %q", got, want)
+	}
+	if text := terminalexperience.RenderPlain(request.Summary); strings.Contains(text, "https://") || strings.Contains(text, "API") {
+		t.Fatalf("Finish summary exposed profile detail: %q", text)
+	}
+
+	unsafe := terminalCMListFinishRequest(terminalexperience.Succeeded, &Result{Profiles: []Profile{{Name: "bad\nname", Default: true}}})
+	if got, want := terminalexperience.RenderPlain(unsafe.Summary), "Loaded 1 CM profile\n"; got != want {
+		t.Fatalf("unsafe Finish summary = %q, want %q", got, want)
+	}
+
+	empty := terminalCMListFinishRequest(terminalexperience.Succeeded, &Result{})
+	if got, want := terminalexperience.RenderPlain(empty.Summary), "Loaded 0 CM profiles\nNo CM profiles configured. Run \"ycy config cm add\" to add one.\n"; got != want {
+		t.Fatalf("empty Finish summary = %q, want %q", got, want)
+	}
+
+	failed := terminalCMListFinishRequest(terminalexperience.Failed, nil)
+	if got, want := terminalexperience.RenderPlain(failed.Summary), "Unable to load CM profiles\n"; got != want {
+		t.Fatalf("failed Finish summary = %q, want %q", got, want)
 	}
 }

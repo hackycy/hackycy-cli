@@ -205,6 +205,40 @@ type TrackedOperation struct {
 	RequestCancel    func()
 }
 
+// WorkCatalog declares one complete, immutable phase catalog for a controlled
+// Work session. Callers publish updates through the returned WorkSession so a
+// catalog can yield to a declared form and later resume without starting a
+// second logical operation.
+type WorkCatalog struct {
+	ID            string
+	Label         string
+	Phases        []PhaseDefinition
+	RequestCancel func()
+}
+
+// WorkSession accepts serialized updates for one previously declared Work
+// Catalog. Close releases the session while retaining its terminal phases.
+type WorkSession interface {
+	Update(OperationPhase) error
+	Close() error
+}
+
+// WorkSessionStarter is the opt-in shared lifecycle seam for commands that
+// need one Work Catalog to alternate with declared forms.
+type WorkSessionStarter interface {
+	StartWork(WorkCatalog) (WorkSession, error)
+}
+
+// StartWork opens an opt-in controlled Work session without widening the
+// stable ExperienceRun contract used by existing command adapters.
+func StartWork(run ExperienceRun, catalog WorkCatalog) (WorkSession, error) {
+	starter, ok := run.(WorkSessionStarter)
+	if !ok {
+		return nil, ErrWorkSessionUnavailable
+	}
+	return starter.StartWork(catalog)
+}
+
 // Experience opens independently closable terminal runs and owns diagnostics.
 type Experience interface {
 	Open(context.Context) ExperienceRun

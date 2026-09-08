@@ -41,7 +41,7 @@ func TestTerminalExportEnvAdapterTranslatesSelectionAndPresentation(t *testing.T
 	if request.Kind != terminalexperience.InteractionSelect || request.Message != "Select environment" || request.HasDefault || !reflect.DeepEqual(request.Options, []terminalexperience.InteractionOption{
 		{Value: ".env", Label: "default", Description: ".env"},
 		{Value: ".env.production", Label: "production", Description: ".env.production"},
-	}) || !reflect.DeepEqual(request.CancelValues, []string{"", "q", "quit", "cancel"}) || request.TranscriptLabel != "Selected environment" {
+	}) || !reflect.DeepEqual(request.CancelValues, []string{"", "q", "quit", "cancel"}) || request.ConsoleStepID != exportEnvSelectFormID || request.TranscriptLabel != "Selected environment" {
 		t.Fatalf("selection request = %#v", request)
 	}
 	for index, want := range []terminalexperience.PresentationDocument{
@@ -65,6 +65,11 @@ func TestExportEnvConsoleDescriptorProvidesBoundedSafeContext(t *testing.T) {
 			{Label: "directory", Value: "./workspace"},
 			{Label: "merge base .env", Value: "on"},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     exportEnvSelectFormID,
+			Name:   "Select environment",
+			Detail: "choose an environment file",
+		}},
 	}
 	if got := terminalExportEnvConsoleDescriptor(options); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
@@ -140,10 +145,14 @@ func TestTerminalExportEnvAdapterPreservesAutomationResolutionAndRejectsInteract
 	}
 }
 
-func TestTerminalExportEnvPhaseSinkUsesIndependentClustersAndSafeMilestones(t *testing.T) {
+func TestTerminalExportEnvPhaseSinkUsesOneWorkCatalogAndSafeMilestones(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	run := experience.Open(context.Background())
-	sink := newExportEnvPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}, false)
+	work, err := terminalexperience.StartWork(run, terminalExportEnvWorkCatalog(false))
+	if err != nil {
+		t.Fatalf("StartWork() error = %v", err)
+	}
+	sink := newExportEnvPhaseSink(run, work, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}, false)
 	sink.phase("resolve-directory", "Resolve directory", terminalPhaseActive, "")
 	sink.phase("resolve-directory", "Resolve directory", terminalPhaseSucceeded, "Directory ready")
 	sink.phase("discover-environment-files", "Discover environment files", terminalPhaseActive, "")
@@ -156,25 +165,100 @@ func TestTerminalExportEnvPhaseSinkUsesIndependentClustersAndSafeMilestones(t *t
 	sink.phase("parse-and-merge-values", "Parse and merge values", terminalPhaseSucceeded, "Parsed 2 variables")
 	sink.phase("encode-json", "Encode JSON", terminalPhaseActive, "")
 	sink.phase("encode-json", "Encode JSON", terminalPhaseSucceeded, "JSON ready")
-	sink.close()
+	if err := sink.close(); err != nil {
+		t.Fatalf("sink.close() error = %v", err)
+	}
 	if err := run.Close(); err != nil {
 		t.Fatal(err)
 	}
 	operations := experience.Run.Operations()
-	var tracks, milestones int
+	var startWork, workClose, milestones int
+	var updates []terminalexperience.OperationPhase
 	for _, operation := range operations {
 		switch operation.Kind {
-		case terminaltest.TrackOperation:
-			tracks++
+		case terminaltest.StartWorkOperation:
+			startWork++
+			catalog := operation.Value.(terminalexperience.WorkCatalog)
+			if !reflect.DeepEqual(catalog, terminalExportEnvWorkCatalog(false)) {
+				t.Fatalf("Work catalog = %#v, want %#v", catalog, terminalExportEnvWorkCatalog(false))
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
 		case terminaltest.MilestoneOperation:
 			milestones++
 			if strings.Contains(fmt.Sprint(operation.Value), "do-not-project") {
 				t.Fatalf("milestone leaked secret: %#v", operation.Value)
 			}
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
 		}
 	}
-	if tracks != 2 || milestones != 2 {
-		t.Fatalf("operations = %#v, tracks=%d milestones=%d", operations, tracks, milestones)
+	if startWork != 1 || workClose != 1 || milestones != 2 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d milestones=%d", operations, startWork, workClose, milestones)
+	}
+	if len(updates) != 10 {
+		t.Fatalf("Work updates = %#v, want ten transitions for one five-phase catalog", updates)
+	}
+}
+
+func TestTerminalExportEnvFinishRequestSeparatesSafeOutcomeFromDurableResult(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		outcome  terminalexperience.FinishOutcome
+		location string
+		count    int
+		hasCount bool
+		withOut  bool
+		want     terminalexperience.FinishRequest
+	}{
+		{
+			name:     "JSON success",
+			outcome:  terminalexperience.Succeeded,
+			count:    2,
+			hasCount: true,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalExportEnvVariableDocument(2),
+			},
+		},
+		{
+			name:    "output success",
+			outcome: terminalexperience.Succeeded,
+			withOut: true,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalExportEnvResultDocument("Environment export written", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name:     "selection cancellation",
+			outcome:  terminalexperience.Cancelled,
+			location: "Select environment",
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Cancelled,
+				Location: "Select environment",
+				Summary:  terminalExportEnvResultDocument("Environment export cancelled", terminalexperience.VisualRoleWarning),
+			},
+		},
+		{
+			name:     "read failure",
+			outcome:  terminalexperience.Failed,
+			location: "Read selected files",
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: "Read selected files",
+				Summary:  terminalExportEnvResultDocument("Unable to export environment", terminalexperience.VisualRoleError),
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := terminalExportEnvFinishRequest(testCase.outcome, testCase.location, testCase.count, testCase.hasCount, testCase.withOut)
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("Finish request = %#v, want %#v", got, testCase.want)
+			}
+		})
 	}
 }
 

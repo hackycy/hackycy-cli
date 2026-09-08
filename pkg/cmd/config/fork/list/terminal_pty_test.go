@@ -141,6 +141,8 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 		"Load fork provider instances",
 		"Loading fork provider instances",
 		"DONE",
+		"SUCCEEDED",
+		"Loaded 1 fork provider instance",
 	}
 	if wide {
 		expected = append(expected, "provider inventory")
@@ -173,8 +175,7 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 	result := forkListPTYText(postLive[resultStart:])
 	for _, expected := range []string{
 		"Load fork provider instances (completed): Loaded 1 fork provider instances",
-		"Loaded 1 fork provider instance",
-		"succeeded",
+		"succeeded: Loaded 1 fork provider instance",
 	} {
 		if !strings.Contains(transcript, expected) {
 			t.Fatalf("Rich PTY transcript/result omitted %q: %q", expected, output)

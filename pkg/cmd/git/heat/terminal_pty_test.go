@@ -170,7 +170,7 @@ func assertGitHeatRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		}
 	}
 	if wide {
-		for _, needle := range []string{"sort path", "relative time", "file heat"} {
+		for _, needle := range []string{"sort path", "relative time", "file heat", "SUCCEEDED"} {
 			if !strings.Contains(live, needle) {
 				t.Fatalf("Rich PTY wide Console omitted %q: %q", needle, output)
 			}
@@ -199,8 +199,7 @@ func assertGitHeatRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		"Locate Git repository (completed): Repository located",
 		"Read Git history (completed): Read 1 commits",
 		"Rank hot paths (completed): Ranked 2 files",
-		"Ranked 2 files from last 20 commits",
-		"succeeded",
+		"succeeded: Ranked 2 files from last 20 commits",
 	} {
 		if !strings.Contains(transcript, needle) {
 			t.Fatalf("Rich PTY Transcript omitted %q: %q", needle, output)

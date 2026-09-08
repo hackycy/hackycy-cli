@@ -134,21 +134,11 @@ func runList(options *Options) error {
 		return finishForkList(run, outcome, nil, err)
 	}
 
-	if caps.Interaction == terminal.RichInteractive {
-		if err := run.Milestone(terminalForkListSummaryDocument(result)); err != nil {
-			return finishForkList(run, terminal.Succeeded, nil, err)
-		}
-		if len(result.Instances) == 0 {
-			if err := run.Milestone(terminalForkListEmptyDocument()); err != nil {
-				return finishForkList(run, terminal.Succeeded, nil, err)
-			}
-		}
-	}
 	document := terminalForkListDocument(result)
 	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
 		document = terminalForkListRichDocument(result)
 	}
-	return run.Finish(terminal.Succeeded, &document)
+	return run.Finish(terminalForkListFinishRequest(terminal.Succeeded, &result), &document)
 }
 
 const (
@@ -169,7 +159,28 @@ func forkListConsoleDescriptor() terminal.ConsoleDescriptor {
 }
 
 func finishForkList(run terminal.ExperienceRun, outcome terminal.FinishOutcome, document *terminal.PresentationDocument, workErr error) error {
-	return errors.Join(workErr, run.Finish(outcome, document))
+	return errors.Join(workErr, run.Finish(terminalForkListFinishRequest(outcome, nil), document))
+}
+
+func terminalForkListFinishRequest(outcome terminal.FinishOutcome, result *Result) terminal.FinishRequest {
+	request := terminal.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminal.Succeeded:
+		if result != nil {
+			request.Summary = terminalForkListFinishSummaryDocument(*result)
+		}
+	case terminal.Cancelled:
+		request.Summary = terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+			Role: terminal.VisualRoleWarning,
+			Text: "Cancelled while loading fork provider instances",
+		}}}
+	case terminal.Failed:
+		request.Summary = terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+			Role: terminal.VisualRoleError,
+			Text: "Unable to load fork provider instances",
+		}}}
+	}
+	return request
 }
 
 // Ensure the Factory's concrete Store remains the intended implementation of

@@ -23,6 +23,21 @@ var (
 	ErrInvalidResultCheckpoint = errors.New("terminal result checkpoint ID is invalid")
 	// ErrResultCheckpointEmitted reports an attempt to write the same checkpoint twice.
 	ErrResultCheckpointEmitted = errors.New("terminal result checkpoint was already emitted")
+	// ErrWorkSessionUnavailable reports a run that does not implement the opt-in
+	// controlled Work lifecycle.
+	ErrWorkSessionUnavailable = errors.New("terminal work session is unavailable")
+	// ErrInvalidWorkCatalog reports a controlled Work Catalog without its
+	// required stable identity or phase definitions.
+	ErrInvalidWorkCatalog = errors.New("terminal work catalog is invalid")
+	// ErrWorkSessionActive reports an attempt to start a second Work lifecycle
+	// while the current controlled catalog remains open.
+	ErrWorkSessionActive = errors.New("terminal work session is already active")
+	// ErrWorkSessionClosed reports an update after its controlled Work session
+	// has been released.
+	ErrWorkSessionClosed = errors.New("terminal work session is closed")
+	// ErrUndeclaredWorkSessionForm reports an interaction that was not declared
+	// in the Console Form Catalog retained by a controlled Work session.
+	ErrUndeclaredWorkSessionForm = errors.New("terminal work session form is not declared")
 )
 
 // ExperienceOptions supplies terminal-owned dependencies for one invocation.
@@ -136,6 +151,7 @@ type runtimeRun struct {
 	richDisabled     bool
 	richFailure      error
 	controller       *richController
+	work             *runtimeWorkSession
 	ledger           *TranscriptLedger
 	checkpoints      map[string]struct{}
 }
@@ -155,6 +171,9 @@ func (run *runtimeRun) Ask(request InteractionRequest) (InteractionAnswer, error
 		return InteractionAnswer{}, err
 	}
 	if err := validateInteractionRequest(request); err != nil {
+		return InteractionAnswer{}, err
+	}
+	if err := run.validateWorkSessionForm(request); err != nil {
 		return InteractionAnswer{}, err
 	}
 	if run.richEnabled() {
@@ -182,6 +201,10 @@ func (run *runtimeRun) Track(operation TrackedOperation) error {
 	defer run.operation.Unlock()
 	if err := run.interactiveAvailable(); err != nil {
 		return err
+	}
+	if run.work != nil {
+		drainTrackedUpdates(operation.Updates)
+		return ErrWorkSessionActive
 	}
 	protocol, err := newPhaseProtocol(operation)
 	if err != nil {
@@ -295,6 +318,7 @@ func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) err
 		}
 		return err
 	}
+	workErr := run.closeActiveWork()
 
 	run.state = runFinished
 	run.finishedByFinish = true
@@ -318,9 +342,9 @@ func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) err
 	}
 	restoreErr := run.stopRich()
 	if result == nil {
-		return errors.Join(outcomeErr, run.richFailure, restoreErr)
+		return errors.Join(workErr, outcomeErr, run.richFailure, restoreErr)
 	}
-	return errors.Join(outcomeErr, run.richFailure, restoreErr, run.writeResult(*result))
+	return errors.Join(workErr, outcomeErr, run.richFailure, restoreErr, run.writeResult(*result))
 }
 
 func finishRequestFromValue(value any, documents ...*PresentationDocument) (FinishRequest, *PresentationDocument, bool, error) {
@@ -395,12 +419,13 @@ func (run *runtimeRun) Result(document PresentationDocument) error {
 		return run.richFailure
 	}
 
+	workErr := run.closeActiveWork()
 	var restoreErr error
 	if run.state == runActive {
 		run.state = runFinished
 		restoreErr = run.stopRich()
 	}
-	return errors.Join(restoreErr, run.writeResult(document))
+	return errors.Join(workErr, restoreErr, run.writeResult(document))
 }
 
 func (run *runtimeRun) Close() error {
@@ -409,9 +434,10 @@ func (run *runtimeRun) Close() error {
 	if run.state == runClosed {
 		return nil
 	}
+	workErr := run.closeActiveWork()
 	run.state = runClosed
 	run.freezeTranscript()
-	return run.stopRich()
+	return errors.Join(workErr, run.stopRich())
 }
 
 func (run *runtimeRun) recordInteraction(request InteractionRequest, answer InteractionAnswer, err error) {

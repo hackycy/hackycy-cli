@@ -20,6 +20,12 @@ const (
 	FinishOperation OperationKind = "finish"
 	// TrackOperation records a tracked-operation request.
 	TrackOperation OperationKind = "track"
+	// StartWorkOperation records one controlled Work Catalog declaration.
+	StartWorkOperation OperationKind = "start-work"
+	// WorkUpdateOperation records an update submitted to a controlled Work Catalog.
+	WorkUpdateOperation OperationKind = "work-update"
+	// WorkCloseOperation records controlled Work Catalog completion.
+	WorkCloseOperation OperationKind = "work-close"
 	// CloseOperation records terminal cleanup requested by a caller.
 	CloseOperation OperationKind = "close"
 )

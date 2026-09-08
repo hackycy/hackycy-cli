@@ -75,6 +75,34 @@ func TestTerminalGitHeatPresentationUsesRichSemanticRoles(t *testing.T) {
 	}
 }
 
+func TestGitHeatFinishRequestUsesOnlySafeOutcomeSummary(t *testing.T) {
+	result := Result{Report: Report{
+		RepositoryName: "/private/workspace",
+		RangeLabel:     "last 20 commits",
+		Target:         TargetFiles,
+		Query:          "secret-query",
+		CommitCount:    1,
+		Files:          []PathHeat{{Path: "secret/path.txt"}},
+	}}
+	succeeded := terminalGitHeatFinishRequest(terminalexperience.Succeeded, result)
+	if got, want := terminalexperience.RenderPlain(succeeded.Summary), "Ranked 1 files from last 20 commits\n"; got != want {
+		t.Fatalf("success Finish summary = %q, want %q", got, want)
+	}
+	for _, forbidden := range []string{"/private", "secret-query", "secret/path"} {
+		if strings.Contains(terminalexperience.RenderPlain(succeeded.Summary), forbidden) {
+			t.Fatalf("success Finish summary leaked %q: %q", forbidden, terminalexperience.RenderPlain(succeeded.Summary))
+		}
+	}
+	failed := terminalGitHeatFinishRequest(terminalexperience.Failed, Result{})
+	if got, want := terminalexperience.RenderPlain(failed.Summary), "Unable to complete repository heat\n"; got != want {
+		t.Fatalf("failed Finish summary = %q, want %q", got, want)
+	}
+	cancelled := terminalGitHeatFinishRequest(terminalexperience.Cancelled, Result{})
+	if got, want := terminalexperience.RenderPlain(cancelled.Summary), "Repository heat cancelled\n"; got != want {
+		t.Fatalf("cancelled Finish summary = %q, want %q", got, want)
+	}
+}
+
 func TestTerminalGitHeatRichWideLayoutUsesStableColumns(t *testing.T) {
 	report := Report{
 		RepositoryName: "hackycy-cli",

@@ -52,18 +52,18 @@ func terminalForkListRichDocument(result Result) terminalexperience.Presentation
 	return terminalexperience.PresentationDocument{Blocks: blocks}
 }
 
-func terminalForkListSummaryDocument(result Result) terminalexperience.PresentationDocument {
-	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+func terminalForkListFinishSummaryDocument(result Result) terminalexperience.PresentationDocument {
+	blocks := []terminalexperience.PresentationBlock{{
 		Role: terminalexperience.VisualRoleSuccess,
 		Text: terminalForkListCountSummary(len(result.Instances)),
-	}}}
-}
-
-func terminalForkListEmptyDocument() terminalexperience.PresentationDocument {
-	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
-		Role: terminalexperience.VisualRoleWarning,
-		Text: "No instances configured. Run \"ycy config fork add\" to add one.",
-	}}}
+	}}
+	if len(result.Instances) == 0 {
+		blocks = append(blocks, terminalexperience.PresentationBlock{
+			Role: terminalexperience.VisualRoleWarning,
+			Text: "No instances configured. Run \"ycy config fork add\" to add one.",
+		})
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
 }
 
 func terminalForkListPlainText(instances []Instance) string {
