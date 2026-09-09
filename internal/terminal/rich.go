@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -390,6 +391,7 @@ type richRootModel struct {
 	statusRows       []consoleStatusRow
 	trackRowStart    int
 	trackRowsSynced  bool
+	spin             spinner.Model
 }
 
 func newRichRootModel(width, height int, color bool) *richRootModel {
@@ -402,9 +404,22 @@ func newRichRootModelWithConsole(width, height int, color bool, console ConsoleD
 		height:  height,
 		color:   color,
 		console: console,
+		spin:    newRichMeter(color),
 	}
 	model.initializeFormCatalog()
 	return model
+}
+
+func newRichMeter(color bool) spinner.Model {
+	return spinner.New(
+		spinner.WithSpinner(spinner.Meter),
+		spinner.WithStyle(richStyles(color)[VisualRoleActive]),
+	)
+}
+
+func (model *richRootModel) startMeter() tea.Cmd {
+	model.spin = newRichMeter(model.color)
+	return model.spin.Tick
 }
 
 // initializeFormCatalog materializes the complete pre-work table before any
@@ -522,21 +537,23 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if value.id == model.formID && model.form != nil {
 			model.finishFormRow(value.id, PhaseCompleted, "answer captured")
 			model.response <- richAskResult{answer: model.answer()}
-			model.clearForm()
+			return model, model.clearForm()
 		}
 		return model, nil
 	case richFormCancelledMsg:
 		if value.id == model.formID && model.form != nil {
 			model.finishFormRow(value.id, PhaseCancelled, "cancelled")
 			model.response <- richAskResult{err: ErrInteractionCancelled}
-			model.clearForm()
+			return model, model.clearForm()
 		}
 		return model, nil
 	case richCancelFormMsg:
 		if value.id == model.formID && model.form != nil {
 			model.finishFormRow(value.id, PhaseCancelled, "cancelled")
 			model.response <- richAskResult{err: value.err}
-			model.clearForm()
+			command := model.clearForm()
+			close(value.ack)
+			return model, command
 		}
 		close(value.ack)
 		return model, nil
@@ -578,7 +595,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.trackRowStart = len(model.statusRows)
 		model.syncTrackRows()
 		close(value.ack)
-		return model, nil
+		return model, model.startMeter()
 	case richTrackPhaseMsg:
 		if model.mode == richOutcomeMode {
 			close(value.ack)
@@ -644,6 +661,13 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, tea.Quit
 		}
 		return model, nil
+	case spinner.TickMsg:
+		if model.mode != richTrackMode || model.track == nil {
+			return model, nil
+		}
+		var command tea.Cmd
+		model.spin, command = model.spin.Update(value)
+		return model, command
 	case tea.KeyPressMsg:
 		if model.mode == richTrackMode && model.track != nil {
 			switch value.String() {
@@ -668,8 +692,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			model.finishFormRow(model.formID, PhaseCancelled, "cancelled")
 			model.response <- richAskResult{err: ErrInteractionCancelled}
-			model.clearForm()
-			return model, nil
+			return model, model.clearForm()
 		}
 	}
 
@@ -977,15 +1000,17 @@ func (model *richRootModel) consoleActiveView(width int) string {
 		}
 	case richTrackMode:
 		if model.track != nil {
+			styles := richStyles(model.color)
 			phase := model.track.currentPhase()
-			if phase.Name == "" {
-				phase.Name = model.trackLabel()
+			phaseName := stripTerminalControl(phase.Name)
+			if phaseName == "" {
+				phaseName = stripTerminalControl(model.trackLabel())
 			}
 			parts := make([]string, 0, 4)
-			if label := stripTerminalControl(model.trackLabel()); label != "" && label != phase.Name {
+			if label := stripTerminalControl(model.trackLabel()); label != "" && label != phaseName {
 				parts = append(parts, label)
 			}
-			parts = append(parts, stripTerminalControl(phase.Name))
+			parts = append(parts, styles[VisualRoleActive].Render(model.spin.View()+" "+phaseName))
 			if detail := stripTerminalControl(phase.Detail); detail != "" {
 				parts = append(parts, detail)
 			}
@@ -1162,7 +1187,7 @@ func (model *richRootModel) preserveTrack() {
 	model.trackRowsSynced = false
 }
 
-func (model *richRootModel) clearForm() {
+func (model *richRootModel) clearForm() tea.Cmd {
 	if model.track != nil && model.trackRetainsForm {
 		model.mode = richTrackMode
 		model.formID = 0
@@ -1170,13 +1195,14 @@ func (model *richRootModel) clearForm() {
 		model.answer = nil
 		model.response = nil
 		model.showWorkCatalog()
-		return
+		return model.startMeter()
 	}
 	model.mode = richNoticeMode
 	model.formID = 0
 	model.form = nil
 	model.answer = nil
 	model.response = nil
+	return nil
 }
 
 func takeFirstLines(value string, count int) string {

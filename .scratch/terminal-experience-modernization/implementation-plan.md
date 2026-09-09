@@ -28,6 +28,7 @@ Service Commands keep their line-oriented Lifecycle Logs. `run` returns its pare
 - `diff`, `fs`, `tunnel connect`, and `tunnel server` do not become full-screen Consoles.
 - Production starts with real `ACTIVE`/`PENDING` states. Prototype success/failure presets are demonstration controls, not production state.
 - Outcome dwell is exactly 800 ms. The prototype's 700/800/900 ms branches are not a production contract.
+- The Rich Work active region renders the prototype's Bubbles v2 `spinner.Meter` beside the current phase as an indeterminate liveness indicator. It resets for each Track or Work Catalog entry, ignores stale ticks outside Work, and never represents a percentage, ETA, or durable result.
 
 ## Gate Overview
 
@@ -345,6 +346,13 @@ Revert by command boundary. Revert G0 only for a demonstrated shared-contract re
 - Result, exit, signal, side-effect, redaction, and child-process contracts remain compatible.
 - This `implementation-plan.md`, `goal-runbook.md`, and `goal-prompt.md` are the only active control plane.
 - Superseded recovery plans, prompts, audits, and stale G0 evidence are not execution inputs.
+
+## Meter Parity Acceptance
+
+- `richTrackMode` uses `spinner.Meter` with the active B visual role beside the current phase; phase details and cancellation text retain their existing projection.
+- Starting a normal Track or controlled Work Catalog starts a fresh Meter. Returning from a controlled Form starts a new Meter, so tick messages from the prior instance cannot animate the resumed Work view.
+- Form, Outcome, and renderer-close paths ignore late Meter ticks. Meter frames never enter the Interaction Transcript, stdout Result, Plain Interactive, Automation, or Service Command Lifecycle Logs.
+- Model coverage proves initial frame, frame advance, reset, stale-tick rejection, and controlled Work/Form resumption. Rich PTY coverage proves an observable Meter frame at `120x40`, `70x20`, and `40x15`, with and without color, while preserving primary-screen restoration and stream ordering.
 
 ## Explicitly Out Of Scope
 

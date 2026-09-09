@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/hackycy/hackycy-cli/internal/terminal"
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
@@ -198,12 +200,17 @@ func runRichConsoleLifecyclePTYHelper(t *testing.T, outcome terminal.FinishOutco
 		finalState = terminal.PhaseCancelled
 		finalDetail = "execution cancelled"
 	}
-	updates := make(chan terminal.OperationPhase, 4)
-	updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseActive, Detail: "validate request"}
-	updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseCompleted, Detail: "request validated"}
-	updates <- terminal.OperationPhase{ID: "write", State: terminal.PhaseActive, Detail: "write projection"}
-	updates <- terminal.OperationPhase{ID: "write", State: finalState, Detail: finalDetail}
-	close(updates)
+	updates := make(chan terminal.OperationPhase)
+	go func() {
+		updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseActive, Detail: "validate request"}
+		// Keep real work active for one Meter cycle so the PTY captures a live
+		// frame rather than a scheduler-coalesced final screen.
+		time.Sleep(spinner.Meter.FPS + 50*time.Millisecond)
+		updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseCompleted, Detail: "request validated"}
+		updates <- terminal.OperationPhase{ID: "write", State: terminal.PhaseActive, Detail: "write projection"}
+		updates <- terminal.OperationPhase{ID: "write", State: finalState, Detail: finalDetail}
+		close(updates)
+	}()
 	if err := run.Track(terminal.TrackedOperation{
 		ID:    "g0-matrix",
 		Label: "Execute request",
@@ -290,6 +297,9 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 	if lastFormCatalog < 0 || firstWorkCatalog < 0 || lastFormCatalog >= firstWorkCatalog {
 		t.Fatalf("Form Catalog was not replaced before Work Catalog in PTY output: %q", output)
 	}
+	if !containsMeterFrame(output) {
+		t.Fatalf("Console lifecycle did not render a Meter frame: %q", output)
+	}
 	if color && !strings.Contains(output, "\x1b[38;") {
 		t.Fatalf("colored Console lifecycle lacks a color style: %q", output)
 	}
@@ -309,6 +319,9 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 		}
 	}
 	plainTranscript := ansi.Strip(transcript)
+	if containsMeterFrame(plainTranscript) {
+		t.Fatalf("Transcript replay retained a transient Meter frame: %q", transcript)
+	}
 	answers := strings.Index(plainTranscript, "ANSWERS")
 	work := strings.Index(plainTranscript, "WORK")
 	at := strings.Index(plainTranscript, "AT       "+location)
@@ -317,6 +330,15 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 	if answers < 0 || work < answers || at < work || final < at || resultAt < final {
 		t.Fatalf("Console lifecycle restore/transcript/stdout order = %q", output)
 	}
+}
+
+func containsMeterFrame(value string) bool {
+	for _, frame := range []string{"▱▱▱", "▰▱▱", "▰▰▱", "▰▰▰"} {
+		if strings.Contains(value, frame) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasTerminalStyleImmediatelyBefore(value, header string) bool {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -149,6 +150,129 @@ func TestConsoleCompactViewRetainsOrderedRowsAndActiveRegion(t *testing.T) {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("compact view missing %q: %q", needle, view)
 		}
+	}
+}
+
+func TestConsoleTrackStartsAndAdvancesMeter(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
+	ack := make(chan struct{})
+	_, start := model.Update(richStartTrackMsg{
+		label:         "Work",
+		phases:        []OperationPhase{{ID: "phase", Name: "Phase", State: PhaseActive}},
+		requestCancel: func() error { return nil },
+		ack:           ack,
+	})
+	if start == nil {
+		t.Fatal("starting a Rich Track returned no spinner command")
+	}
+	if model.spin.Spinner.FPS != spinner.Meter.FPS || len(model.spin.Spinner.Frames) != len(spinner.Meter.Frames) {
+		t.Fatalf("spinner = %#v, want Bubbles Meter", model.spin.Spinner)
+	}
+	for index, frame := range spinner.Meter.Frames {
+		if model.spin.Spinner.Frames[index] != frame {
+			t.Fatalf("spinner frame %d = %q, want Meter frame %q", index, model.spin.Spinner.Frames[index], frame)
+		}
+	}
+	first := model.spin.View()
+	if first != spinner.Meter.Frames[0] || !strings.Contains(model.View().Content, first+" Phase") {
+		t.Fatalf("initial Meter frame = %q, view = %q", first, model.View().Content)
+	}
+
+	message, ok := start().(spinner.TickMsg)
+	if !ok {
+		t.Fatalf("start command returned %T, want spinner.TickMsg", start())
+	}
+	_, next := model.Update(message)
+	if next == nil {
+		t.Fatal("spinner tick returned no follow-up command")
+	}
+	if got := model.spin.View(); got == first {
+		t.Fatalf("spinner frame did not advance: still %q", got)
+	}
+}
+
+func TestConsoleTrackResetsMeterAndIgnoresLateTicksOutsideWork(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
+	startTrack := func() (int, spinner.TickMsg) {
+		ack := make(chan struct{})
+		_, start := model.Update(richStartTrackMsg{
+			label:         "Work",
+			phases:        []OperationPhase{{ID: "phase", Name: "Phase", State: PhaseActive}},
+			requestCancel: func() error { return nil },
+			ack:           ack,
+		})
+		message, ok := start().(spinner.TickMsg)
+		if !ok {
+			t.Fatalf("start command returned %T, want spinner.TickMsg", start())
+		}
+		return model.spin.ID(), message
+	}
+
+	firstID, late := startTrack()
+	_, _ = model.Update(late)
+	if model.spin.View() == spinner.Meter.Frames[0] {
+		// The first update is expected to advance the frame; this also proves the
+		// message belongs to the currently active spinner.
+		t.Fatalf("active spinner did not consume its tick")
+	}
+	model.mode = richFormMode
+	beforeFormTick := model.spin.View()
+	if _, command := model.Update(model.spin.Tick()); command != nil || model.spin.View() != beforeFormTick {
+		t.Fatalf("Form mode consumed a late spinner tick: view=%q command=%v", model.spin.View(), command)
+	}
+
+	secondID, _ := startTrack()
+	if secondID == firstID || model.spin.View() != spinner.Meter.Frames[0] {
+		t.Fatalf("new Track did not reset Meter: ids=(%d,%d) view=%q", firstID, secondID, model.spin.View())
+	}
+	beforeStaleTick := model.spin.View()
+	if _, command := model.Update(late); command != nil || model.spin.View() != beforeStaleTick {
+		t.Fatalf("new Track consumed a stale spinner tick: view=%q command=%v", model.spin.View(), command)
+	}
+	_, outcomeCommand := model.Update(richShowOutcomeMsg{
+		request: FinishRequest{Outcome: Succeeded},
+		ack:     make(chan struct{}),
+	})
+	if outcomeCommand == nil {
+		t.Fatal("Outcome transition returned no dwell command")
+	}
+	beforeOutcomeTick := model.spin.View()
+	if _, command := model.Update(model.spin.Tick()); command != nil || model.spin.View() != beforeOutcomeTick {
+		t.Fatalf("Outcome mode consumed a late spinner tick: view=%q command=%v", model.spin.View(), command)
+	}
+}
+
+func TestControlledWorkResumesMeterAfterForm(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command:     "YCY",
+		FormCatalog: []ConsoleFormStep{{ID: "step", Name: "Step"}},
+	})
+	_, start := model.Update(richStartTrackMsg{
+		label:             "Work",
+		phases:            []OperationPhase{{ID: "phase", Name: "Phase", State: PhaseActive}},
+		requestCancel:     func() error { return nil },
+		retainFormCatalog: true,
+		ack:               make(chan struct{}),
+	})
+	if start == nil {
+		t.Fatal("controlled Work returned no initial spinner command")
+	}
+	response := make(chan richAskResult, 1)
+	_, _ = model.Update(richShowFormMsg{
+		id:       1,
+		form:     consoleTestForm{},
+		answer:   func() InteractionAnswer { return InteractionAnswer{Value: "ok"} },
+		step:     consoleFormStep{catalogID: "step", id: 1, name: "Step", state: PhaseActive},
+		response: response,
+		ack:      make(chan struct{}),
+	})
+	if model.mode != richFormMode {
+		t.Fatalf("mode after form start = %v, want richFormMode", model.mode)
+	}
+	_, resume := model.Update(richFormSubmittedMsg{id: 1})
+	<-response
+	if model.mode != richTrackMode || resume == nil || model.spin.View() != spinner.Meter.Frames[0] {
+		t.Fatalf("controlled Work did not restart Meter: mode=%v command=%v view=%q", model.mode, resume, model.spin.View())
 	}
 }
 

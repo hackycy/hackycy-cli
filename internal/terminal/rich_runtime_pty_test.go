@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"github.com/hackycy/hackycy-cli/internal/terminal"
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
@@ -131,14 +132,14 @@ func TestRichRuntimeKeepsUIOnStderrWhenStdoutIsRedirected(t *testing.T) {
 	writeRichPTYInput(t, process, "\r")
 	finishRichPTYTest(t, process, readDone, output)
 
-	if got := durable.String(); !strings.HasPrefix(got, "redirected-result\n") || strings.Contains(got, "stderr notice") || strings.Contains(got, "Continue?") {
+	if got := durable.String(); !strings.HasPrefix(got, "redirected-result\n") || strings.Contains(got, "stderr notice") || strings.Contains(got, "Continue?") || containsMeterFrame(got) {
 		t.Fatalf("redirected stdout = %q", got)
 	}
 	if terminaltest.ContainsTerminalControl(durable.Bytes()) {
 		t.Fatalf("redirected stdout contains terminal control: %q", durable.String())
 	}
 	text := output.String()
-	if !strings.Contains(text, "stderr notice") || !strings.Contains(text, "deferred diagnostic") {
+	if !strings.Contains(text, "stderr notice") || !strings.Contains(text, "deferred diagnostic") || !containsMeterFrame(text) {
 		t.Fatalf("Rich stderr omitted UI or deferred diagnostics: %q", text)
 	}
 	if strings.Contains(text, "redirected-result") {
@@ -403,6 +404,16 @@ func runRichRedirectHelper(t *testing.T) {
 	}
 	if _, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionConfirm, Message: "Continue?", ConsoleStepID: "continue", HasDefault: true, Default: terminal.InteractionAnswer{Confirmed: true}}); err != nil {
 		t.Fatalf("Ask() error = %v", err)
+	}
+	updates := make(chan terminal.OperationPhase)
+	go func() {
+		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseActive}
+		time.Sleep(spinner.Meter.FPS + 50*time.Millisecond)
+		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseCompleted}
+		close(updates)
+	}()
+	if err := run.Track(terminal.TrackedOperation{Label: "Redirect work", Updates: updates}); err != nil {
+		t.Fatalf("Track() error = %v", err)
 	}
 	if _, err := io.WriteString(experience.DiagnosticWriter(), "deferred diagnostic\n"); err != nil {
 		t.Fatalf("diagnostic write = %v", err)
