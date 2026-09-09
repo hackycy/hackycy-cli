@@ -211,7 +211,7 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 	if strings.Contains(output, "fixture-api-key") || strings.Contains(output, "Authorization: Bearer") {
 		t.Fatalf("git cm push leaked provider credential: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	for _, expected := range []string{"Verify unchanged scope (completed)", "Create commit (completed)", "Push commit (completed)", "succeeded", "Commit created and pushed"} {
 		if !strings.Contains(transcript, expected) {
 			t.Fatalf("git cm push Transcript missing %q: %q", expected, output)
@@ -446,7 +446,7 @@ func assertGitCMScenarioPTYOutput(t *testing.T, output, scenario string, color, 
 			t.Fatalf("Git CM scenario live Console missing %q: %q", expected, output)
 		}
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	var expectedOutcome string
 	switch scenario {
 	case "provider":
@@ -597,7 +597,7 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 	if strings.Contains(output, "fixture-api-key") || strings.Contains(output, "Authorization: Bearer") || strings.Contains(output, "http://127.") {
 		t.Fatalf("git cm PTY leaked provider credential or URL: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{"Inspect changes (completed)", "Stage selected files (completed)", "Capture commit evidence (completed)", "Resolve provider profile (completed)", "Generate commit message (completed)", "Verify unchanged scope (completed)", "Create commit (completed)", "succeeded", "Commit created"}
 	last := 0
 	for _, expected := range ordered {

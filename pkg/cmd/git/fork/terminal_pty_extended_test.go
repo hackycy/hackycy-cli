@@ -234,7 +234,7 @@ func assertGitForkOverwritePTYOutput(t *testing.T, output string, color, wide bo
 	if !strings.Contains(visible, marker) || !strings.Contains(visible, "Cancelled") {
 		t.Fatalf("git fork overwrite %s missing cancellation result: %q", mode, output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	if wide {
 		if !strings.Contains(live, "Project acquisition cancelled") || strings.Contains(live, "Project acquired") {
 			t.Fatalf("git fork overwrite %s wide live Outcome is not cancellation-only: %q", mode, output)
@@ -413,7 +413,7 @@ func assertGitForkFailurePTYOutput(t *testing.T, output string, color, wide bool
 	} else if !strings.Contains(live, "FAILED") || !strings.Contains(live, "Download archive") {
 		t.Fatalf("compact git fork failure live phase missing: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	if strings.Contains(live, "Project acquired") || strings.Contains(transcript, "Project acquired") || strings.Contains(transcript, "Done! Project created") {
 		t.Fatalf("git fork failure emitted success-looking output: %q", output)
 	}
@@ -470,7 +470,7 @@ func assertGitForkFallbackPTYOutput(t *testing.T, output string, color, wide boo
 	if strings.Contains(output, "fork-fallback-secret") || strings.Contains(output, "Authorization") || strings.Contains(output, "fallback child output") {
 		t.Fatalf("git fork fallback leaked unsafe or child detail: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	for _, expected := range []string{"Download archive (failed)", "Clone fallback (completed)", "Remove Git metadata (completed)", "succeeded", "Done! Project created at project"} {
 		if !strings.Contains(transcript, expected) {
 			t.Fatalf("git fork fallback Transcript missing %q: %q", expected, output)
@@ -587,7 +587,7 @@ func assertGitForkArchivePTYOutput(t *testing.T, output string, color, wide bool
 			t.Fatalf("git fork Rich PTY output missing %q: %q", expected, output)
 		}
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"Resolve repository (completed)",
 		"Inspect destination (completed)",

@@ -355,7 +355,7 @@ func assertForkRemoveRichPTYOutput(t *testing.T, output string, color, wide bool
 		}
 	}
 	leave := assertForkRemoveRichPTYRestored(t, output)
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"ANSWERS",
 		"Selected instance: work",
@@ -394,7 +394,7 @@ func assertForkRemoveRichPTYScenario(t *testing.T, output, scenario string, colo
 	t.Helper()
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
 	leave := assertForkRemoveRichPTYRestored(t, output)
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := map[string][]string{
 		"empty": {
 			"WORK",

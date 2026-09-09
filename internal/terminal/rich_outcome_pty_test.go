@@ -67,6 +67,7 @@ func TestRichRuntimeFailedAndCancelledOutcomesPTY(t *testing.T) {
 		color    bool
 	}{
 		{name: "failed", mode: "failed", outcome: terminal.Failed, location: "write projection", summary: "matrix failure summary", color: true},
+		{name: "cancelled", mode: "cancelled", outcome: terminal.Cancelled, location: "write projection", summary: "matrix cancellation summary", color: true},
 		{name: "cancelled-no-color", mode: "cancelled", outcome: terminal.Cancelled, location: "write projection", summary: "matrix cancellation summary", color: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -98,10 +99,11 @@ func TestRichRuntimeContextInterruptsOutcomeDwellPTY(t *testing.T) {
 	assertTrackedPTYCleanup(t, text, "context-interrupted-result")
 	exit := strings.LastIndex(text, "\x1b[?1049l")
 	transcript := transcriptAfterPrimaryScreen(t, text, exit)
-	if !strings.Contains(transcript, "AT       cancellation requested") || !strings.Contains(transcript, "OUTCOME  cancelled: context interruption") {
+	plainTranscript := ansi.Strip(transcript)
+	if !strings.Contains(plainTranscript, "AT       cancellation requested") || !strings.Contains(plainTranscript, "OUTCOME  cancelled: context interruption") {
 		t.Fatalf("context interruption transcript = %q", transcript)
 	}
-	if outcome := strings.Index(transcript, "OUTCOME  cancelled: context interruption"); outcome < 0 || strings.LastIndex(text, "context-interrupted-result") < outcome {
+	if outcome := strings.Index(plainTranscript, "OUTCOME  cancelled: context interruption"); outcome < 0 || strings.LastIndex(plainTranscript, "context-interrupted-result") < outcome {
 		t.Fatalf("context interruption did not restore/replay before stdout result: %q", text)
 	}
 }
@@ -301,14 +303,34 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 
 	exit := strings.LastIndex(output, "\x1b[?1049l")
 	transcript := transcriptAfterPrimaryScreen(t, output, exit)
-	answers := strings.Index(transcript, "ANSWERS")
-	work := strings.Index(transcript, "WORK")
-	at := strings.Index(transcript, "AT       "+location)
-	final := strings.Index(transcript, "OUTCOME  "+outcome.String()+": "+summary)
-	resultAt := strings.LastIndex(output, result)
+	for _, header := range []string{"ANSWERS", "WORK", "AT", "OUTCOME"} {
+		if got := hasTerminalStyleImmediatelyBefore(transcript, header); got != color {
+			t.Fatalf("Transcript header %q styled = %t, want %t: %q", header, got, color, transcript)
+		}
+	}
+	plainTranscript := ansi.Strip(transcript)
+	answers := strings.Index(plainTranscript, "ANSWERS")
+	work := strings.Index(plainTranscript, "WORK")
+	at := strings.Index(plainTranscript, "AT       "+location)
+	final := strings.Index(plainTranscript, "OUTCOME  "+outcome.String()+": "+summary)
+	resultAt := strings.LastIndex(plainTranscript, result)
 	if answers < 0 || work < answers || at < work || final < at || resultAt < final {
 		t.Fatalf("Console lifecycle restore/transcript/stdout order = %q", output)
 	}
+}
+
+func hasTerminalStyleImmediatelyBefore(value, header string) bool {
+	index := strings.Index(value, header)
+	if index < 0 {
+		return false
+	}
+	prefix := value[:index]
+	styleStart := strings.LastIndex(prefix, "\x1b[")
+	if styleStart < 0 {
+		return false
+	}
+	styleEnd := strings.IndexByte(prefix[styleStart:], 'm')
+	return styleEnd >= 0 && styleStart+styleEnd+1 == len(prefix)
 }
 
 func transcriptAfterPrimaryScreen(t *testing.T, output string, exit int) string {

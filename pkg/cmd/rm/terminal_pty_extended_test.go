@@ -134,7 +134,7 @@ func assertRMExtendedMutationOutput(t *testing.T, output string, color, wide boo
 			t.Fatalf("rm Rich PTY output missing %q: %q", expected, output)
 		}
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"ANSWERS",
 		"Deletion confirmation: yes",
@@ -269,7 +269,7 @@ func assertRMExtendedPartialDeletionOutput(t *testing.T, output string, color bo
 	if strings.Contains(visible, "permission denied") || strings.Contains(visible, "/private/secret/path") {
 		t.Fatalf("rm Rich PTY partial deletion leaked raw error data: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"Resolve explicit targets (completed)",
 		"Delete selected paths (completed)",

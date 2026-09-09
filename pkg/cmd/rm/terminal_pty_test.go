@@ -99,7 +99,7 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"ANSWERS",
 		"Deletion confirmation: yes",
@@ -302,7 +302,7 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
-	transcript := visible[leave:]
+	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"ANSWERS",
 		"Cleanup action: Node project - delete ./dist",

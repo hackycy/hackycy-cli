@@ -3,6 +3,8 @@ package terminal
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestTranscriptLedgerNormalizesAndNumbersEvents(t *testing.T) {
@@ -114,6 +116,47 @@ func TestTranscriptLedgerPartitionsWorkAndReusesOutcomeProjection(t *testing.T) 
 	want := "ANSWERS\nWorkspace: repo\nAccess token: [redacted]\n\nWORK\ncheckpoint\nWrite profile (completed): saved\n\nAT       workspace/project\nOUTCOME  succeeded: Profile saved [redacted]\n"
 	if got := ledger.Render(); got != want {
 		t.Fatalf("structured render = %q, want %q", got, want)
+	}
+}
+
+func TestRenderRichTranscriptStylesOnlyHeaders(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		outcome FinishOutcome
+		role    VisualRole
+	}{
+		{name: "succeeded", outcome: Succeeded, role: VisualRoleSuccess},
+		{name: "cancelled", outcome: Cancelled, role: VisualRoleWarning},
+		{name: "failed", outcome: Failed, role: VisualRoleError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			ledger := NewTranscriptLedger(TranscriptOptions{})
+			ledger.Append(TranscriptEvent{Kind: TranscriptAsk, Label: "Workspace", Text: "repo"})
+			ledger.Append(TranscriptEvent{Kind: TranscriptMilestone, Text: "checkpoint"})
+			ledger.Append(TranscriptEvent{
+				Kind:     TranscriptOutcome,
+				Outcome:  testCase.outcome,
+				Location: "profile demo",
+				Summary:  testCase.outcome.String() + " summary",
+			})
+
+			styles := richStyles(true)
+			want := styles[VisualRoleTitle].Render("ANSWERS") + "\n" +
+				"Workspace: repo\n\n" +
+				styles[VisualRoleTitle].Render("WORK") + "\n" +
+				"checkpoint\n\n" +
+				styles[VisualRoleWarning].Render("AT") + "       profile demo\n" +
+				styles[testCase.role].Render("OUTCOME") + "  " + testCase.outcome.String() + ": " + testCase.outcome.String() + " summary\n"
+			if got := renderRichTranscript(ledger, true); got != want {
+				t.Fatalf("colored transcript = %q, want %q", got, want)
+			}
+			if got, want := ansi.Strip(renderRichTranscript(ledger, true)), ledger.Render(); got != want {
+				t.Fatalf("stripped colored transcript = %q, want %q", got, want)
+			}
+			if got, want := renderRichTranscript(ledger, false), ledger.Render(); got != want {
+				t.Fatalf("no-color transcript = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

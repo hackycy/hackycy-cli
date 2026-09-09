@@ -317,7 +317,7 @@ func (controller *richController) closeWith(ledger *TranscriptLedger, includePro
 	// frames and command results are deliberately not copied here.
 	var replayErr error
 	if ledger != nil {
-		if transcript := ledger.Render(); transcript != "" && controller.lease != nil {
+		if transcript := renderRichTranscript(ledger, controller.runtime.capabilities.Stderr.Color); transcript != "" && controller.lease != nil {
 			_, replayErr = io.WriteString(controller.lease.Writer(), transcript)
 		}
 	}

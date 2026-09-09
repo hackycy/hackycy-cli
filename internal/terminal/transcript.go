@@ -137,8 +137,27 @@ func (ledger *TranscriptLedger) Bytes() int {
 
 // Render returns a control-free line-oriented transcript projection.
 func (ledger *TranscriptLedger) Render() string {
+	return renderTranscript(ledger, false)
+}
+
+// renderRichTranscript renders the same semantic projection as Render, adding
+// only terminal-owned heading styles when the Rich stderr stream supports color.
+func renderRichTranscript(ledger *TranscriptLedger, color bool) string {
+	return renderTranscript(ledger, color)
+}
+
+func renderTranscript(ledger *TranscriptLedger, color bool) string {
 	if ledger == nil {
 		return ""
+	}
+	var header func(VisualRole, string) string
+	if color {
+		styles := richStyles(true)
+		header = func(role VisualRole, text string) string {
+			return styles[role].Render(text)
+		}
+	} else {
+		header = func(_ VisualRole, text string) string { return text }
 	}
 	answers := make([]string, 0)
 	work := make([]string, 0)
@@ -161,23 +180,36 @@ func (ledger *TranscriptLedger) Render() string {
 
 	sections := make([]string, 0, 4)
 	if len(answers) > 0 {
-		sections = append(sections, transcriptSection("ANSWERS", answers))
+		sections = append(sections, transcriptSection(header(VisualRoleTitle, "ANSWERS"), answers))
 	}
 	if len(work) > 0 {
-		sections = append(sections, transcriptSection("WORK", work))
+		sections = append(sections, transcriptSection(header(VisualRoleTitle, "WORK"), work))
 	}
 	if outcome != nil {
 		outcomeLines := make([]string, 0, 2)
 		if outcome.Location != "" {
-			outcomeLines = append(outcomeLines, "AT       "+outcome.Location)
+			outcomeLines = append(outcomeLines, header(VisualRoleWarning, "AT")+"       "+outcome.Location)
 		}
-		outcomeLines = append(outcomeLines, "OUTCOME  "+outcome.renderOutcomeLine())
+		outcomeLines = append(outcomeLines, header(transcriptOutcomeRole(outcome.Outcome), "OUTCOME")+"  "+outcome.renderOutcomeLine())
 		sections = append(sections, strings.Join(outcomeLines, "\n"))
 	}
 	if len(sections) == 0 {
 		return ""
 	}
 	return strings.Join(sections, "\n\n") + "\n"
+}
+
+func transcriptOutcomeRole(outcome FinishOutcome) VisualRole {
+	switch outcome {
+	case Succeeded:
+		return VisualRoleSuccess
+	case Cancelled:
+		return VisualRoleWarning
+	case Failed:
+		return VisualRoleError
+	default:
+		return VisualRolePlain
+	}
 }
 
 func transcriptSection(name string, lines []string) string {
