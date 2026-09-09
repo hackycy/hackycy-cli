@@ -56,7 +56,7 @@ func TestTerminalGitForkAdapterTranslatesConfirmationPhasesAndPresentation(t *te
 		t.Fatalf("operations = %#v", operations)
 	}
 	confirmation := operations[1].Value.(terminalexperience.InteractionRequest)
-	if confirmation.Kind != terminalexperience.InteractionConfirm || confirmation.Message != prompt.Message || !confirmation.HasDefault || !confirmation.Default.Confirmed || confirmation.PlainPrompt != prompt.Message+" [Y/n]: " || !reflect.DeepEqual(confirmation.CancelValues, []string{"q", "quit", "cancel"}) {
+	if confirmation.Kind != terminalexperience.InteractionConfirm || confirmation.Message != prompt.Message || confirmation.ConsoleStepID != gitForkOverwriteFormID || confirmation.TranscriptLabel != "Destination replacement" || !confirmation.HasDefault || !confirmation.Default.Confirmed || confirmation.PlainPrompt != prompt.Message+" [Y/n]: " || !reflect.DeepEqual(confirmation.CancelValues, []string{"q", "quit", "cancel"}) {
 		t.Fatalf("confirmation request = %#v", confirmation)
 	}
 	if _, err := confirmation.ParsePlain("maybe"); err == nil || err.Error() != "Invalid confirmation" {
@@ -81,6 +81,89 @@ func TestTerminalGitForkAdapterTranslatesConfirmationPhasesAndPresentation(t *te
 		{Role: terminalexperience.VisualRoleSuccess, Text: "Done! Project created at chosen"},
 	}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("outcome = %#v, want %#v", got, want)
+	}
+}
+
+func TestTerminalGitForkAdapterUsesOneControlledWorkCatalogAcrossOverwrite(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience(terminaltest.SemanticAnswer{Value: terminalexperience.InteractionAnswer{Confirmed: true}})
+	run := experience.Open(context.Background())
+	adapter := newTerminalGitForkAdapter(run, func() {})
+	adapter.enableDetailed()
+	adapter.enableControlledWork()
+
+	for _, update := range []struct {
+		id     string
+		state  PhaseState
+		detail string
+	}{
+		{forkResolveRepositoryPhaseID, PhaseActive, "owner/project"},
+		{forkResolveRepositoryPhaseID, PhaseCompleted, "provider/owner/project (github)"},
+		{forkInspectDestinationPhaseID, PhaseActive, "project"},
+		{forkInspectDestinationPhaseID, PhaseCompleted, "destination contains existing entries"},
+	} {
+		adapter.reportForkPhase(update.id, update.state, update.detail)
+	}
+	if confirmed, cancelled, err := adapter.ConfirmOverwrite(OverwritePrompt{Message: "Overwrite?"}); err != nil || !confirmed || cancelled {
+		t.Fatalf("ConfirmOverwrite() = (%t, %t, %v)", confirmed, cancelled, err)
+	}
+	for _, update := range []struct {
+		id     string
+		state  PhaseState
+		detail string
+	}{
+		{forkReplaceDestinationPhaseID, PhaseActive, "project"},
+		{forkReplaceDestinationPhaseID, PhaseCompleted, "existing destination removed"},
+	} {
+		adapter.reportForkPhase(update.id, update.state, update.detail)
+	}
+	reporter, err := adapter.Start(context.Background())
+	if err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	reporter.Report(Phase{Kind: PhaseArchive, State: PhaseActive, Ref: "main"})
+	if err := reporter.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := adapter.flushDetailed(); err != nil {
+		t.Fatalf("flushDetailed() error = %v", err)
+	}
+
+	var catalogs []terminalexperience.WorkCatalog
+	var updates []terminalexperience.OperationPhase
+	var ask terminalexperience.InteractionRequest
+	var workCloses, tracks int
+	for _, operation := range experience.Run.Operations() {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			catalogs = append(catalogs, operation.Value.(terminalexperience.WorkCatalog))
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workCloses++
+		case terminaltest.AskOperation:
+			ask = operation.Value.(terminalexperience.InteractionRequest)
+		case terminaltest.TrackOperation:
+			tracks++
+		}
+	}
+	if len(catalogs) != 1 || catalogs[0].ID != gitForkWorkCatalogID || catalogs[0].Label != "Acquire project files" || !reflect.DeepEqual(catalogs[0].Phases, forkPhaseDefinitions) || catalogs[0].RequestCancel == nil {
+		t.Fatalf("Work catalogs = %#v", catalogs)
+	}
+	wantUpdates := []terminalexperience.OperationPhase{
+		{ID: forkResolveRepositoryPhaseID, State: terminalexperience.PhaseActive, Detail: "owner/project"},
+		{ID: forkResolveRepositoryPhaseID, State: terminalexperience.PhaseCompleted, Detail: "provider/owner/project (github)"},
+		{ID: forkInspectDestinationPhaseID, State: terminalexperience.PhaseActive, Detail: "project"},
+		{ID: forkInspectDestinationPhaseID, State: terminalexperience.PhaseCompleted, Detail: "destination contains existing entries"},
+		{ID: forkReplaceDestinationPhaseID, State: terminalexperience.PhaseActive, Detail: "project"},
+		{ID: forkReplaceDestinationPhaseID, State: terminalexperience.PhaseCompleted, Detail: "existing destination removed"},
+	}
+	if !reflect.DeepEqual(updates, wantUpdates) || ask.ConsoleStepID != gitForkOverwriteFormID || ask.TranscriptLabel != "Destination replacement" || workCloses != 1 || tracks != 0 {
+		t.Fatalf("operations = %#v, updates = %#v, ask = %#v, workCloses = %d, tracks = %d", experience.Run.Operations(), updates, ask, workCloses, tracks)
+	}
+
+	descriptor := gitForkConsoleDescriptor("https://token@example.invalid/owner/project", "/private/work/project")
+	if !reflect.DeepEqual(descriptor.FormCatalog, []terminalexperience.ConsoleFormStep{{ID: gitForkOverwriteFormID, Name: "Replace destination", Detail: "confirm recursive replacement"}}) {
+		t.Fatalf("Console Form Catalog = %#v", descriptor.FormCatalog)
 	}
 }
 
@@ -154,6 +237,171 @@ func TestTerminalGitForkAdapterMapsCancellationAutomationAndRedactsFallbackFacts
 	}
 	if text := terminalexperience.RenderPlain(document); !strings.Contains(text, "[REDACTED]") {
 		t.Fatalf("redacted fallback output = %q", text)
+	}
+}
+
+func TestTerminalGitForkFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	success := Result{
+		Repository: Repository{
+			Host:         "github.example",
+			Owner:        "group",
+			Name:         "project",
+			ProviderType: "github",
+		},
+		Destination: "../../private/project",
+		Ref:         "release/v1",
+		Acquisition: acquisitionArchive,
+	}
+	successRequest := terminalGitForkFinishRequest(terminalexperience.Succeeded, success, "")
+	if successRequest.Outcome != terminalexperience.Succeeded || successRequest.Location != "" {
+		t.Fatalf("success request = %#v", successRequest)
+	}
+	successText := terminalexperience.RenderPlain(successRequest.Summary)
+	for _, expected := range []string{
+		"Project acquired",
+		"github.example/group/project (github)",
+		"release/v1",
+		"Acquired via archive",
+		"History: not included",
+		"Destination: ../../private/project",
+	} {
+		if !strings.Contains(successText, expected) {
+			t.Fatalf("success summary missing %q: %q", expected, successText)
+		}
+	}
+
+	clone := Result{
+		Repository:         success.Repository,
+		Destination:        "/private/work/project",
+		Ref:                "main",
+		Acquisition:        acquisitionClone,
+		DefaultBranchError: errors.New("Authorization: Bearer branch-secret"),
+		ArchiveError:       errors.New("archive URL=https://user:pass@example.invalid/a?token=archive-secret"),
+	}
+	cloneRequest := terminalGitForkFinishRequest(terminalexperience.Succeeded, clone, "")
+	cloneText := terminalexperience.RenderPlain(cloneRequest.Summary)
+	for _, expected := range []string{
+		"Acquired via git clone",
+		"Git metadata: removed",
+		"Default branch unavailable; used remote default",
+		"Archive unavailable; used git clone fallback",
+	} {
+		if !strings.Contains(cloneText, expected) {
+			t.Fatalf("clone summary missing %q: %q", expected, cloneText)
+		}
+	}
+	for _, forbidden := range []string{"/private/work", "branch-secret", "archive-secret", "user:pass", "https://"} {
+		if strings.Contains(cloneText, forbidden) {
+			t.Fatalf("clone summary leaked %q: %q", forbidden, cloneText)
+		}
+	}
+
+	cancelled := terminalGitForkFinishRequest(terminalexperience.Cancelled, Result{
+		Cancelled:   true,
+		Destination: "/private/work/project",
+	}, forkInspectDestinationPhaseID)
+	if cancelled.Location != "Inspect destination" || !strings.Contains(terminalexperience.RenderPlain(cancelled.Summary), "Destination replacement cancelled") {
+		t.Fatalf("overwrite cancellation request = %#v", cancelled)
+	}
+
+	failureCases := []struct {
+		location string
+		message  string
+		fact     string
+	}{
+		{location: forkResolveRepositoryPhaseID, message: "Unable to resolve repository"},
+		{location: forkInspectDestinationPhaseID, message: "Unable to inspect destination"},
+		{location: forkReplaceDestinationPhaseID, message: "Unable to replace destination", fact: "Destination may contain partially replaced files"},
+		{location: forkResolveDefaultBranchPhaseID, message: "Unable to resolve default branch"},
+		{location: forkDownloadArchivePhaseID, message: "Unable to download archive"},
+		{location: forkExtractArchivePhaseID, message: "Unable to extract archive", fact: "Destination may contain partially extracted files"},
+		{location: forkCloneFallbackPhaseID, message: "Unable to clone project", fact: "Destination may contain a partial clone"},
+		{location: forkRemoveGitMetadataPhaseID, message: "Unable to remove Git metadata", fact: "Project files created; Git metadata remains"},
+	}
+	for _, testCase := range failureCases {
+		t.Run(testCase.location, func(t *testing.T) {
+			request := terminalGitForkFinishRequest(terminalexperience.Failed, Result{
+				Repository:         success.Repository,
+				Destination:        "/private/work/project",
+				DefaultBranchError: errors.New("raw default error token=secret"),
+				ArchiveError:       errors.New("raw archive error Authorization: Bearer secret"),
+				DiskFact:           testCase.fact,
+			}, testCase.location)
+			wantLocation := gitForkTestPhaseName(testCase.location)
+			if request.Outcome != terminalexperience.Failed || request.Location != wantLocation {
+				t.Fatalf("failure request = %#v, want location %q", request, wantLocation)
+			}
+			text := terminalexperience.RenderPlain(request.Summary)
+			if !strings.Contains(text, testCase.message) {
+				t.Fatalf("failure summary missing %q: %q", testCase.message, text)
+			}
+			if testCase.fact != "" && !strings.Contains(text, testCase.fact) {
+				t.Fatalf("failure summary missing disk fact %q: %q", testCase.fact, text)
+			}
+			if strings.Contains(text, "Project acquired") || strings.Contains(text, "Done! Project created") {
+				t.Fatalf("failure summary looks successful: %q", text)
+			}
+			for _, forbidden := range []string{"/private/work", "token=secret", "Bearer secret", "Authorization:"} {
+				if strings.Contains(text, forbidden) {
+					t.Fatalf("failure summary leaked %q: %q", forbidden, text)
+				}
+			}
+		})
+	}
+
+	partial := terminalGitForkFinishRequest(terminalexperience.Cancelled, Result{
+		DiskFact: "Destination may contain partially extracted files",
+	}, forkExtractArchivePhaseID)
+	if text := terminalexperience.RenderPlain(partial.Summary); !strings.Contains(text, "Destination may contain partially extracted files") || strings.Contains(text, "Project acquired") {
+		t.Fatalf("partial cancellation summary = %q", text)
+	}
+}
+
+func gitForkTestPhaseName(id string) string {
+	for _, definition := range forkPhaseDefinitions {
+		if definition.ID == id {
+			return definition.Name
+		}
+	}
+	return ""
+}
+
+func TestTerminalGitForkFinishSubmitsRequestAndSeparateResult(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	adapter := newTerminalGitForkAdapter(run, func() {})
+	adapter.enableDetailed()
+	adapter.reportForkPhase(forkDownloadArchivePhaseID, PhaseActive, "main")
+	durable := gitForkOutcomeDocumentDetailed(Result{
+		Repository:  Repository{Host: "github.example", Owner: "group", Name: "project", ProviderType: "github"},
+		Destination: "project",
+		Ref:         "main",
+		Acquisition: acquisitionArchive,
+	})
+	result := Result{
+		Repository:  Repository{Host: "github.example", Owner: "group", Name: "project", ProviderType: "github"},
+		Destination: "project",
+		Ref:         "main",
+		Acquisition: acquisitionArchive,
+	}
+	if err := adapter.finish(terminalexperience.Succeeded, result, &durable); err != nil {
+		t.Fatalf("finish() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	if len(operations) != 1 || operations[0].Kind != terminaltest.FinishOperation {
+		t.Fatalf("operations = %#v", operations)
+	}
+	finish := operations[0].Value.(terminaltest.Finish)
+	wantRequest := terminalGitForkFinishRequest(terminalexperience.Succeeded, result, forkDownloadArchivePhaseID)
+	if !reflect.DeepEqual(finish.Value.(terminalexperience.FinishRequest), wantRequest) || !reflect.DeepEqual(finish.Request, wantRequest) {
+		t.Fatalf("Finish = %#v, want request %#v", finish, wantRequest)
+	}
+	if len(finish.Documents) != 1 || finish.Documents[0] == nil || !reflect.DeepEqual(*finish.Documents[0], durable) {
+		t.Fatalf("durable Result = %#v, want %#v", finish.Documents, durable)
+	}
+	if reflect.DeepEqual(finish.Request.Summary, *finish.Documents[0]) {
+		t.Fatalf("Finish summary must remain separate from durable Result: %#v", finish)
 	}
 }
 

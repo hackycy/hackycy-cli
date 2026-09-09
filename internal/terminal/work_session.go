@@ -11,13 +11,13 @@ import (
 // calls remain serialized without making the catalog own that lock between
 // updates.
 type runtimeWorkSession struct {
-	run             *runtimeRun
-	protocol        *phaseProtocol
-	requestCancel   func() error
-	done            chan struct{}
-	closed          bool
-	transcriptIndex int
-	err             error
+	run           *runtimeRun
+	protocol      *phaseProtocol
+	requestCancel func() error
+	done          chan struct{}
+	closed        bool
+	transcripted  map[string]bool
+	err           error
 }
 
 // StartWork opens one controlled Work Catalog. It is intentionally separate
@@ -50,6 +50,7 @@ func (run *runtimeRun) StartWork(catalog WorkCatalog) (WorkSession, error) {
 		protocol:      protocol,
 		requestCancel: requestCancellation(catalog.RequestCancel),
 		done:          make(chan struct{}),
+		transcripted:  make(map[string]bool, len(catalog.Phases)),
 	}
 	if run.richEnabled() {
 		controller, err := run.ensureRich()
@@ -176,10 +177,12 @@ func (session *runtimeWorkSession) closeLocked() error {
 }
 
 func (session *runtimeWorkSession) recordTerminalPhases() {
-	for session.transcriptIndex < len(session.protocol.phases) {
-		phase := session.protocol.phases[session.transcriptIndex]
-		if !session.protocol.reached[phase.ID] || !isTerminalPhaseState(phase.State) {
-			return
+	// Conditional catalog entries may remain pending while a later phase is
+	// reached. Scan the complete catalog so those omitted entries do not block
+	// the ordered terminal phases that were actually reached.
+	for _, phase := range session.protocol.phases {
+		if !session.protocol.reached[phase.ID] || !isTerminalPhaseState(phase.State) || session.transcripted[phase.ID] {
+			continue
 		}
 		session.run.recordTranscript(TranscriptEvent{
 			Kind:    TranscriptPhase,
@@ -188,7 +191,7 @@ func (session *runtimeWorkSession) recordTerminalPhases() {
 			PhaseID: phase.ID,
 			State:   phase.State,
 		})
-		session.transcriptIndex++
+		session.transcripted[phase.ID] = true
 	}
 }
 

@@ -24,18 +24,29 @@ const (
 	cmVerifyScopePhaseID     = "verify-unchanged-scope"
 	cmCreateCommitPhaseID    = "create-commit"
 	cmPushCommitPhaseID      = "push-commit"
+	cmWorkCatalogID          = "git-cm-workflow"
+
+	cmInspectChangesPhaseName  = "Inspect changes"
+	cmStageSelectedPhaseName   = "Stage selected files"
+	cmStageAllPhaseName        = "Stage all changes"
+	cmCaptureEvidencePhaseName = "Capture commit evidence"
+	cmResolveProfilePhaseName  = "Resolve provider profile"
+	cmGenerateMessagePhaseName = "Generate commit message"
+	cmVerifyScopePhaseName     = "Verify unchanged scope"
+	cmCreateCommitPhaseName    = "Create commit"
+	cmPushCommitPhaseName      = "Push commit"
 )
 
 var cmPhaseDefinitions = []terminalexperience.PhaseDefinition{
-	{ID: cmInspectChangesPhaseID, Name: "Inspect changes"},
-	{ID: cmStageSelectedPhaseID, Name: "Stage selected files"},
-	{ID: cmStageAllPhaseID, Name: "Stage all changes"},
-	{ID: cmCaptureEvidencePhaseID, Name: "Capture commit evidence"},
-	{ID: cmResolveProfilePhaseID, Name: "Resolve provider profile"},
-	{ID: cmGenerateMessagePhaseID, Name: "Generate commit message"},
-	{ID: cmVerifyScopePhaseID, Name: "Verify unchanged scope"},
-	{ID: cmCreateCommitPhaseID, Name: "Create commit"},
-	{ID: cmPushCommitPhaseID, Name: "Push commit"},
+	{ID: cmInspectChangesPhaseID, Name: cmInspectChangesPhaseName},
+	{ID: cmStageSelectedPhaseID, Name: cmStageSelectedPhaseName},
+	{ID: cmStageAllPhaseID, Name: cmStageAllPhaseName},
+	{ID: cmCaptureEvidencePhaseID, Name: cmCaptureEvidencePhaseName},
+	{ID: cmResolveProfilePhaseID, Name: cmResolveProfilePhaseName},
+	{ID: cmGenerateMessagePhaseID, Name: cmGenerateMessagePhaseName},
+	{ID: cmVerifyScopePhaseID, Name: cmVerifyScopePhaseName},
+	{ID: cmCreateCommitPhaseID, Name: cmCreateCommitPhaseName},
+	{ID: cmPushCommitPhaseID, Name: cmPushCommitPhaseName},
 }
 
 // Git CM pauses tracking while it presents its selection and confirmation

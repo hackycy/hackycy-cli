@@ -3,6 +3,7 @@ package zip
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -22,22 +23,27 @@ func newTerminalZipAdapter(run terminalexperience.ExperienceRun) *terminalZipAda
 }
 
 func (adapter *terminalZipAdapter) SelectPackage(step SelectPackageStep) (string, bool, error) {
-	answer, cancelled, err := adapter.ask(zipChoiceRequest(step.Message, step.Options))
+	answer, cancelled, err := adapter.ask(zipChoiceRequest(step.Message, step.Options, zipPackageFormID, "Workspace package"))
 	return answer.Value, cancelled, err
 }
 
 func (adapter *terminalZipAdapter) SelectSource(step SelectSourceStep) (string, bool, error) {
-	answer, cancelled, err := adapter.ask(zipChoiceRequest(step.Message, step.Options))
+	answer, cancelled, err := adapter.ask(zipChoiceRequest(step.Message, step.Options, zipSourceFormID, "Source directory"))
 	return answer.Value, cancelled, err
 }
 
 func (adapter *terminalZipAdapter) SelectGlob(step SelectGlobStep) ([]string, bool, error) {
 	options := zipInteractionOptions(step.Options)
 	answer, cancelled, err := adapter.ask(terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionMultiSelect,
-		Message:      step.Message,
-		PlainLead:    step.Message,
-		PlainPrompt:  "> ",
+		Kind:            terminalexperience.InteractionMultiSelect,
+		Message:         step.Message,
+		PlainLead:       step.Message,
+		PlainPrompt:     "> ",
+		ConsoleStepID:   zipPatternsFormID,
+		TranscriptLabel: "File patterns",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return zipTranscriptChoices(options, answer.Values)
+		},
 		Options:      options,
 		HasDefault:   true,
 		Default:      terminalexperience.InteractionAnswer{Values: append([]string(nil), step.InitialValues...)},
@@ -51,10 +57,15 @@ func (adapter *terminalZipAdapter) SelectGlob(step SelectGlobStep) ([]string, bo
 
 func (adapter *terminalZipAdapter) EditOutputFile(step EditOutputFileStep) (string, bool, error) {
 	answer, cancelled, err := adapter.ask(terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionText,
-		Message:      step.Message,
-		Placeholder:  step.InitialValue,
-		PlainPrompt:  step.Message + " [" + step.InitialValue + "]: ",
+		Kind:            terminalexperience.InteractionText,
+		Message:         step.Message,
+		Placeholder:     step.InitialValue,
+		PlainPrompt:     step.Message + " [" + step.InitialValue + "]: ",
+		ConsoleStepID:   zipOutputFormID,
+		TranscriptLabel: "Archive output",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return safeZipName(SanitizeFileName(answer.Value))
+		},
 		HasDefault:   true,
 		Default:      terminalexperience.InteractionAnswer{Value: step.InitialValue},
 		CancelValues: []string{"q", "quit", "cancel"},
@@ -109,13 +120,18 @@ func (adapter *terminalZipAdapter) ask(request terminalexperience.InteractionReq
 	return answer, false, nil
 }
 
-func zipChoiceRequest(message string, choices []PlanningChoice) terminalexperience.InteractionRequest {
+func zipChoiceRequest(message string, choices []PlanningChoice, consoleStepID, transcriptLabel string) terminalexperience.InteractionRequest {
 	options := zipInteractionOptions(choices)
 	request := terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionSelect,
-		Message:      message,
-		PlainLead:    message,
-		PlainPrompt:  "> ",
+		Kind:            terminalexperience.InteractionSelect,
+		Message:         message,
+		PlainLead:       message,
+		PlainPrompt:     "> ",
+		ConsoleStepID:   consoleStepID,
+		TranscriptLabel: transcriptLabel,
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return zipTranscriptChoice(options, answer.Value)
+		},
 		Options:      options,
 		CancelValues: []string{"q", "quit", "cancel"},
 		ParsePlain: func(value string) (terminalexperience.InteractionAnswer, error) {
@@ -127,6 +143,40 @@ func zipChoiceRequest(message string, choices []PlanningChoice) terminalexperien
 		request.Default = terminalexperience.InteractionAnswer{Value: options[0].Value}
 	}
 	return request
+}
+
+func zipTranscriptChoice(options []terminalexperience.InteractionOption, value string) string {
+	for _, option := range options {
+		if option.Value == value {
+			return safeZipText(option.Label, "selection")
+		}
+	}
+	return "selection"
+}
+
+func zipTranscriptChoices(options []terminalexperience.InteractionOption, values []string) string {
+	const maxChoices = 6
+	labels := make([]string, 0, minZipInt(len(values), maxChoices))
+	for index, value := range values {
+		if index >= maxChoices {
+			break
+		}
+		labels = append(labels, zipTranscriptChoice(options, value))
+	}
+	if len(values) > maxChoices {
+		labels = append(labels, fmt.Sprintf("+%d more", len(values)-maxChoices))
+	}
+	if len(labels) == 0 {
+		return "default patterns"
+	}
+	return strings.Join(labels, ", ")
+}
+
+func minZipInt(first, second int) int {
+	if first < second {
+		return first
+	}
+	return second
 }
 
 func zipInteractionOptions(choices []PlanningChoice) []terminalexperience.InteractionOption {

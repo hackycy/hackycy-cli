@@ -59,34 +59,15 @@ func runSet(options *Options) error {
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
 
-	// Set is one atomic appconfig operation. Rich observes it as one phase;
-	// Plain keeps the established single loading diagnostic and Automation is
-	// deliberately silent.
-	var updates chan terminalexperience.OperationPhase
-	var trackDone chan error
-	if caps.Interaction == terminalexperience.PlainInteractive {
-		if err := run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
-			Role: terminalexperience.VisualRoleActive,
-			Text: "Updating CM profile...",
-		}}}); err != nil {
-			return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
-		}
+	// Set is one atomic appconfig operation. Rich keeps one controlled Work
+	// Catalog open for the operation; Plain keeps the established single
+	// loading diagnostic and Automation is deliberately silent.
+	phases := newCMSetPhaseSink(run, caps)
+	finish := func(outcome terminalexperience.FinishOutcome, document *terminalexperience.PresentationDocument, workErr error) error {
+		return errors.Join(workErr, phases.close(), run.Finish(terminalCMSetFinishRequest(outcome), document))
 	}
-	if caps.Interaction == terminalexperience.RichInteractive {
-		updates = make(chan terminalexperience.OperationPhase, 4)
-		trackDone = make(chan error, 1)
-		go func() {
-			trackDone <- run.Track(terminalexperience.TrackedOperation{
-				ID:    "config-cm-set",
-				Label: cmSetPhaseName,
-				Phases: []terminalexperience.PhaseDefinition{{
-					ID:   cmSetPhaseID,
-					Name: cmSetPhaseName,
-				}},
-				Updates: updates,
-			})
-		}()
-		updates <- terminalexperience.OperationPhase{ID: cmSetPhaseID, State: terminalexperience.PhaseActive, Detail: "Validating setting and saving profile"}
+	if err := phases.begin(); err != nil {
+		return finish(terminalexperience.Failed, nil, err)
 	}
 
 	result, workErr := func() (SetResult, error) {
@@ -108,20 +89,16 @@ func runSet(options *Options) error {
 			state = terminalexperience.PhaseFailed
 			detail = "Unable to update CM profile"
 		}
-		updates <- terminalexperience.OperationPhase{ID: cmSetPhaseID, State: state, Detail: detail}
-		close(updates)
-		if trackErr := <-trackDone; trackErr != nil {
-			workErr = errors.Join(workErr, trackErr)
-		}
+		workErr = errors.Join(workErr, phases.end(state, detail))
 	}
 	if workErr != nil {
-		return errors.Join(workErr, run.Finish(terminalexperience.Failed, nil))
+		return finish(terminalexperience.Failed, nil, workErr)
 	}
 	document := terminalCMSetDocument(result)
 	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 		document = terminalCMSetRichDocument(result)
 	}
-	return run.Finish(terminalexperience.Succeeded, &document)
+	return finish(terminalexperience.Succeeded, &document, nil)
 }
 
 func terminalCMSetDocument(result SetResult) terminalexperience.PresentationDocument {
@@ -138,9 +115,99 @@ func terminalCMSetRichDocument(result SetResult) terminalexperience.Presentation
 }
 
 const (
-	cmSetPhaseID   = "update-cm-profile"
-	cmSetPhaseName = "Update CM profile"
+	cmSetWorkCatalogID = "update-cm-profile"
+	cmSetPhaseID       = "update-cm-profile"
+	cmSetPhaseName     = "Update CM profile"
 )
+
+type cmSetPhaseSink struct {
+	run         terminalexperience.ExperienceRun
+	caps        terminalexperience.Capabilities
+	work        terminalexperience.WorkSession
+	workStarted bool
+	workClosed  bool
+}
+
+func newCMSetPhaseSink(run terminalexperience.ExperienceRun, caps terminalexperience.Capabilities) *cmSetPhaseSink {
+	return &cmSetPhaseSink{run: run, caps: caps}
+}
+
+func (sink *cmSetPhaseSink) begin() error {
+	if sink.caps.Interaction == terminalexperience.PlainInteractive {
+		return sink.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
+			Role: terminalexperience.VisualRoleActive,
+			Text: "Updating CM profile...",
+		}}})
+	}
+	if sink.caps.Interaction != terminalexperience.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{
+		ID:     cmSetPhaseID,
+		State:  terminalexperience.PhaseActive,
+		Detail: "Validating setting and saving profile",
+	})
+}
+
+func (sink *cmSetPhaseSink) end(state terminalexperience.PhaseState, detail string) error {
+	if sink.caps.Interaction != terminalexperience.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{ID: cmSetPhaseID, State: state, Detail: detail})
+}
+
+func (sink *cmSetPhaseSink) ensureWork() error {
+	if sink.workStarted {
+		return nil
+	}
+	work, err := terminalexperience.StartWork(sink.run, terminalCMSetWorkCatalog())
+	if err != nil {
+		return err
+	}
+	sink.work = work
+	sink.workStarted = true
+	return nil
+}
+
+func (sink *cmSetPhaseSink) close() error {
+	if sink.workClosed || sink.work == nil {
+		return nil
+	}
+	sink.workClosed = true
+	return sink.work.Close()
+}
+
+func terminalCMSetWorkCatalog() terminalexperience.WorkCatalog {
+	return terminalexperience.WorkCatalog{
+		ID:    cmSetWorkCatalogID,
+		Label: cmSetPhaseName,
+		Phases: []terminalexperience.PhaseDefinition{{
+			ID:   cmSetPhaseID,
+			Name: cmSetPhaseName,
+		}},
+	}
+}
+
+func terminalCMSetFinishRequest(outcome terminalexperience.FinishOutcome) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalCMSetOutcomeDocument("Profile updated", terminalexperience.VisualRoleSuccess)
+	case terminalexperience.Failed:
+		request.Summary = terminalCMSetOutcomeDocument("Unable to update CM profile", terminalexperience.VisualRoleError)
+	}
+	return request
+}
+
+func terminalCMSetOutcomeDocument(text string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: text}}}
+}
 
 func cmSetSuccessDetail(profile, key, value string) string {
 	return "Profile: " + safeCMSetProfile(profile) + "; Setting: " + safeCMSetKey(key) + "; " + safeCMSetValueDetail(key, value)

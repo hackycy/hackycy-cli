@@ -21,6 +21,7 @@ func (adapter *terminalForkRemoveAdapter) Select(question SelectPrompt) (string,
 	request := terminalexperience.InteractionRequest{
 		Kind:            terminalexperience.InteractionSelect,
 		Message:         question.Message,
+		ConsoleStepID:   forkRemoveSelectionFormID,
 		TranscriptLabel: "Selected instance",
 		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
 			return safeForkRemoveName(answer.Value)
@@ -37,10 +38,11 @@ func (adapter *terminalForkRemoveAdapter) Select(question SelectPrompt) (string,
 
 func (adapter *terminalForkRemoveAdapter) Confirm(question ConfirmPrompt) (bool, bool, error) {
 	answer, cancelled, err := adapter.ask(terminalexperience.InteractionRequest{
-		Kind:       terminalexperience.InteractionConfirm,
-		Message:    question.Message,
-		HasDefault: true,
-		Default:    terminalexperience.InteractionAnswer{Confirmed: false},
+		Kind:          terminalexperience.InteractionConfirm,
+		Message:       question.Message,
+		ConsoleStepID: forkRemoveConfirmationFormID,
+		HasDefault:    true,
+		Default:       terminalexperience.InteractionAnswer{Confirmed: false},
 		// The command emits the semantic confirmation milestone after it can
 		// associate the answer with the selected safe instance projection.
 		TranscriptProject: func(terminalexperience.InteractionAnswer) string { return "" },

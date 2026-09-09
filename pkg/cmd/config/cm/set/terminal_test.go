@@ -177,6 +177,86 @@ func TestCMSetSuccessDetailUsesSafeKeySpecificProjections(t *testing.T) {
 	}
 }
 
+func TestCMSetPhaseSinkUsesOneControlledWorkCatalog(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	sink := newCMSetPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
+	if err := sink.begin(); err != nil {
+		t.Fatalf("begin() error = %v", err)
+	}
+	if err := sink.end(terminalexperience.PhaseCompleted, "safe success detail"); err != nil {
+		t.Fatalf("end() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	var startWork, workClose int
+	var updates []terminalexperience.OperationPhase
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			startWork++
+			if got, want := operation.Value.(terminalexperience.WorkCatalog), terminalCMSetWorkCatalog(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Work Catalog = %#v, want %#v", got, want)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
+		}
+	}
+	if startWork != 1 || workClose != 1 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
+	}
+	want := []terminalexperience.OperationPhase{
+		{ID: cmSetPhaseID, State: terminalexperience.PhaseActive, Detail: "Validating setting and saving profile"},
+		{ID: cmSetPhaseID, State: terminalexperience.PhaseCompleted, Detail: "safe success detail"},
+	}
+	if !reflect.DeepEqual(updates, want) {
+		t.Fatalf("phase updates = %#v, want %#v", updates, want)
+	}
+}
+
+func TestCMSetFinishRequestUsesCommandOwnedSafeOutcomeSummaries(t *testing.T) {
+	tests := []struct {
+		name    string
+		outcome terminalexperience.FinishOutcome
+		want    terminalexperience.FinishRequest
+	}{
+		{
+			name:    "success",
+			outcome: terminalexperience.Succeeded,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalCMSetOutcomeDocument("Profile updated", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name:    "failure",
+			outcome: terminalexperience.Failed,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Failed,
+				Summary: terminalCMSetOutcomeDocument("Unable to update CM profile", terminalexperience.VisualRoleError),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := terminalCMSetFinishRequest(test.outcome)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("Finish request = %#v, want %#v", got, test.want)
+			}
+			if terminaltest.ContainsTerminalControl([]byte(terminalexperience.RenderPlain(got.Summary))) {
+				t.Fatalf("summary contains terminal controls: %#v", got)
+			}
+		})
+	}
+}
+
 type setWriterFunc func(name, key, value string) error
 
 func (function setWriterFunc) SetCMProfileValue(name, key, value string) error {

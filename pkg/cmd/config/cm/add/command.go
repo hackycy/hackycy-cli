@@ -61,57 +61,58 @@ func runAdd(options *Options) error {
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
 	if err := ctx.Err(); err != nil {
-		return errors.Join(err, run.Finish(terminal.Cancelled, nil))
+		return errors.Join(err, run.Finish(terminalCMAddFinishRequest(terminal.Cancelled, cmAddCollectPhaseName), nil))
 	}
 	if caps.Interaction == terminal.Automation {
-		return errors.Join(errConfigCMAddRequiresInteractive, run.Finish(terminal.Failed, nil))
-	}
-	if caps.Interaction == terminal.RichInteractive {
-		if err := run.Notice(terminalCMAddIntroDocument()); err != nil {
-			return errors.Join(err, run.Finish(terminal.Failed, nil))
-		}
+		return errors.Join(errConfigCMAddRequiresInteractive, run.Finish(terminalCMAddFinishRequest(terminal.Failed, cmAddCollectPhaseName), nil))
 	}
 	adapter := newTerminalCMAddAdapter(run)
 	phases := newCMAddPhaseSink(run, caps)
-	phases.beginCollect()
+	if err := phases.beginCollect(); err != nil {
+		return finishCMAdd(run, phases, terminal.Failed, cmAddCollectPhaseName, nil, err)
+	}
 	writer, workErr := options.Store()
 	if workErr == nil && writer == nil {
 		workErr = errors.New("config cm add store is nil")
 	}
-	if workErr == nil {
-		var input AddInput
-		input, cancelled, promptErr := PromptAdd(adapter)
-		if promptErr != nil {
-			workErr = promptErr
-			phases.endCollect(terminal.PhaseFailed, "Unable to collect CM profile details")
-		} else if cancelled {
-			phases.endCollect(terminal.PhaseCancelled, "Profile setup cancelled")
-			document := terminalCMAddDocument("Cancelled", true)
-			return finishCMAdd(run, phases, terminal.Cancelled, &document, nil)
-		} else {
-			if err := ctx.Err(); err != nil {
-				phases.endCollect(terminal.PhaseCancelled, "Profile setup cancelled")
-				document := terminalCMAddDocument("Cancelled", true)
-				return finishCMAdd(run, phases, terminal.Cancelled, &document, err)
-			}
-			phases.endCollect(terminal.PhaseCompleted, cmAddCollectDetail(input))
-			phases.beginSave()
-			workErr = SaveAdd(writer, input)
-			if workErr != nil {
-				phases.endSave(terminal.PhaseFailed, "Unable to save CM profile")
-			} else {
-				phases.endSave(terminal.PhaseCompleted, "Profile saved")
-				document := terminalCMAddDocument(fmt.Sprintf("Profile %s added", safeCMAddName(input.Name)), false)
-				if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
-					document = terminalCMAddSuccessDocument(input)
-				}
-				return finishCMAdd(run, phases, terminal.Succeeded, &document, nil)
-			}
-		}
-	} else {
-		phases.endCollect(terminal.PhaseFailed, "Unable to collect CM profile details")
+	if workErr != nil {
+		phaseErr := phases.endCollect(terminal.PhaseFailed, "Unable to collect CM profile details")
+		return finishCMAdd(run, phases, terminal.Failed, cmAddCollectPhaseName, nil, errors.Join(workErr, phaseErr))
 	}
-	return finishCMAdd(run, phases, terminal.Failed, nil, workErr)
+	input, cancelled, promptErr := PromptAdd(adapter)
+	if promptErr != nil {
+		phaseErr := phases.endCollect(terminal.PhaseFailed, "Unable to collect CM profile details")
+		return finishCMAdd(run, phases, terminal.Failed, cmAddCollectPhaseName, nil, errors.Join(promptErr, phaseErr))
+	}
+	if cancelled {
+		phaseErr := phases.endCollect(terminal.PhaseCancelled, "Profile setup cancelled")
+		document := terminalCMAddDocument("Cancelled", true)
+		return finishCMAdd(run, phases, terminal.Cancelled, cmAddCollectPhaseName, &document, phaseErr)
+	}
+	if err := ctx.Err(); err != nil {
+		phaseErr := phases.endCollect(terminal.PhaseCancelled, "Profile setup cancelled")
+		document := terminalCMAddDocument("Cancelled", true)
+		return finishCMAdd(run, phases, terminal.Cancelled, cmAddCollectPhaseName, &document, errors.Join(err, phaseErr))
+	}
+	if err := phases.endCollect(terminal.PhaseCompleted, cmAddCollectDetail(input)); err != nil {
+		return finishCMAdd(run, phases, terminal.Failed, cmAddCollectPhaseName, nil, err)
+	}
+	if err := phases.beginSave(); err != nil {
+		return finishCMAdd(run, phases, terminal.Failed, cmAddSavePhaseName, nil, err)
+	}
+	workErr = SaveAdd(writer, input)
+	if workErr != nil {
+		phaseErr := phases.endSave(terminal.PhaseFailed, "Unable to save CM profile")
+		return finishCMAdd(run, phases, terminal.Failed, cmAddSavePhaseName, nil, errors.Join(workErr, phaseErr))
+	}
+	if err := phases.endSave(terminal.PhaseCompleted, "Profile saved"); err != nil {
+		return finishCMAdd(run, phases, terminal.Failed, cmAddSavePhaseName, nil, err)
+	}
+	document := terminalCMAddDocument(fmt.Sprintf("Profile %s added", safeCMAddName(input.Name)), false)
+	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
+		document = terminalCMAddSuccessDocument(input)
+	}
+	return finishCMAdd(run, phases, terminal.Succeeded, "", &document, nil)
 }
 
 var errConfigCMAddRequiresInteractive = errors.New("config cm add requires an interactive terminal")
@@ -119,145 +120,155 @@ var errConfigCMAddRequiresInteractive = errors.New("config cm add requires an in
 func terminalCMAddConsoleDescriptor() terminal.ConsoleDescriptor {
 	return terminal.ConsoleDescriptor{
 		Command: "YCY / config cm add",
-		Target:  "commit message profile setup",
+		Target:  "Add commit message profile - Configure an OpenAI-compatible provider",
 		Status:  "READY",
-		Metadata: []terminal.ConsoleMetadata{{
-			Label: "scope",
-			Value: "commit message configuration",
-		}},
+		FormCatalog: []terminal.ConsoleFormStep{
+			{ID: cmAddIdentityFormID, Name: "Identity", Detail: "profile name"},
+			{ID: cmAddEndpointFormID, Name: "Endpoint", Detail: "base URL"},
+			{ID: cmAddModelFormID, Name: "Model", Detail: "model"},
+			{ID: cmAddCredentialFormID, Name: "Credential", Detail: "API key", Sensitive: true},
+		},
 	}
 }
 
 var _ AddWriter = (*appconfig.Store)(nil)
 
 type cmAddPhaseSink struct {
-	run           terminal.ExperienceRun
-	caps          terminal.Capabilities
-	updates       chan terminal.OperationPhase
-	done          chan error
-	closed        bool
-	tracking      bool
-	trackErr      error
-	collectState  terminal.PhaseState
-	collectDetail string
+	run         terminal.ExperienceRun
+	caps        terminal.Capabilities
+	work        terminal.WorkSession
+	workClosed  bool
+	workStarted bool
 }
 
 func newCMAddPhaseSink(run terminal.ExperienceRun, caps terminal.Capabilities) *cmAddPhaseSink {
 	return &cmAddPhaseSink{run: run, caps: caps}
 }
 
-func (sink *cmAddPhaseSink) beginCollect() {
+func (sink *cmAddPhaseSink) beginCollect() error {
 	if sink.caps.Interaction == terminal.PlainInteractive {
 		_ = sink.run.Notice(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleActive, Text: "Collecting CM profile details..."}}})
-		return
-	}
-	if sink.caps.Interaction != terminal.RichInteractive {
-		return
-	}
-	// Ask and Track share the Experience operation lock. Keep the collect
-	// state in memory while the form is active, then replay it once prompting
-	// has finished and the save phase is ready to run.
-	sink.collectState = terminal.PhaseActive
-	sink.collectDetail = "Answer the four profile fields"
-}
-
-func (sink *cmAddPhaseSink) endCollect(state terminal.PhaseState, detail string) {
-	if sink.caps.Interaction == terminal.RichInteractive {
-		sink.collectState = state
-		sink.collectDetail = detail
-		return
-	}
-}
-
-func (sink *cmAddPhaseSink) beginSave() {
-	if sink.caps.Interaction == terminal.PlainInteractive {
-		_ = sink.run.Notice(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleActive, Text: "Saving CM profile..."}}})
-		return
-	}
-	if sink.caps.Interaction == terminal.RichInteractive {
-		sink.start()
-		sink.updates <- terminal.OperationPhase{ID: cmAddSavePhaseID, State: terminal.PhaseActive, Detail: "Writing encrypted profile"}
-	}
-}
-
-func (sink *cmAddPhaseSink) endSave(state terminal.PhaseState, detail string) {
-	if sink.caps.Interaction != terminal.RichInteractive {
-		return
-	}
-	sink.updates <- terminal.OperationPhase{ID: cmAddSavePhaseID, State: state, Detail: detail}
-	close(sink.updates)
-	sink.closed = true
-	sink.trackErr = sink.wait()
-}
-
-func (sink *cmAddPhaseSink) finishWithoutSave() {
-	if sink.caps.Interaction != terminal.RichInteractive {
-		return
-	}
-	if sink.closed {
-		return
-	}
-	sink.start()
-	close(sink.updates)
-	sink.closed = true
-	sink.trackErr = sink.wait()
-}
-
-func (sink *cmAddPhaseSink) start() {
-	if sink.tracking {
-		return
-	}
-	sink.updates = make(chan terminal.OperationPhase, 8)
-	sink.done = make(chan error, 1)
-	sink.tracking = true
-	go func() {
-		sink.done <- sink.run.Track(terminal.TrackedOperation{
-			ID:    "config-cm-add",
-			Label: "Add commit message profile",
-			Phases: []terminal.PhaseDefinition{
-				{ID: cmAddCollectPhaseID, Name: cmAddCollectPhaseName},
-				{ID: cmAddSavePhaseID, Name: cmAddSavePhaseName},
-			},
-			Updates: sink.updates,
-		})
-	}()
-	if sink.collectState == terminal.PhasePending {
-		sink.collectState = terminal.PhaseActive
-		sink.collectDetail = "Answer the four profile fields"
-	}
-	sink.updates <- terminal.OperationPhase{ID: cmAddCollectPhaseID, State: terminal.PhaseActive, Detail: "Answer the four profile fields"}
-	if sink.collectState != terminal.PhaseActive {
-		sink.updates <- terminal.OperationPhase{ID: cmAddCollectPhaseID, State: sink.collectState, Detail: sink.collectDetail}
-	}
-}
-
-func (sink *cmAddPhaseSink) wait() error {
-	if sink.done == nil {
 		return nil
 	}
-	return <-sink.done
+	if sink.caps.Interaction != terminal.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminal.OperationPhase{ID: cmAddCollectPhaseID, State: terminal.PhaseActive, Detail: "Answer the four profile fields"})
 }
 
-func finishCMAdd(run terminal.ExperienceRun, sink *cmAddPhaseSink, outcome terminal.FinishOutcome, document *terminal.PresentationDocument, workErr error) error {
-	if outcome == terminal.Cancelled || outcome == terminal.Failed {
-		sink.finishWithoutSave()
+func (sink *cmAddPhaseSink) endCollect(state terminal.PhaseState, detail string) error {
+	if sink.caps.Interaction != terminal.RichInteractive {
+		return nil
 	}
-	return errors.Join(workErr, sink.trackErr, run.Finish(outcome, document))
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminal.OperationPhase{ID: cmAddCollectPhaseID, State: state, Detail: detail})
+}
+
+func (sink *cmAddPhaseSink) beginSave() error {
+	if sink.caps.Interaction == terminal.PlainInteractive {
+		_ = sink.run.Notice(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleActive, Text: "Saving CM profile..."}}})
+		return nil
+	}
+	if sink.caps.Interaction != terminal.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminal.OperationPhase{ID: cmAddSavePhaseID, State: terminal.PhaseActive, Detail: "Writing encrypted profile"})
+}
+
+func (sink *cmAddPhaseSink) endSave(state terminal.PhaseState, detail string) error {
+	if sink.caps.Interaction != terminal.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminal.OperationPhase{ID: cmAddSavePhaseID, State: state, Detail: detail})
+}
+
+func (sink *cmAddPhaseSink) ensureWork() error {
+	if sink.workStarted {
+		return nil
+	}
+	work, err := terminal.StartWork(sink.run, terminalCMAddWorkCatalog())
+	if err != nil {
+		return err
+	}
+	sink.work = work
+	sink.workStarted = true
+	return nil
+}
+
+func (sink *cmAddPhaseSink) close() error {
+	if sink.workClosed || sink.work == nil {
+		return nil
+	}
+	sink.workClosed = true
+	return sink.work.Close()
+}
+
+func finishCMAdd(run terminal.ExperienceRun, sink *cmAddPhaseSink, outcome terminal.FinishOutcome, location string, document *terminal.PresentationDocument, workErr error) error {
+	return errors.Join(workErr, sink.close(), run.Finish(terminalCMAddFinishRequest(outcome, location), document))
 }
 
 const (
+	cmAddWorkCatalogID    = "config-cm-add-work"
+	cmAddIdentityFormID   = "identity"
+	cmAddEndpointFormID   = "endpoint"
+	cmAddModelFormID      = "model"
+	cmAddCredentialFormID = "credential"
+
 	cmAddCollectPhaseID   = "collect-cm-profile-details"
 	cmAddCollectPhaseName = "Collect CM profile details"
 	cmAddSavePhaseID      = "save-cm-profile"
 	cmAddSavePhaseName    = "Save CM profile"
 )
 
-func terminalCMAddIntroDocument() terminal.PresentationDocument {
-	return terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{
-		{Role: terminal.VisualRoleMuted, Text: "YCY / config cm add"},
-		{Role: terminal.VisualRoleTitle, Text: "Add commit message profile"},
-		{Role: terminal.VisualRoleMuted, Text: "Configure an OpenAI-compatible provider"},
-	}}
+func terminalCMAddWorkCatalog() terminal.WorkCatalog {
+	return terminal.WorkCatalog{
+		ID:    cmAddWorkCatalogID,
+		Label: "Add commit message profile",
+		Phases: []terminal.PhaseDefinition{
+			{ID: cmAddCollectPhaseID, Name: cmAddCollectPhaseName},
+			{ID: cmAddSavePhaseID, Name: cmAddSavePhaseName},
+		},
+	}
+}
+
+func terminalCMAddFinishRequest(outcome terminal.FinishOutcome, location string) terminal.FinishRequest {
+	request := terminal.FinishRequest{Outcome: outcome, Location: cmAddFinishLocation(location)}
+	summary := "Unable to collect CM profile details"
+	role := terminal.VisualRoleError
+	switch outcome {
+	case terminal.Succeeded:
+		summary = "Profile saved"
+		role = terminal.VisualRoleSuccess
+	case terminal.Cancelled:
+		summary = "Profile setup cancelled"
+		role = terminal.VisualRoleWarning
+	case terminal.Failed:
+		if request.Location == cmAddSavePhaseName {
+			summary = "Unable to save CM profile"
+		}
+	}
+	request.Summary = terminalCMAddOutcomeDocument(summary, role)
+	return request
+}
+
+func cmAddFinishLocation(location string) string {
+	switch location {
+	case cmAddCollectPhaseName, cmAddSavePhaseName:
+		return location
+	default:
+		return ""
+	}
 }
 
 func terminalCMAddSuccessDocument(input AddInput) terminal.PresentationDocument {

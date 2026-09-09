@@ -19,6 +19,12 @@ func TestZIPConsoleDescriptorProvidesSafeArchiveContext(t *testing.T) {
 			{Label: "with-dir", Value: "enabled"},
 			{Label: "reveal", Value: "disabled"},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: zipPackageFormID, Name: "Workspace package", Detail: "select when multiple packages are found"},
+			{ID: zipSourceFormID, Name: "Source directory", Detail: "choose archive source"},
+			{ID: zipPatternsFormID, Name: "File patterns", Detail: "select files to include"},
+			{ID: zipOutputFormID, Name: "Output name", Detail: "name the archive"},
+		},
 	}
 	if got := terminalZipConsoleDescriptor(&Options{Directory: "/private/project", WithDir: "bundle"}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)

@@ -20,6 +20,7 @@ func (adapter *terminalForkAddAdapter) Text(question TextPrompt) (string, bool, 
 		Kind:            terminalexperience.InteractionText,
 		Message:         question.Message,
 		Placeholder:     question.Placeholder,
+		ConsoleStepID:   forkAddTextFormID(question.Message),
 		TranscriptLabel: question.Message,
 		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
 			if question.Message == "Host" {
@@ -37,6 +38,7 @@ func (adapter *terminalForkAddAdapter) Select(question SelectPrompt) (string, bo
 	request := terminalexperience.InteractionRequest{
 		Kind:            terminalexperience.InteractionSelect,
 		Message:         question.Message,
+		ConsoleStepID:   forkAddSelectFormID(question.Message),
 		TranscriptLabel: question.Message,
 		Options:         interactionOptions(question.Choices),
 	}
@@ -51,12 +53,27 @@ func (adapter *terminalForkAddAdapter) Password(question TextPrompt) (string, bo
 	return adapter.ask(terminalexperience.InteractionRequest{
 		Kind:            terminalexperience.InteractionSecret,
 		Message:         question.Message,
+		ConsoleStepID:   forkAddCredentialFormID,
 		TranscriptLabel: question.Message,
 		Sensitive:       true,
 		Validate: func(answer terminalexperience.InteractionAnswer) error {
 			return question.Validate(answer.Value)
 		},
 	})
+}
+
+func forkAddTextFormID(message string) string {
+	if message == "Host" {
+		return forkAddHostFormID
+	}
+	return forkAddIdentityFormID
+}
+
+func forkAddSelectFormID(message string) string {
+	if message == "Protocol" {
+		return forkAddProtocolFormID
+	}
+	return forkAddProviderFormID
 }
 
 func (adapter *terminalForkAddAdapter) Cancel(message string) {
@@ -94,5 +111,9 @@ func terminalForkAddDocument(message string, cancelled bool) terminalexperience.
 	if cancelled {
 		role = terminalexperience.VisualRoleWarning
 	}
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: message}}}
+}
+
+func terminalForkAddOutcomeDocument(message string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
 	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: message}}}
 }

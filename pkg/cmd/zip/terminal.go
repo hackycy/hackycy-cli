@@ -14,6 +14,11 @@ import (
 )
 
 const (
+	zipPackageFormID            = "select-workspace-package"
+	zipSourceFormID             = "select-source-directory"
+	zipPatternsFormID           = "select-file-patterns"
+	zipOutputFormID             = "edit-output-name"
+	zipWorkCatalogID            = "zip-archive"
 	zipDiscoverWorkspacePhaseID = "discover-workspace"
 	zipSelectSourcePhaseID      = "select-source"
 	zipSelectPatternsPhaseID    = "select-patterns"
@@ -53,10 +58,10 @@ func runZIP(options *Options) error {
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
 	if caps.Interaction == terminalexperience.Automation {
-		return errors.Join(errZipRequiresInteractive, run.Finish(terminalexperience.Failed, nil))
+		return errors.Join(errZipRequiresInteractive, run.Finish(terminalZipFinishRequest(terminalexperience.Failed, Result{}, ""), nil))
 	}
 	if err := ctx.Err(); err != nil {
-		return errors.Join(err, run.Finish(terminalexperience.Cancelled, nil))
+		return errors.Join(err, run.Finish(terminalZipFinishRequest(terminalexperience.Cancelled, Result{}, ""), nil))
 	}
 
 	presenter := &terminalZipPresenter{run: run}
@@ -70,7 +75,7 @@ func runZIP(options *Options) error {
 		Phases:             phases,
 	})
 	if err != nil {
-		return errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return errors.Join(err, run.Finish(terminalZipFinishRequest(terminalexperience.Failed, Result{}, ""), nil))
 	}
 	result, workErr := module.RunContext(ctx, Input{
 		Directory: options.Directory,
@@ -140,6 +145,16 @@ func terminalZipConsoleDescriptor(options *Options) terminalexperience.ConsoleDe
 			{Label: "with-dir", Value: withDir},
 			{Label: "reveal", Value: reveal},
 		},
+		FormCatalog: terminalZipFormCatalog(),
+	}
+}
+
+func terminalZipFormCatalog() []terminalexperience.ConsoleFormStep {
+	return []terminalexperience.ConsoleFormStep{
+		{ID: zipPackageFormID, Name: "Workspace package", Detail: "select when multiple packages are found"},
+		{ID: zipSourceFormID, Name: "Source directory", Detail: "choose archive source"},
+		{ID: zipPatternsFormID, Name: "File patterns", Detail: "select files to include"},
+		{ID: zipOutputFormID, Name: "Output name", Detail: "name the archive"},
 	}
 }
 
@@ -174,22 +189,19 @@ type zipPhaseCoordinator struct {
 	run  terminalexperience.ExperienceRun
 	caps terminalexperience.Capabilities
 
-	mu        sync.Mutex
-	err       error
-	finals    map[string]terminalexperience.OperationPhase
-	active    map[string]terminalexperience.OperationPhase
-	order     []string
-	updates   chan terminalexperience.OperationPhase
-	trackDone chan error
-	tracking  bool
-	closed    bool
+	mu          sync.Mutex
+	err         error
+	active      map[string]terminalexperience.OperationPhase
+	work        terminalexperience.WorkSession
+	workStarted bool
+	closed      bool
+	lastPhase   string
 }
 
 func newZipPhaseCoordinator(run terminalexperience.ExperienceRun, caps terminalexperience.Capabilities) *zipPhaseCoordinator {
 	return &zipPhaseCoordinator{
 		run:    run,
 		caps:   caps,
-		finals: make(map[string]terminalexperience.OperationPhase),
 		active: make(map[string]terminalexperience.OperationPhase),
 	}
 }
@@ -201,85 +213,81 @@ func (coordinator *zipPhaseCoordinator) Report(update terminalexperience.Operati
 	if update.ID == "" {
 		return errors.New("zip phase ID is required")
 	}
-	if coordinator.isArchivePhase(update.ID) {
-		if coordinator.tracksRich() {
-			if err := coordinator.startArchiveTrack(); err != nil {
-				return err
-			}
-			coordinator.updates <- update
-			return nil
-		}
-	}
-
-	return coordinator.recordAndNotice(update)
-}
-
-func (coordinator *zipPhaseCoordinator) recordAndNotice(update terminalexperience.OperationPhase) error {
 	coordinator.mu.Lock()
 	if coordinator.closed {
 		coordinator.mu.Unlock()
 		return terminalexperience.ErrExperienceRunFinished
 	}
-	if update.State == terminalexperience.PhaseActive {
-		coordinator.active[update.ID] = update
-		if !containsString(coordinator.order, update.ID) {
-			coordinator.order = append(coordinator.order, update.ID)
-		}
-	} else if terminalPhaseIsFinal(update.State) {
-		delete(coordinator.active, update.ID)
-		coordinator.finals[update.ID] = update
-		if !containsString(coordinator.order, update.ID) {
-			coordinator.order = append(coordinator.order, update.ID)
-		}
-	}
 	coordinator.mu.Unlock()
 
-	// Planning interactions cannot share Track's serialized operation lock with
-	// Ask. Notices keep the current Huh form responsive; Rich replays the final
-	// planning states into the tracked ledger once archive work starts.
-	return coordinator.run.Notice(zipPhaseDocument(update))
+	if coordinator.caps.Interaction == terminalexperience.RichInteractive {
+		if err := coordinator.ensureWork(); err != nil {
+			return err
+		}
+		coordinator.mu.Lock()
+		work := coordinator.work
+		coordinator.mu.Unlock()
+		if err := work.Update(update); err != nil {
+			return err
+		}
+		coordinator.record(update)
+		return nil
+	}
+	if coordinator.caps.Interaction == terminalexperience.Automation {
+		return nil
+	}
+	if err := coordinator.run.Notice(zipPhaseDocument(update)); err != nil {
+		return err
+	}
+	coordinator.record(update)
+	return nil
 }
 
-func (coordinator *zipPhaseCoordinator) tracksRich() bool {
-	return coordinator.caps.Interaction == terminalexperience.RichInteractive
-}
-
-func (coordinator *zipPhaseCoordinator) startArchiveTrack() error {
+func (coordinator *zipPhaseCoordinator) ensureWork() error {
 	coordinator.mu.Lock()
 	defer coordinator.mu.Unlock()
-	if coordinator.tracking {
+	if coordinator.workStarted {
 		return coordinator.err
 	}
-	coordinator.updates = make(chan terminalexperience.OperationPhase, 64)
-	coordinator.trackDone = make(chan error, 1)
-	coordinator.tracking = true
-	go func() {
-		coordinator.trackDone <- coordinator.run.Track(terminalexperience.TrackedOperation{
-			ID:      "zip-archive",
-			Label:   "Create archive",
-			Phases:  append([]terminalexperience.PhaseDefinition(nil), zipPhaseDefinitions...),
-			Updates: coordinator.updates,
-		})
-	}()
-	// The planning phases were observed before the archive track was needed.
-	// Replay their semantic active/final pairs in order so the bounded ledger
-	// still contains the complete command lifecycle.
-	for _, id := range coordinator.order {
-		final, ok := coordinator.finals[id]
-		if !ok {
-			continue
-		}
-		coordinator.updates <- terminalexperience.OperationPhase{ID: id, State: terminalexperience.PhaseActive, Detail: final.Detail}
-		coordinator.updates <- final
+	coordinator.workStarted = true
+	work, err := terminalexperience.StartWork(coordinator.run, terminalexperience.WorkCatalog{
+		ID:     zipWorkCatalogID,
+		Label:  "Create archive",
+		Phases: append([]terminalexperience.PhaseDefinition(nil), zipPhaseDefinitions...),
+	})
+	coordinator.work = work
+	coordinator.err = errors.Join(coordinator.err, err)
+	return err
+}
+
+func (coordinator *zipPhaseCoordinator) record(update terminalexperience.OperationPhase) {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	if phase := zipFinishLocation(update.ID); phase != "" {
+		coordinator.lastPhase = phase
 	}
-	return nil
+	if update.State == terminalexperience.PhaseActive {
+		coordinator.active[update.ID] = update
+		return
+	}
+	if terminalPhaseIsFinal(update.State) {
+		delete(coordinator.active, update.ID)
+	}
+}
+
+func (coordinator *zipPhaseCoordinator) lastPublishedPhase() string {
+	coordinator.mu.Lock()
+	defer coordinator.mu.Unlock()
+	return coordinator.lastPhase
 }
 
 func (coordinator *zipPhaseCoordinator) markOpen(state terminalexperience.PhaseState, detail string) {
 	coordinator.mu.Lock()
 	updates := make([]terminalexperience.OperationPhase, 0, len(coordinator.active))
-	for id := range coordinator.active {
-		updates = append(updates, terminalexperience.OperationPhase{ID: id, State: state, Detail: detail})
+	for _, definition := range zipPhaseDefinitions {
+		if _, ok := coordinator.active[definition.ID]; ok {
+			updates = append(updates, terminalexperience.OperationPhase{ID: definition.ID, State: state, Detail: detail})
+		}
 	}
 	coordinator.mu.Unlock()
 	for _, update := range updates {
@@ -295,69 +303,21 @@ func (coordinator *zipPhaseCoordinator) finish() error {
 		return err
 	}
 	coordinator.closed = true
-	tracking := coordinator.tracking
-	updates := coordinator.updates
-	done := coordinator.trackDone
+	work := coordinator.work
 	coordinator.mu.Unlock()
 
-	if tracking {
-		close(updates)
+	if work != nil {
+		workErr := work.Close()
 		coordinator.mu.Lock()
-		trackErr := <-done
-		coordinator.err = errors.Join(coordinator.err, trackErr)
+		coordinator.err = errors.Join(coordinator.err, workErr)
 		err := coordinator.err
 		coordinator.mu.Unlock()
 		return err
 	}
-	if !coordinator.tracksRich() {
-		return coordinator.err
-	}
-
-	// A planning-only cancellation/failure still receives phase evidence. No
-	// Ask follows this point, so a short synchronous tracked operation is safe.
 	coordinator.mu.Lock()
-	hasFinals := len(coordinator.finals) > 0
-	order := append([]string(nil), coordinator.order...)
-	finals := make(map[string]terminalexperience.OperationPhase, len(coordinator.finals))
-	for id, phase := range coordinator.finals {
-		finals[id] = phase
-	}
-	coordinator.mu.Unlock()
-	if !hasFinals || coordinator.caps.Interaction == terminalexperience.Automation {
-		return coordinator.err
-	}
-	updates = make(chan terminalexperience.OperationPhase, len(order)*2)
-	done = make(chan error, 1)
-	go func() {
-		done <- coordinator.run.Track(terminalexperience.TrackedOperation{
-			ID:      "zip-planning",
-			Label:   "Plan archive",
-			Phases:  append([]terminalexperience.PhaseDefinition(nil), zipPhaseDefinitions...),
-			Updates: updates,
-		})
-	}()
-	for _, id := range order {
-		if phase, ok := finals[id]; ok {
-			updates <- terminalexperience.OperationPhase{ID: id, State: terminalexperience.PhaseActive, Detail: phase.Detail}
-			updates <- phase
-		}
-	}
-	close(updates)
-	trackErr := <-done
-	coordinator.mu.Lock()
-	coordinator.err = errors.Join(coordinator.err, trackErr)
 	err := coordinator.err
 	coordinator.mu.Unlock()
 	return err
-}
-
-func (coordinator *zipPhaseCoordinator) isArchivePhase(id string) bool {
-	switch id {
-	case zipCollectFilesPhaseID, zipCompressFilesPhaseID, zipWriteArchivePhaseID, zipRevealArchivePhaseID:
-		return true
-	default:
-		return false
-	}
 }
 
 func terminalPhaseIsFinal(state terminalexperience.PhaseState) bool {
@@ -409,7 +369,7 @@ func finishTerminalZIP(
 			state = terminalexperience.PhaseCancelled
 		}
 		phases.markOpen(state, detail)
-		return errors.Join(workErr, presenter.err, phases.finish(), run.Finish(outcome, nil))
+		return errors.Join(workErr, presenter.err, phases.finish(), run.Finish(terminalZipFinishRequest(outcome, result, phases.lastPublishedPhase()), nil))
 	}
 
 	outcome := terminalexperience.Succeeded
@@ -422,7 +382,98 @@ func finishTerminalZIP(
 	}
 
 	document := terminalZipResultDocument(result, caps)
-	return errors.Join(presenter.err, phases.finish(), run.Finish(outcome, &document))
+	return errors.Join(presenter.err, phases.finish(), run.Finish(terminalZipFinishRequest(outcome, result, phases.lastPublishedPhase()), &document))
+}
+
+func terminalZipFinishRequest(outcome terminalexperience.FinishOutcome, result Result, location string) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalZipOutcomeDocument(result)
+	case terminalexperience.Cancelled:
+		request.Location = zipFinishLocation(location)
+		summary := "Archive cancelled"
+		if result.Kind == ResultCancelled {
+			summary = "Archive planning cancelled"
+		}
+		request.Summary = terminalZipOutcomeSummary(summary, terminalexperience.VisualRoleWarning)
+	case terminalexperience.Failed:
+		request.Location = zipFinishLocation(location)
+		request.Summary = terminalZipOutcomeSummary("Archive failed ("+zipFinishFailureCategory(result.Kind)+")", terminalexperience.VisualRoleError)
+	}
+	return request
+}
+
+func terminalZipOutcomeDocument(result Result) terminalexperience.PresentationDocument {
+	blocks := []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Archive complete"},
+		{Role: terminalexperience.VisualRoleSuccess, Text: "Archive created"},
+		{Role: terminalexperience.VisualRoleMuted, Text: fmt.Sprintf("Collected %d; included %d; output %s", zipFinishCount(result.CollectedCount), zipFinishCount(result.IncludedCount), zipFinishOutputName(result.Plan))},
+	}
+	if result.RevealFailed {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Archive created; host reveal unavailable"})
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func terminalZipOutcomeSummary(text string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Archive outcome"},
+		{Role: role, Text: text},
+	}}
+}
+
+func zipFinishLocation(location string) string {
+	for _, definition := range zipPhaseDefinitions {
+		if location == definition.ID || location == definition.Name {
+			return definition.Name
+		}
+	}
+	return ""
+}
+
+func zipFinishFailureCategory(kind ResultKind) string {
+	switch kind {
+	case ResultDirectoryNotFound:
+		return "directory"
+	case ResultPathNotDirectory:
+		return "path"
+	case ResultNoFiles:
+		return "no-files"
+	case ResultNoValidFiles:
+		return "no-valid-files"
+	case ResultCollectionFailed:
+		return "collection"
+	case ResultCompressionFailed:
+		return "compression"
+	case ResultWriteFailed:
+		return "write"
+	default:
+		return "archive"
+	}
+}
+
+func zipFinishCount(count int) int {
+	if count < 0 {
+		return 0
+	}
+	return count
+}
+
+func zipFinishOutputName(plan *ZipPlan) string {
+	if plan == nil {
+		return "archive.zip"
+	}
+	name := strings.ReplaceAll(strings.TrimSpace(plan.File), "\\", "/")
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	if name == "." || name == ".." || strings.Contains(name, "://") {
+		name = ""
+	}
+	return safeZipName(name) + ".zip"
 }
 
 func terminalZipResultDocument(result Result, caps terminalexperience.Capabilities) terminalexperience.PresentationDocument {

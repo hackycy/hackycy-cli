@@ -65,15 +65,15 @@ func TestTerminalZipAdapterTranslatesPlanningAndPresentation(t *testing.T) {
 		t.Fatalf("operations = %#v", operations)
 	}
 	packageRequest := operations[0].Value.(terminalexperience.InteractionRequest)
-	if packageRequest.Kind != terminalexperience.InteractionSelect || packageRequest.Message != "Select a package to zip:" || !packageRequest.HasDefault || packageRequest.Default.Value != "one" || !reflect.DeepEqual(packageRequest.Options, []terminalexperience.InteractionOption{{Label: "one", Value: "one", Description: "first"}, {Label: "two", Value: "two", Description: "second"}}) || !reflect.DeepEqual(packageRequest.CancelValues, []string{"q", "quit", "cancel"}) || packageRequest.PlainLead != "Select a package to zip:" || packageRequest.PlainPrompt != "> " || packageRequest.ParsePlain == nil {
+	if packageRequest.Kind != terminalexperience.InteractionSelect || packageRequest.Message != "Select a package to zip:" || packageRequest.ConsoleStepID != zipPackageFormID || packageRequest.TranscriptLabel != "Workspace package" || !packageRequest.HasDefault || packageRequest.Default.Value != "one" || !reflect.DeepEqual(packageRequest.Options, []terminalexperience.InteractionOption{{Label: "one", Value: "one", Description: "first"}, {Label: "two", Value: "two", Description: "second"}}) || !reflect.DeepEqual(packageRequest.CancelValues, []string{"q", "quit", "cancel"}) || packageRequest.PlainLead != "Select a package to zip:" || packageRequest.PlainPrompt != "> " || packageRequest.ParsePlain == nil || packageRequest.TranscriptProject == nil {
 		t.Fatalf("package request = %#v", packageRequest)
 	}
 	globRequest := operations[2].Value.(terminalexperience.InteractionRequest)
-	if globRequest.Kind != terminalexperience.InteractionMultiSelect || !globRequest.HasDefault || !reflect.DeepEqual(globRequest.Default.Values, []string{"**/*"}) || globRequest.ParsePlain == nil {
+	if globRequest.Kind != terminalexperience.InteractionMultiSelect || globRequest.ConsoleStepID != zipPatternsFormID || globRequest.TranscriptLabel != "File patterns" || !globRequest.HasDefault || !reflect.DeepEqual(globRequest.Default.Values, []string{"**/*"}) || globRequest.ParsePlain == nil || globRequest.TranscriptProject == nil {
 		t.Fatalf("glob request = %#v", globRequest)
 	}
 	outputRequest := operations[3].Value.(terminalexperience.InteractionRequest)
-	if outputRequest.Kind != terminalexperience.InteractionText || outputRequest.Placeholder != "default" || !outputRequest.HasDefault || outputRequest.Default.Value != "default" || outputRequest.PlainPrompt != "Enter name [default]: " || outputRequest.ParsePlain == nil {
+	if outputRequest.Kind != terminalexperience.InteractionText || outputRequest.ConsoleStepID != zipOutputFormID || outputRequest.TranscriptLabel != "Archive output" || outputRequest.Placeholder != "default" || !outputRequest.HasDefault || outputRequest.Default.Value != "default" || outputRequest.PlainPrompt != "Enter name [default]: " || outputRequest.ParsePlain == nil || outputRequest.TranscriptProject == nil {
 		t.Fatalf("output request = %#v", outputRequest)
 	}
 	intro := operations[4].Value.(terminalexperience.PresentationDocument)

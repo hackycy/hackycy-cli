@@ -61,39 +61,32 @@ func executeRemove(options *Options) (RemoveResult, error) {
 	defer run.Close()
 	caps := options.Terminal.Capabilities()
 	if err := ctx.Err(); err != nil {
-		return RemoveResult{}, errors.Join(err, run.Finish(terminalexperience.Cancelled, nil))
-	}
-	if caps.Interaction == terminalexperience.RichInteractive {
-		if err := run.Notice(terminalCMRemoveIntroDocument()); err != nil {
-			return RemoveResult{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
-		}
+		return RemoveResult{}, errors.Join(err, run.Finish(terminalCMRemoveFinishRequest(terminalexperience.Cancelled, ""), nil))
 	}
 	adapter := newTerminalCMRemoveAdapter(run)
 	phases := newCMRemovePhaseSink(run, caps)
-	phases.beginValidation()
+	if err := phases.beginValidation(); err != nil {
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemoveValidationPhaseName, nil, err)
+	}
 	reader, writer, workErr := options.Store()
 	if workErr != nil {
-		phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		return RemoveResult{}, finishCMRemoveValidationError(run, phases, workErr)
 	}
 	if reader == nil {
 		workErr = errors.New("config cm remove reader is nil")
-		phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		return RemoveResult{}, finishCMRemoveValidationError(run, phases, workErr)
 	}
 	if writer == nil {
 		workErr = errors.New("config cm remove writer is nil")
-		phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		return RemoveResult{}, finishCMRemoveValidationError(run, phases, workErr)
 	}
 	profiles, workErr := reader.ListCMProfiles()
 	if workErr != nil {
-		phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		return RemoveResult{}, finishCMRemoveValidationError(run, phases, workErr)
 	}
 	if err := ctx.Err(); err != nil {
-		phases.endValidation(terminalexperience.PhaseCancelled, "CM profile validation cancelled")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, nil, err)
+		phaseErr := phases.endValidation(terminalexperience.PhaseCancelled, "CM profile validation cancelled")
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, cmRemoveValidationPhaseName, nil, errors.Join(err, phaseErr))
 	}
 	var target *appconfig.CMProfile
 	for index := range profiles.Profiles {
@@ -104,19 +97,21 @@ func executeRemove(options *Options) (RemoveResult, error) {
 	}
 	if target == nil {
 		workErr = fmt.Errorf("CM profile not found: %s", options.Profile)
-		phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		phaseErr := phases.endValidation(terminalexperience.PhaseFailed, "Unable to validate CM profile")
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemoveValidationPhaseName, nil, errors.Join(workErr, phaseErr))
 	}
 	role := "Configured profile"
 	if profiles.DefaultProfile == options.Profile {
 		role = "Current default"
 	}
-	phases.endValidation(terminalexperience.PhaseCompleted, "Profile: "+safeCMRemoveName(options.Profile)+"; Role: "+role)
+	if err := phases.endValidation(terminalexperience.PhaseCompleted, "Profile: "+safeCMRemoveName(options.Profile)+"; Role: "+role); err != nil {
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemoveValidationPhaseName, nil, err)
+	}
 	if err := ctx.Err(); err != nil {
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, nil, err)
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, cmRemoveValidationPhaseName, nil, err)
 	}
 	if caps.Interaction == terminalexperience.Automation {
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, errConfigCMRemoveRequiresInteractive)
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, "", nil, errConfigCMRemoveRequiresInteractive)
 	}
 	question := RemoveConfirmPrompt{Message: fmt.Sprintf("Remove CM profile \"%s\"?", safeCMRemoveName(options.Profile))}
 	if role == "Current default" {
@@ -124,45 +119,55 @@ func executeRemove(options *Options) (RemoveResult, error) {
 	}
 	confirmed, cancelled, workErr := adapter.Confirm(question)
 	if workErr != nil {
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		return RemoveResult{}, finishCMRemoveInteractionError(run, phases, workErr)
 	}
 	if cancelled {
 		if caps.Interaction == terminalexperience.RichInteractive {
-			_ = run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: "Confirmation cancelled"}}})
+			if err := run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: "Confirmation cancelled"}}}); err != nil {
+				return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, "", nil, err)
+			}
 		}
 		document := terminalCMRemoveDocument("Cancelled", true)
-		return RemoveResult{Cancelled: true}, finishCMRemove(run, phases, terminalexperience.Cancelled, &document, nil)
+		return RemoveResult{Cancelled: true}, finishCMRemove(run, phases, terminalexperience.Cancelled, "", &document, nil)
 	}
 	if !confirmed {
 		if caps.Interaction == terminalexperience.RichInteractive {
-			_ = run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: "Removal declined"}}})
+			if err := run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: "Removal declined"}}}); err != nil {
+				return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, "", nil, err)
+			}
 		}
 		document := terminalCMRemoveDocument("Cancelled", true)
-		return RemoveResult{Declined: true}, finishCMRemove(run, phases, terminalexperience.Cancelled, &document, nil)
+		return RemoveResult{Declined: true}, finishCMRemove(run, phases, terminalexperience.Cancelled, "", &document, nil)
 	}
 	if err := ctx.Err(); err != nil {
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, nil, err)
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Cancelled, "", nil, err)
 	}
 	if caps.Interaction == terminalexperience.RichInteractive {
-		_ = run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: fmt.Sprintf("Remove CM profile \"%s\": confirmed", safeCMRemoveName(options.Profile))}}})
+		if err := run.Milestone(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleWarning, Text: fmt.Sprintf("Remove CM profile \"%s\": confirmed", safeCMRemoveName(options.Profile))}}}); err != nil {
+			return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, "", nil, err)
+		}
 	}
-	phases.beginRemoval()
+	if err := phases.beginRemoval(); err != nil {
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemovePhaseName, nil, err)
+	}
 	removed, workErr := writer.RemoveCMProfile(options.Profile)
 	if workErr != nil {
-		phases.endRemoval(terminalexperience.PhaseFailed, "Unable to remove CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		phaseErr := phases.endRemoval(terminalexperience.PhaseFailed, "Unable to remove CM profile")
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemovePhaseName, nil, errors.Join(workErr, phaseErr))
 	}
 	if !removed {
 		workErr = fmt.Errorf("CM profile not found: %s", options.Profile)
-		phases.endRemoval(terminalexperience.PhaseFailed, "Unable to remove CM profile")
-		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, nil, workErr)
+		phaseErr := phases.endRemoval(terminalexperience.PhaseFailed, "Unable to remove CM profile")
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemovePhaseName, nil, errors.Join(workErr, phaseErr))
 	}
-	phases.endRemoval(terminalexperience.PhaseCompleted, "Profile removed")
+	if err := phases.endRemoval(terminalexperience.PhaseCompleted, "Profile removed"); err != nil {
+		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemovePhaseName, nil, err)
+	}
 	document := terminalCMRemoveDocument(fmt.Sprintf("Profile %s removed", safeCMRemoveName(options.Profile)), false)
 	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
 		document = terminalCMRemoveSuccessDocument(options.Profile)
 	}
-	return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Succeeded, &document, nil)
+	return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Succeeded, "", &document, nil)
 }
 
 var _ Reader = (*appconfig.Store)(nil)
@@ -171,106 +176,126 @@ var _ RemoveWriter = (*appconfig.Store)(nil)
 func terminalCMRemoveConsoleDescriptor(profile string) terminalexperience.ConsoleDescriptor {
 	return terminalexperience.ConsoleDescriptor{
 		Command: "YCY / config cm remove",
-		Target:  "commit message profile removal",
+		Target:  "Remove CM profile - Delete one stored commit message provider",
 		Status:  "READY",
 		Metadata: []terminalexperience.ConsoleMetadata{
 			{Label: "scope", Value: "commit message configuration"},
 			{Label: "profile", Value: safeCMRemoveName(profile)},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     cmRemoveConfirmationFormID,
+			Name:   "Confirmation",
+			Detail: "default No",
+		}},
 	}
 }
 
 type cmRemovePhaseSink struct {
-	run      terminalexperience.ExperienceRun
-	caps     terminalexperience.Capabilities
-	updates  chan terminalexperience.OperationPhase
-	done     chan error
-	closed   bool
-	trackErr error
+	run         terminalexperience.ExperienceRun
+	caps        terminalexperience.Capabilities
+	work        terminalexperience.WorkSession
+	workStarted bool
+	workClosed  bool
 }
 
 func newCMRemovePhaseSink(run terminalexperience.ExperienceRun, caps terminalexperience.Capabilities) *cmRemovePhaseSink {
 	return &cmRemovePhaseSink{run: run, caps: caps}
 }
 
-func (sink *cmRemovePhaseSink) beginValidation() {
+func (sink *cmRemovePhaseSink) beginValidation() error {
 	if sink.caps.Interaction == terminalexperience.PlainInteractive {
-		_ = sink.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: "Checking CM profile..."}}})
-		return
+		return sink.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: "Checking CM profile..."}}})
 	}
 	if sink.caps.Interaction != terminalexperience.RichInteractive {
-		return
-	}
-	sink.start()
-	sink.updates <- terminalexperience.OperationPhase{ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseActive, Detail: "Checking profile"}
-}
-
-func (sink *cmRemovePhaseSink) endValidation(state terminalexperience.PhaseState, detail string) {
-	if sink.caps.Interaction == terminalexperience.RichInteractive {
-		sink.updates <- terminalexperience.OperationPhase{ID: cmRemoveValidationPhaseID, State: state, Detail: detail}
-		close(sink.updates)
-		sink.closed = true
-		sink.trackErr = errors.Join(sink.trackErr, sink.wait())
-	}
-}
-
-func (sink *cmRemovePhaseSink) beginRemoval() {
-	if sink.caps.Interaction == terminalexperience.PlainInteractive {
-		_ = sink.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: "Removing CM profile..."}}})
-		return
-	}
-	if sink.caps.Interaction == terminalexperience.RichInteractive {
-		sink.start()
-		sink.updates <- terminalexperience.OperationPhase{ID: cmRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored profile"}
-	}
-}
-
-func (sink *cmRemovePhaseSink) endRemoval(state terminalexperience.PhaseState, detail string) {
-	if sink.caps.Interaction != terminalexperience.RichInteractive {
-		return
-	}
-	sink.updates <- terminalexperience.OperationPhase{ID: cmRemovePhaseID, State: state, Detail: detail}
-	close(sink.updates)
-	sink.closed = true
-	sink.trackErr = errors.Join(sink.trackErr, sink.wait())
-}
-
-func (sink *cmRemovePhaseSink) closeWithoutRemoval() {
-	if sink.caps.Interaction != terminalexperience.RichInteractive || sink.closed {
-		return
-	}
-	close(sink.updates)
-	sink.closed = true
-	sink.trackErr = errors.Join(sink.trackErr, sink.wait())
-}
-
-func (sink *cmRemovePhaseSink) start() {
-	sink.updates = make(chan terminalexperience.OperationPhase, 8)
-	sink.done = make(chan error, 1)
-	sink.closed = false
-	go func() {
-		sink.done <- sink.run.Track(terminalexperience.TrackedOperation{
-			ID:    "config-cm-remove",
-			Label: "Remove CM profile",
-			Phases: []terminalexperience.PhaseDefinition{
-				{ID: cmRemoveValidationPhaseID, Name: cmRemoveValidationPhaseName},
-				{ID: cmRemovePhaseID, Name: cmRemovePhaseName},
-			},
-			Updates: sink.updates,
-		})
-	}()
-}
-
-func (sink *cmRemovePhaseSink) wait() error {
-	if sink.done == nil {
 		return nil
 	}
-	return <-sink.done
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseActive, Detail: "Checking profile"})
 }
 
-func finishCMRemove(run terminalexperience.ExperienceRun, sink *cmRemovePhaseSink, outcome terminalexperience.FinishOutcome, document *terminalexperience.PresentationDocument, workErr error) error {
-	sink.closeWithoutRemoval()
-	return errors.Join(workErr, sink.trackErr, run.Finish(outcome, document))
+func (sink *cmRemovePhaseSink) endValidation(state terminalexperience.PhaseState, detail string) error {
+	if sink.caps.Interaction != terminalexperience.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{ID: cmRemoveValidationPhaseID, State: state, Detail: detail})
+}
+
+func (sink *cmRemovePhaseSink) beginRemoval() error {
+	if sink.caps.Interaction == terminalexperience.PlainInteractive {
+		return sink.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: "Removing CM profile..."}}})
+	}
+	if sink.caps.Interaction != terminalexperience.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{ID: cmRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored profile"})
+}
+
+func (sink *cmRemovePhaseSink) endRemoval(state terminalexperience.PhaseState, detail string) error {
+	if sink.caps.Interaction != terminalexperience.RichInteractive {
+		return nil
+	}
+	if err := sink.ensureWork(); err != nil {
+		return err
+	}
+	return sink.work.Update(terminalexperience.OperationPhase{ID: cmRemovePhaseID, State: state, Detail: detail})
+}
+
+func (sink *cmRemovePhaseSink) ensureWork() error {
+	if sink.workStarted {
+		return nil
+	}
+	work, err := terminalexperience.StartWork(sink.run, terminalCMRemoveWorkCatalog())
+	if err != nil {
+		return err
+	}
+	sink.work = work
+	sink.workStarted = true
+	return nil
+}
+
+func (sink *cmRemovePhaseSink) close() error {
+	if sink.workClosed || sink.work == nil {
+		return nil
+	}
+	sink.workClosed = true
+	return sink.work.Close()
+}
+
+func finishCMRemove(run terminalexperience.ExperienceRun, sink *cmRemovePhaseSink, outcome terminalexperience.FinishOutcome, location string, document *terminalexperience.PresentationDocument, workErr error) error {
+	return errors.Join(workErr, sink.close(), run.Finish(terminalCMRemoveFinishRequest(outcome, location), document))
+}
+
+func finishCMRemoveValidationError(run terminalexperience.ExperienceRun, sink *cmRemovePhaseSink, workErr error) error {
+	outcome := terminalexperience.Failed
+	state := terminalexperience.PhaseFailed
+	detail := "Unable to validate CM profile"
+	if cmRemoveContextCancelled(workErr) {
+		outcome = terminalexperience.Cancelled
+		state = terminalexperience.PhaseCancelled
+		detail = "CM profile validation cancelled"
+	}
+	phaseErr := sink.endValidation(state, detail)
+	return finishCMRemove(run, sink, outcome, cmRemoveValidationPhaseName, nil, errors.Join(workErr, phaseErr))
+}
+
+func finishCMRemoveInteractionError(run terminalexperience.ExperienceRun, sink *cmRemovePhaseSink, workErr error) error {
+	outcome := terminalexperience.Failed
+	if cmRemoveContextCancelled(workErr) {
+		outcome = terminalexperience.Cancelled
+	}
+	return finishCMRemove(run, sink, outcome, "", nil, workErr)
+}
+
+func cmRemoveContextCancelled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 const (
@@ -278,7 +303,59 @@ const (
 	cmRemoveValidationPhaseName = "Validate CM profile"
 	cmRemovePhaseID             = "remove-cm-profile"
 	cmRemovePhaseName           = "Remove CM profile"
+	cmRemoveConfirmationFormID  = "confirm-removal"
+	cmRemoveWorkCatalogID       = "config-cm-remove-work"
 )
+
+func terminalCMRemoveWorkCatalog() terminalexperience.WorkCatalog {
+	return terminalexperience.WorkCatalog{
+		ID:    cmRemoveWorkCatalogID,
+		Label: "Remove CM profile",
+		Phases: []terminalexperience.PhaseDefinition{
+			{ID: cmRemoveValidationPhaseID, Name: cmRemoveValidationPhaseName},
+			{ID: cmRemovePhaseID, Name: cmRemovePhaseName},
+		},
+	}
+}
+
+func terminalCMRemoveFinishRequest(outcome terminalexperience.FinishOutcome, location string) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{
+		Outcome:  outcome,
+		Location: cmRemoveFinishLocation(location),
+	}
+	summary := "CM profile removal failed"
+	role := terminalexperience.VisualRoleError
+	switch outcome {
+	case terminalexperience.Succeeded:
+		summary = "Profile removed"
+		role = terminalexperience.VisualRoleSuccess
+	case terminalexperience.Cancelled:
+		summary = "CM profile removal cancelled"
+		role = terminalexperience.VisualRoleWarning
+	case terminalexperience.Failed:
+		switch request.Location {
+		case cmRemoveValidationPhaseName:
+			summary = "Unable to validate CM profile"
+		case cmRemovePhaseName:
+			summary = "Unable to remove CM profile"
+		}
+	}
+	request.Summary = terminalCMRemoveOutcomeDocument(summary, role)
+	return request
+}
+
+func cmRemoveFinishLocation(location string) string {
+	switch location {
+	case cmRemoveValidationPhaseName, cmRemovePhaseName:
+		return location
+	default:
+		return ""
+	}
+}
+
+func terminalCMRemoveOutcomeDocument(text string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: text}}}
+}
 
 func terminalCMRemoveIntroDocument() terminalexperience.PresentationDocument {
 	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{

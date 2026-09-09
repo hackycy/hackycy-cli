@@ -16,11 +16,22 @@ func newTerminalCMAddAdapter(run terminalexperience.ExperienceRun) *terminalCMAd
 }
 
 func (adapter *terminalCMAddAdapter) Text(question AddTextPrompt) (string, bool, error) {
-	return adapter.ask(terminalexperience.InteractionRequest{Kind: terminalexperience.InteractionText, Message: question.Message, Placeholder: question.Placeholder, TranscriptLabel: question.Message, TranscriptProject: cmAddTranscriptProject(question.Message), Validate: func(answer terminalexperience.InteractionAnswer) error { return question.Validate(answer.Value) }})
+	return adapter.ask(terminalexperience.InteractionRequest{Kind: terminalexperience.InteractionText, Message: question.Message, Placeholder: question.Placeholder, ConsoleStepID: cmAddTextFormID(question.Message), TranscriptLabel: question.Message, TranscriptProject: cmAddTranscriptProject(question.Message), Validate: func(answer terminalexperience.InteractionAnswer) error { return question.Validate(answer.Value) }})
 }
 
 func (adapter *terminalCMAddAdapter) Password(question AddTextPrompt) (string, bool, error) {
-	return adapter.ask(terminalexperience.InteractionRequest{Kind: terminalexperience.InteractionSecret, Message: question.Message, TranscriptLabel: question.Message, Sensitive: true, Validate: func(answer terminalexperience.InteractionAnswer) error { return question.Validate(answer.Value) }})
+	return adapter.ask(terminalexperience.InteractionRequest{Kind: terminalexperience.InteractionSecret, Message: question.Message, ConsoleStepID: cmAddCredentialFormID, TranscriptLabel: question.Message, Sensitive: true, Validate: func(answer terminalexperience.InteractionAnswer) error { return question.Validate(answer.Value) }})
+}
+
+func cmAddTextFormID(message string) string {
+	switch message {
+	case "OpenAI-compatible base URL":
+		return cmAddEndpointFormID
+	case "Model":
+		return cmAddModelFormID
+	default:
+		return cmAddIdentityFormID
+	}
 }
 
 func cmAddTranscriptProject(message string) func(terminalexperience.InteractionAnswer) string {
@@ -62,5 +73,9 @@ func terminalCMAddDocument(message string, cancelled bool) terminalexperience.Pr
 	if cancelled {
 		role = terminalexperience.VisualRoleWarning
 	}
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: message}}}
+}
+
+func terminalCMAddOutcomeDocument(message string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
 	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: message}}}
 }

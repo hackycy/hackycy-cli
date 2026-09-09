@@ -16,6 +16,11 @@ import (
 
 var errGitCMRequiresInteractive = errors.New("git cm requires an interactive terminal")
 
+const (
+	gitCMStageFormID  = "select-files-to-stage"
+	gitCMCommitFormID = "confirm-commit"
+)
+
 func runCM(options *Options) error {
 	_, err := executeCM(options)
 	return err
@@ -34,10 +39,13 @@ func executeCM(options *Options) (Result, error) {
 	defer run.Close()
 	adapter := newTerminalGitCMAdapter(run, cancel)
 	adapter.enableDetailed()
+	if options.Terminal.Capabilities().Interaction == terminalexperience.RichInteractive {
+		adapter.enableControlledWork()
+	}
 
 	store, err := options.Config()
 	if err != nil {
-		return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 	}
 	module, err := New(Dependencies{
 		Git:       gitRunnerAdapter{runner: options.Git},
@@ -49,15 +57,15 @@ func executeCM(options *Options) (Result, error) {
 		Tracker:   adapter,
 	})
 	if err != nil {
-		return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 	}
 	if options.Terminal.Capabilities().Interaction == terminalexperience.Automation {
 		requiresInteraction, err := RequiresInteraction(options.Input)
 		if err != nil {
-			return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+			return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 		}
 		if requiresInteraction {
-			return Result{}, errors.Join(errGitCMRequiresInteractive, run.Finish(terminalexperience.Failed, nil))
+			return Result{}, errors.Join(errGitCMRequiresInteractive, adapter.finish(terminalexperience.Failed, Result{}, nil))
 		}
 	}
 
@@ -72,7 +80,7 @@ func executeCM(options *Options) (Result, error) {
 		if result.Committed && !result.Pushed {
 			_ = adapter.PresentOutcome(result)
 		}
-		return result, errors.Join(err, run.Finish(terminalexperience.Failed, adapter.finalDocument(result, true)))
+		return result, errors.Join(err, adapter.finish(gitCMFinishOutcome(ctx, result, err), result, adapter.finalDocument(result, true)))
 	}
 	if result.Generated != nil && !result.PromptedCommit {
 		_ = adapter.PresentGenerated(result)
@@ -82,24 +90,61 @@ func executeCM(options *Options) (Result, error) {
 	if result.Cancelled || result.NothingSelected {
 		outcome = terminalexperience.Cancelled
 	}
-	return result, run.Finish(outcome, adapter.finalDocument(result, false))
+	return result, adapter.finish(outcome, result, adapter.finalDocument(result, false))
+}
+
+func gitCMFinishOutcome(ctx context.Context, result Result, err error) terminalexperience.FinishOutcome {
+	if err != nil {
+		if gitCMCancellationOnly(ctx, err) {
+			return terminalexperience.Cancelled
+		}
+		return terminalexperience.Failed
+	}
+	if result.Cancelled || result.NothingSelected {
+		return terminalexperience.Cancelled
+	}
+	return terminalexperience.Succeeded
+}
+
+func gitCMCancellationOnly(ctx context.Context, err error) bool {
+	if ctx == nil || err == nil || ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
+		return false
+	}
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range many.Unwrap() {
+			if cause != nil && !gitCMCancellationOnly(ctx, cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return gitCMCancellationOnly(ctx, cause)
+	}
+	return true
 }
 
 type terminalGitCMAdapter struct {
 	run           terminalexperience.ExperienceRun
 	requestCancel context.CancelFunc
 
-	mu            sync.Mutex
-	detailed      bool
-	activeUpdates chan terminalexperience.OperationPhase
-	activeDone    chan error
-	active        bool
-	segment       int
-	pending       []terminalexperience.OperationPhase
-	milestones    []terminalexperience.PresentationDocument
-	generated     *terminalexperience.PresentationDocument
-	failure       *terminalexperience.PresentationDocument
-	outcome       *terminalexperience.PresentationDocument
+	mu                    sync.Mutex
+	detailed              bool
+	controlled            bool
+	activeUpdates         chan terminalexperience.OperationPhase
+	activeDone            chan error
+	active                bool
+	segment               int
+	pending               []terminalexperience.OperationPhase
+	work                  terminalexperience.WorkSession
+	workClosed            bool
+	workErr               error
+	lastPhaseID           string
+	stagedChangesRetained bool
+	milestones            []terminalexperience.PresentationDocument
+	generated             *terminalexperience.PresentationDocument
+	failure               *terminalexperience.PresentationDocument
+	outcome               *terminalexperience.PresentationDocument
 }
 
 func newTerminalGitCMAdapter(run terminalexperience.ExperienceRun, requestCancel context.CancelFunc) *terminalGitCMAdapter {
@@ -109,6 +154,12 @@ func newTerminalGitCMAdapter(run terminalexperience.ExperienceRun, requestCancel
 func (adapter *terminalGitCMAdapter) enableDetailed() {
 	adapter.mu.Lock()
 	adapter.detailed = true
+	adapter.mu.Unlock()
+}
+
+func (adapter *terminalGitCMAdapter) enableControlledWork() {
+	adapter.mu.Lock()
+	adapter.controlled = true
 	adapter.mu.Unlock()
 }
 
@@ -142,6 +193,10 @@ func (adapter *terminalGitCMAdapter) ConfirmCommit(prompt CommitPrompt) (bool, b
 func (adapter *terminalGitCMAdapter) Start(_ context.Context) (PhaseReporter, error) {
 	adapter.mu.Lock()
 	if adapter.detailed {
+		if adapter.controlled {
+			adapter.mu.Unlock()
+			return &terminalGitCMPhaseReporter{adapter: adapter, detailed: true, controlled: true}, nil
+		}
 		if adapter.active {
 			adapter.mu.Unlock()
 			return nil, errors.New("git cm tracker segment is already active")
@@ -234,6 +289,14 @@ func (adapter *terminalGitCMAdapter) PresentOutcome(result Result) error {
 	return adapter.run.Result(document)
 }
 
+func (adapter *terminalGitCMAdapter) finish(outcome terminalexperience.FinishOutcome, result Result, document *terminalexperience.PresentationDocument) error {
+	adapter.mu.Lock()
+	location := adapter.lastPhaseID
+	staged := adapter.stagedChangesRetained
+	adapter.mu.Unlock()
+	return adapter.run.Finish(terminalGitCMFinishRequestWithStaging(outcome, result, location, staged), document)
+}
+
 func (adapter *terminalGitCMAdapter) reportCMPhase(id string, state PhaseState, detail string) {
 	update := terminalexperience.OperationPhase{ID: id, State: terminalGitCMPhaseState(state), Detail: safeCMText(detail, "phase")}
 	adapter.mu.Lock()
@@ -241,6 +304,19 @@ func (adapter *terminalGitCMAdapter) reportCMPhase(id string, state PhaseState, 
 		adapter.mu.Unlock()
 		return
 	}
+	if gitCMFinishLocation(id) != "" {
+		adapter.lastPhaseID = id
+	}
+	if state == PhaseCompleted && (id == cmStageSelectedPhaseID || id == cmStageAllPhaseID) {
+		adapter.stagedChangesRetained = true
+	}
+	controlled := adapter.controlled
+	adapter.mu.Unlock()
+	if controlled {
+		adapter.reportControlledCMPhase(update)
+		return
+	}
+	adapter.mu.Lock()
 	if !adapter.active {
 		adapter.pending = append(adapter.pending, update)
 		if state == PhaseActive {
@@ -255,6 +331,31 @@ func (adapter *terminalGitCMAdapter) reportCMPhase(id string, state PhaseState, 
 	updates := adapter.activeUpdates
 	adapter.mu.Unlock()
 	updates <- update
+}
+
+func (adapter *terminalGitCMAdapter) reportControlledCMPhase(update terminalexperience.OperationPhase) {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	if !adapter.detailed || !adapter.controlled || adapter.workClosed {
+		return
+	}
+	adapter.lastPhaseID = update.ID
+	if adapter.work == nil {
+		work, err := terminalexperience.StartWork(adapter.run, terminalexperience.WorkCatalog{
+			ID:            cmWorkCatalogID,
+			Label:         "Git CM",
+			Phases:        append([]terminalexperience.PhaseDefinition(nil), cmPhaseDefinitions...),
+			RequestCancel: adapter.requestCancel,
+		})
+		if err != nil {
+			adapter.workErr = errors.Join(adapter.workErr, err)
+			return
+		}
+		adapter.work = work
+	}
+	if err := adapter.work.Update(update); err != nil {
+		adapter.workErr = errors.Join(adapter.workErr, err)
+	}
 }
 
 func cmLegacyPhaseLabel(id string) string {
@@ -313,6 +414,24 @@ func (adapter *terminalGitCMAdapter) finishDetailed() error {
 	if adapter.active {
 		adapter.mu.Unlock()
 		return errors.New("git cm tracker segment was not closed")
+	}
+	if adapter.controlled {
+		work := adapter.work
+		if work != nil {
+			adapter.workClosed = true
+		}
+		workErr := adapter.workErr
+		milestones := append([]terminalexperience.PresentationDocument(nil), adapter.milestones...)
+		adapter.milestones = nil
+		adapter.mu.Unlock()
+		if work != nil {
+			workErr = errors.Join(workErr, work.Close())
+		}
+		var presentationErr error
+		for _, milestone := range milestones {
+			presentationErr = errors.Join(presentationErr, adapter.run.Milestone(milestone))
+		}
+		return errors.Join(workErr, presentationErr)
 	}
 	pending := append([]terminalexperience.OperationPhase(nil), adapter.pending...)
 	adapter.pending = nil
@@ -378,9 +497,135 @@ func (adapter *terminalGitCMAdapter) finalDocument(result Result, failed bool) *
 	return &document
 }
 
+func terminalGitCMFinishRequest(outcome terminalexperience.FinishOutcome, result Result, location string) terminalexperience.FinishRequest {
+	return terminalGitCMFinishRequestWithStaging(outcome, result, location, false)
+}
+
+func terminalGitCMFinishRequestWithStaging(outcome terminalexperience.FinishOutcome, result Result, location string, staged bool) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{Outcome: outcome}
+	if outcome != terminalexperience.Succeeded {
+		request.Location = gitCMFinishLocation(location)
+	}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalGitCMSuccessSummary(result)
+	case terminalexperience.Cancelled:
+		request.Summary = terminalGitCMCancellationSummaryWithStaging(result, request.Location, staged)
+	case terminalexperience.Failed:
+		request.Summary = terminalGitCMFailureSummaryWithStaging(result, request.Location, staged)
+	}
+	return request
+}
+
+func terminalGitCMSuccessSummary(result Result) terminalexperience.PresentationDocument {
+	text := "Git CM complete"
+	role := terminalexperience.VisualRoleSuccess
+	switch {
+	case result.NoChanges && result.NoChangeScope == ScopeStaged:
+		text = "No staged changes"
+		role = terminalexperience.VisualRoleWarning
+	case result.NoChanges:
+		text = "No uncommitted changes"
+		role = terminalexperience.VisualRoleWarning
+	case result.NothingSelected:
+		text = "Nothing selected"
+		role = terminalexperience.VisualRoleWarning
+	case result.Pushed:
+		text = "Commit created and pushed"
+	case result.Committed:
+		text = "Commit created"
+	case result.Generated != nil && !result.PromptedCommit:
+		text = "Commit message generated"
+	}
+	return terminalGitCMSummaryDocument(text, role)
+}
+
+func terminalGitCMCancellationSummary(result Result, location string) terminalexperience.PresentationDocument {
+	return terminalGitCMCancellationSummaryWithStaging(result, location, false)
+}
+
+func terminalGitCMCancellationSummaryWithStaging(result Result, location string, staged bool) terminalexperience.PresentationDocument {
+	text := "Git CM operation cancelled"
+	switch {
+	case result.Committed && !result.Pushed:
+		text = "Commit created locally; push not completed"
+	case result.NothingSelected:
+		text = "Nothing selected"
+	case result.PromptedCommit:
+		text = "Commit creation cancelled"
+	case location == cmInspectChangesPhaseName:
+		text = "File selection cancelled"
+	case location == cmStageSelectedPhaseName || location == cmStageAllPhaseName:
+		text = "Staging cancelled"
+	case location == cmCaptureEvidencePhaseName || location == cmResolveProfilePhaseName || location == cmGenerateMessagePhaseName:
+		text = "Commit message generation cancelled"
+	}
+	document := terminalGitCMSummaryDocument(text, terminalexperience.VisualRoleWarning)
+	if staged && !result.Committed {
+		document.Blocks = append(document.Blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Staged changes retained"})
+	}
+	return document
+}
+
+func terminalGitCMFailureSummary(result Result, location string) terminalexperience.PresentationDocument {
+	return terminalGitCMFailureSummaryWithStaging(result, location, false)
+}
+
+func terminalGitCMFailureSummaryWithStaging(result Result, location string, staged bool) terminalexperience.PresentationDocument {
+	text := "Git CM operation failed"
+	switch location {
+	case cmInspectChangesPhaseName:
+		text = "Unable to inspect Git changes"
+	case cmStageSelectedPhaseName, cmStageAllPhaseName:
+		text = "Unable to stage changes"
+	case cmCaptureEvidencePhaseName:
+		text = "Unable to capture commit evidence"
+	case cmResolveProfilePhaseName:
+		text = "Unable to resolve provider profile"
+	case cmGenerateMessagePhaseName:
+		text = "Unable to confirm commit"
+		if !result.PromptedCommit {
+			text = "Unable to generate commit message"
+		}
+	case cmVerifyScopePhaseName:
+		text = "Git scope changed; commit not created"
+	case cmCreateCommitPhaseName:
+		text = "Unable to create commit"
+	case cmPushCommitPhaseName:
+		text = "Unable to push commit"
+		if result.Committed && !result.Pushed {
+			text = "Commit created locally; push not completed"
+		}
+	}
+	blocks := []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleError, Text: text}}
+	if location == cmStageSelectedPhaseName || location == cmStageAllPhaseName {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Index may be partially updated"})
+	}
+	if !strings.Contains(text, "commit not created") && !strings.Contains(text, "Commit created locally") && (location == cmCaptureEvidencePhaseName || location == cmResolveProfilePhaseName || location == cmGenerateMessagePhaseName || location == cmCreateCommitPhaseName) {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Commit not created"})
+	}
+	if staged && !result.Committed {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Staged changes retained"})
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func terminalGitCMSummaryDocument(text string, role terminalexperience.VisualRole) terminalexperience.PresentationDocument {
+	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: role, Text: text}}}
+}
+
+func gitCMFinishLocation(location string) string {
+	for _, definition := range cmPhaseDefinitions {
+		if location == definition.ID || location == definition.Name {
+			return definition.Name
+		}
+	}
+	return ""
+}
+
 func (adapter *terminalGitCMAdapter) ask(request terminalexperience.InteractionRequest) (terminalexperience.InteractionAnswer, bool, error) {
 	answer, err := adapter.run.Ask(request)
-	if errors.Is(err, terminalexperience.ErrInteractionCancelled) || errors.Is(err, context.Canceled) {
+	if gitCMInteractionCancellationOnly(err) {
 		return terminalexperience.InteractionAnswer{}, true, nil
 	}
 	if errors.Is(err, terminalexperience.ErrAutomationInteraction) {
@@ -392,16 +637,39 @@ func (adapter *terminalGitCMAdapter) ask(request terminalexperience.InteractionR
 	return answer, false, nil
 }
 
+func gitCMInteractionCancellationOnly(err error) bool {
+	if err == nil || (!errors.Is(err, terminalexperience.ErrInteractionCancelled) && !errors.Is(err, context.Canceled)) {
+		return false
+	}
+	if many, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range many.Unwrap() {
+			if cause != nil && !gitCMInteractionCancellationOnly(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return gitCMInteractionCancellationOnly(cause)
+	}
+	return true
+}
+
 func gitCMStageRequest(prompt StagePrompt) terminalexperience.InteractionRequest {
 	options := make([]terminalexperience.InteractionOption, 0, len(prompt.Options))
 	for _, option := range prompt.Options {
 		options = append(options, terminalexperience.InteractionOption{Label: option.Label, Value: option.Value})
 	}
 	return terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionMultiSelect,
-		Message:      prompt.Message,
-		PlainLead:    prompt.Message,
-		PlainPrompt:  "> ",
+		Kind:            terminalexperience.InteractionMultiSelect,
+		Message:         prompt.Message,
+		PlainLead:       prompt.Message,
+		PlainPrompt:     "> ",
+		ConsoleStepID:   gitCMStageFormID,
+		TranscriptLabel: "Selected files",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return gitCMSelectedFilesTranscript(answer.Values)
+		},
 		Options:      options,
 		HasDefault:   true,
 		Default:      terminalexperience.InteractionAnswer{Values: append([]string(nil), prompt.InitialValues...)},
@@ -425,8 +693,16 @@ func gitCMStageRequest(prompt StagePrompt) terminalexperience.InteractionRequest
 
 func gitCMCommitRequest(prompt CommitPrompt) terminalexperience.InteractionRequest {
 	return terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionConfirm,
-		Message:      prompt.Message,
+		Kind:            terminalexperience.InteractionConfirm,
+		Message:         prompt.Message,
+		ConsoleStepID:   gitCMCommitFormID,
+		TranscriptLabel: "Commit confirmation",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			if answer.Confirmed {
+				return "confirmed"
+			}
+			return "declined"
+		},
 		HasDefault:   true,
 		Default:      terminalexperience.InteractionAnswer{Confirmed: true},
 		CancelValues: []string{"q", "quit", "cancel"},
@@ -467,6 +743,7 @@ func selectGitCMOptions(value string, options []StageOption) ([]string, bool) {
 type terminalGitCMPhaseReporter struct {
 	adapter       *terminalGitCMAdapter
 	detailed      bool
+	controlled    bool
 	detailUpdates chan terminalexperience.OperationPhase
 	detailDone    chan error
 	detailClosed  bool
@@ -480,6 +757,9 @@ type terminalGitCMPhaseReporter struct {
 
 func (reporter *terminalGitCMPhaseReporter) Report(phase Phase) {
 	if reporter.detailed {
+		if reporter.controlled {
+			return
+		}
 		// Detailed Work Phase boundaries are emitted by the optional observer
 		// hooks in the module. Suppressing the compatibility Phase stream here
 		// avoids duplicate/overlapping transitions in the immutable catalog.
@@ -494,6 +774,9 @@ func (reporter *terminalGitCMPhaseReporter) Report(phase Phase) {
 
 func (reporter *terminalGitCMPhaseReporter) Close() error {
 	if reporter.detailed {
+		if reporter.controlled {
+			return nil
+		}
 		if reporter.detailClosed {
 			return nil
 		}
@@ -675,11 +958,49 @@ func gitCMConsoleDescriptor(input Input) terminalexperience.ConsoleDescriptor {
 		metadata = append(metadata, terminalexperience.ConsoleMetadata{Label: "profile", Value: safeCMText(input.Profile, "configured")})
 	}
 	return terminalexperience.ConsoleDescriptor{
-		Command:  "YCY / git cm",
-		Target:   "Generate and optionally create a commit",
-		Status:   "READY",
-		Metadata: metadata,
+		Command:     "YCY / git cm",
+		Target:      "Generate and optionally create a commit",
+		Status:      "READY",
+		Metadata:    metadata,
+		FormCatalog: gitCMFormCatalog(input),
 	}
+}
+
+func gitCMFormCatalog(input Input) []terminalexperience.ConsoleFormStep {
+	mode, err := resolveExecutionMode(input)
+	if err != nil {
+		return nil
+	}
+	catalog := make([]terminalexperience.ConsoleFormStep, 0, 2)
+	if mode.PromptStage {
+		catalog = append(catalog, terminalexperience.ConsoleFormStep{
+			ID:     gitCMStageFormID,
+			Name:   "Select files to stage",
+			Detail: "all changes selected by default",
+		})
+	}
+	if mode.CreateCommit {
+		catalog = append(catalog, terminalexperience.ConsoleFormStep{
+			ID:     gitCMCommitFormID,
+			Name:   "Commit confirmation",
+			Detail: "default Yes",
+		})
+	}
+	if len(catalog) == 0 {
+		return nil
+	}
+	return catalog
+}
+
+func gitCMSelectedFilesTranscript(values []string) string {
+	count := len(values)
+	if count == 0 {
+		return "no files selected"
+	}
+	if count == 1 {
+		return "1 file selected"
+	}
+	return fmt.Sprintf("%d files selected", count)
 }
 
 func safeCMRemote(value string) string {

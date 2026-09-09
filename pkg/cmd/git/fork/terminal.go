@@ -39,15 +39,16 @@ func executeFork(options *Options) (Result, error) {
 	adapter.enableDetailed()
 	if options.Terminal.Capabilities().Interaction == terminalexperience.RichInteractive {
 		adapter.enableRichResult()
+		adapter.enableControlledWork()
 	}
 
 	store, err := options.Config()
 	if err != nil {
-		return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 	}
 	provider, err := NewProviderClient(options.HTTP)
 	if err != nil {
-		return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 	}
 	module, err := New(Dependencies{
 		Config:           store,
@@ -62,7 +63,7 @@ func executeFork(options *Options) (Result, error) {
 		Tracker:          adapter,
 	})
 	if err != nil {
-		return Result{}, errors.Join(err, run.Finish(terminalexperience.Failed, nil))
+		return Result{}, errors.Join(err, adapter.finish(terminalexperience.Failed, Result{}, nil))
 	}
 	result, err := module.Run(ctx, Input{Repository: options.Repository, Destination: options.Destination})
 	if err != nil {
@@ -76,14 +77,14 @@ func executeFork(options *Options) (Result, error) {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			outcome = terminalexperience.Cancelled
 		}
-		return result, errors.Join(err, run.Finish(outcome, nil))
+		return result, errors.Join(err, adapter.finish(outcome, result, nil))
 	}
 	outcome := terminalexperience.Succeeded
 	if result.Cancelled {
 		outcome = terminalexperience.Cancelled
 	}
 	document := adapter.resultDocument(result)
-	return result, errors.Join(run.Finish(outcome, &document))
+	return result, errors.Join(adapter.finish(outcome, result, &document))
 }
 
 type osForkDirectoryReader struct{}
@@ -102,16 +103,21 @@ type terminalGitForkAdapter struct {
 	run           terminalexperience.ExperienceRun
 	requestCancel context.CancelFunc
 
-	mu         sync.Mutex
-	detailed   bool
-	rich       bool
-	updates    chan terminalexperience.OperationPhase
-	done       chan error
-	started    bool
-	closed     bool
-	pending    []terminalexperience.OperationPhase
-	milestones []terminalexperience.PresentationDocument
-	result     *terminalexperience.PresentationDocument
+	mu          sync.Mutex
+	detailed    bool
+	rich        bool
+	controlled  bool
+	work        terminalexperience.WorkSession
+	workClosed  bool
+	workErr     error
+	updates     chan terminalexperience.OperationPhase
+	done        chan error
+	started     bool
+	closed      bool
+	lastPhaseID string
+	pending     []terminalexperience.OperationPhase
+	milestones  []terminalexperience.PresentationDocument
+	result      *terminalexperience.PresentationDocument
 }
 
 func newTerminalGitForkAdapter(run terminalexperience.ExperienceRun, requestCancel context.CancelFunc) *terminalGitForkAdapter {
@@ -130,10 +136,24 @@ func (adapter *terminalGitForkAdapter) enableRichResult() {
 	adapter.mu.Unlock()
 }
 
+func (adapter *terminalGitForkAdapter) enableControlledWork() {
+	adapter.mu.Lock()
+	adapter.controlled = true
+	adapter.mu.Unlock()
+}
+
 func (adapter *terminalGitForkAdapter) ConfirmOverwrite(prompt OverwritePrompt) (bool, bool, error) {
 	answer, err := adapter.run.Ask(terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionConfirm,
-		Message:      prompt.Message,
+		Kind:            terminalexperience.InteractionConfirm,
+		Message:         prompt.Message,
+		ConsoleStepID:   gitForkOverwriteFormID,
+		TranscriptLabel: "Destination replacement",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			if answer.Confirmed {
+				return "confirmed"
+			}
+			return "declined"
+		},
 		HasDefault:   true,
 		Default:      terminalexperience.InteractionAnswer{Confirmed: true},
 		CancelValues: []string{"q", "quit", "cancel"},
@@ -196,6 +216,10 @@ func (adapter *terminalGitForkAdapter) Outcome(result Result) {
 func (adapter *terminalGitForkAdapter) Start(_ context.Context) (PhaseReporter, error) {
 	adapter.mu.Lock()
 	if adapter.detailed {
+		if adapter.controlled {
+			adapter.mu.Unlock()
+			return &terminalGitForkPhaseReporter{adapter: adapter, detailed: true, controlled: true}, nil
+		}
 		if adapter.started {
 			adapter.mu.Unlock()
 			return nil, errors.New("git fork tracker already started")
@@ -245,10 +269,18 @@ func (adapter *terminalGitForkAdapter) Start(_ context.Context) (PhaseReporter, 
 func (adapter *terminalGitForkAdapter) reportForkPhase(id string, state PhaseState, detail string) {
 	update := terminalexperience.OperationPhase{ID: id, State: terminalGitForkPhaseState(state), Detail: safeForkText(detail, "phase")}
 	adapter.mu.Lock()
+	controlled := adapter.detailed && adapter.controlled
+	adapter.mu.Unlock()
+	if controlled {
+		adapter.reportControlledForkPhase(update)
+		return
+	}
+	adapter.mu.Lock()
 	if !adapter.detailed || adapter.closed {
 		adapter.mu.Unlock()
 		return
 	}
+	adapter.lastPhaseID = id
 	if !adapter.started {
 		adapter.pending = append(adapter.pending, update)
 		if state == PhaseActive {
@@ -262,6 +294,26 @@ func (adapter *terminalGitForkAdapter) reportForkPhase(id string, state PhaseSta
 	}
 	adapter.updates <- update
 	adapter.mu.Unlock()
+}
+
+func (adapter *terminalGitForkAdapter) reportControlledForkPhase(update terminalexperience.OperationPhase) {
+	adapter.mu.Lock()
+	defer adapter.mu.Unlock()
+	adapter.lastPhaseID = update.ID
+	if adapter.workClosed {
+		return
+	}
+	if adapter.work == nil {
+		work, err := terminalexperience.StartWork(adapter.run, gitForkWorkCatalog(adapter.requestCancel))
+		if err != nil {
+			adapter.workErr = errors.Join(adapter.workErr, err)
+			return
+		}
+		adapter.work = work
+	}
+	if err := adapter.work.Update(update); err != nil {
+		adapter.workErr = errors.Join(adapter.workErr, err)
+	}
 }
 
 func (adapter *terminalGitForkAdapter) reportForkMilestone(text string) {
@@ -278,6 +330,25 @@ func (adapter *terminalGitForkAdapter) flushDetailed() error {
 	if !adapter.detailed {
 		adapter.mu.Unlock()
 		return nil
+	}
+	if adapter.controlled {
+		work := adapter.work
+		workClosed := adapter.workClosed
+		if work != nil {
+			adapter.workClosed = true
+		}
+		workErr := adapter.workErr
+		milestones := append([]terminalexperience.PresentationDocument(nil), adapter.milestones...)
+		adapter.milestones = nil
+		adapter.mu.Unlock()
+		if work != nil && !workClosed {
+			workErr = errors.Join(workErr, work.Close())
+		}
+		var result error
+		for _, milestone := range milestones {
+			result = errors.Join(result, adapter.run.Milestone(milestone))
+		}
+		return errors.Join(workErr, result)
 	}
 	// A prompt cancellation or an early failure can finish before the normal
 	// acquisition Track starts. Replay the reached catalog entries in a
@@ -349,6 +420,131 @@ func (adapter *terminalGitForkAdapter) resultDocument(result Result) terminalexp
 	return gitForkOutcomeDocumentDetailed(result)
 }
 
+func (adapter *terminalGitForkAdapter) finish(outcome terminalexperience.FinishOutcome, result Result, document *terminalexperience.PresentationDocument) error {
+	adapter.mu.Lock()
+	location := adapter.lastPhaseID
+	adapter.mu.Unlock()
+	return adapter.run.Finish(terminalGitForkFinishRequest(outcome, result, location), document)
+}
+
+func terminalGitForkFinishRequest(outcome terminalexperience.FinishOutcome, result Result, location string) terminalexperience.FinishRequest {
+	request := terminalexperience.FinishRequest{
+		Outcome:  outcome,
+		Location: gitForkFinishLocation(location),
+	}
+	switch outcome {
+	case terminalexperience.Succeeded:
+		request.Summary = terminalGitForkSuccessSummary(result)
+	case terminalexperience.Cancelled:
+		request.Summary = terminalGitForkCancellationSummary(result)
+	case terminalexperience.Failed:
+		request.Summary = terminalGitForkFailureSummary(result, request.Location)
+	}
+	return request
+}
+
+func terminalGitForkSuccessSummary(result Result) terminalexperience.PresentationDocument {
+	blocks := []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / git fork"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Project acquired"},
+		{Role: terminalexperience.VisualRoleMuted, Text: "Repository: " + safeForkRepositoryDetail(result.Repository)},
+	}
+	if result.Ref != "" {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "Ref: " + safeForkRefDetail(result.Ref)})
+	}
+	switch result.Acquisition {
+	case acquisitionArchive:
+		blocks = append(blocks,
+			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleSuccess, Text: "Acquired via archive"},
+			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "History: not included"},
+		)
+	case acquisitionClone:
+		blocks = append(blocks,
+			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleSuccess, Text: "Acquired via git clone"},
+			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "Git metadata: removed"},
+		)
+	}
+	if result.DefaultBranchError != nil {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Default branch unavailable; used remote default"})
+	}
+	if result.ArchiveError != nil {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: "Archive unavailable; used git clone fallback"})
+	}
+	if fact := safeForkDiskFact(result.DiskFact); fact != "" {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: fact})
+	}
+	blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "Destination: " + safeForkDestinationDetail(result.Destination)})
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func terminalGitForkCancellationSummary(result Result) terminalexperience.PresentationDocument {
+	message := "Git Fork operation cancelled"
+	if result.Cancelled {
+		message = "Destination replacement cancelled"
+	}
+	blocks := []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / git fork"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Project acquisition cancelled"},
+		{Role: terminalexperience.VisualRoleWarning, Text: message},
+	}
+	if fact := safeForkDiskFact(result.DiskFact); fact != "" {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: fact})
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func terminalGitForkFailureSummary(result Result, location string) terminalexperience.PresentationDocument {
+	message := "Git Fork operation failed"
+	switch location {
+	case "Resolve repository":
+		message = "Unable to resolve repository"
+	case "Inspect destination":
+		message = "Unable to inspect destination"
+	case "Replace destination":
+		message = "Unable to replace destination"
+	case "Resolve default branch":
+		message = "Unable to resolve default branch"
+	case "Download archive":
+		message = "Unable to download archive"
+	case "Extract archive":
+		message = "Unable to extract archive"
+	case "Clone fallback":
+		message = "Unable to clone project"
+	case "Remove Git metadata":
+		message = "Unable to remove Git metadata"
+	}
+	blocks := []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / git fork"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Project acquisition failed"},
+		{Role: terminalexperience.VisualRoleError, Text: message},
+	}
+	if fact := safeForkDiskFact(result.DiskFact); fact != "" {
+		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleWarning, Text: fact})
+	}
+	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func gitForkFinishLocation(location string) string {
+	for _, definition := range forkPhaseDefinitions {
+		if location == definition.ID || location == definition.Name {
+			return definition.Name
+		}
+	}
+	return ""
+}
+
+func safeForkDiskFact(value string) string {
+	switch value {
+	case "Destination may contain partially replaced files",
+		"Destination may contain partially extracted files",
+		"Destination may contain a partial clone",
+		"Project files created; Git metadata remains":
+		return value
+	default:
+		return ""
+	}
+}
+
 func forkLegacyPhaseLabel(id string) string {
 	switch id {
 	case forkResolveRepositoryPhaseID:
@@ -373,10 +569,11 @@ func forkLegacyPhaseLabel(id string) string {
 }
 
 type terminalGitForkPhaseReporter struct {
-	adapter  *terminalGitForkAdapter
-	detailed bool
-	updates  chan terminalexperience.OperationPhase
-	finished chan struct{}
+	adapter    *terminalGitForkAdapter
+	detailed   bool
+	controlled bool
+	updates    chan terminalexperience.OperationPhase
+	finished   chan struct{}
 
 	mu     sync.Mutex
 	closed bool
@@ -399,6 +596,9 @@ func (reporter *terminalGitForkPhaseReporter) Report(phase Phase) {
 
 func (reporter *terminalGitForkPhaseReporter) Close() error {
 	if reporter.detailed {
+		if reporter.controlled {
+			return nil
+		}
 		reporter.adapter.mu.Lock()
 		if !reporter.adapter.closed {
 			reporter.adapter.closed = true
@@ -572,6 +772,23 @@ func gitForkConsoleDescriptor(repository, destination string) terminalexperience
 			{Label: "destination", Value: safeForkDestinationDetail(destination)},
 			{Label: "route", Value: "archive first; git clone fallback"},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: gitForkOverwriteFormID, Name: "Replace destination", Detail: "confirm recursive replacement"},
+		},
+	}
+}
+
+const (
+	gitForkOverwriteFormID = "confirm-replace-destination"
+	gitForkWorkCatalogID   = "git-fork-acquisition"
+)
+
+func gitForkWorkCatalog(requestCancel func()) terminalexperience.WorkCatalog {
+	return terminalexperience.WorkCatalog{
+		ID:            gitForkWorkCatalogID,
+		Label:         "Acquire project files",
+		Phases:        append([]terminalexperience.PhaseDefinition(nil), forkPhaseDefinitions...),
+		RequestCancel: requestCancel,
 	}
 }
 

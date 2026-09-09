@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -108,6 +109,7 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
 		"OUTCOME  succeeded",
+		"Removal complete",
 		"Done!",
 	}
 	last := 0
@@ -225,7 +227,7 @@ func assertRMCancellationRichPTYOutput(t *testing.T, output string, color bool) 
 			t.Fatalf("Rich PTY cancellation output missing %q: %q", expected, output)
 		}
 	}
-	if strings.Contains(visible, "Delete selected paths") || strings.Contains(visible, "Done!") {
+	if strings.Contains(visible, "Delete selected paths (completed)") || strings.Contains(visible, "Deleted 1 item") || strings.Contains(visible, "Done!") {
 		t.Fatalf("Rich PTY cancellation entered mutation/result path: %q", output)
 	}
 	enter := strings.Index(visible, "\x1b[?1049h")
@@ -235,6 +237,9 @@ func assertRMCancellationRichPTYOutput(t *testing.T, output string, color bool) 
 	}
 	if strings.LastIndex(visible, "Deletion confirmation: cancelled") < leave || strings.LastIndex(visible, "Cancelled.") < leave {
 		t.Fatalf("Rich PTY cancellation transcript was not replayed after screen restore: %q", output)
+	}
+	if summary := strings.Index(visible[leave:], "Removal cancelled"); summary < 0 || strings.Index(visible[leave:][summary:], "Cancelled.") < 0 {
+		t.Fatalf("Rich PTY cancellation did not keep the Outcome summary before the durable Result: %q", output)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
@@ -307,6 +312,7 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
 		"OUTCOME  succeeded",
+		"Cleanup complete",
 		"Done!",
 	}
 	last := 0
@@ -363,30 +369,67 @@ func TestRMExplicitRiskWarningsAndFailureCategories(t *testing.T) {
 	}
 }
 
-func TestRMRichPhaseSinkPublishesActiveAndCompletedStates(t *testing.T) {
-	experience := terminaltest.NewRecordingExperience()
-	run := experience.Open(context.Background())
-	sink := newRMPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
-	if err := sink.begin("scan", "Scan cleanup targets", "Scanning cleanup targets"); err != nil {
-		t.Fatalf("begin() error = %v", err)
-	}
-	if err := sink.end(terminalexperience.PhaseCompleted, "Found 1 target"); err != nil {
-		t.Fatalf("end() error = %v", err)
-	}
-	operations := experience.Run.Operations()
-	if len(operations) != 1 || operations[0].Kind != terminaltest.TrackOperation {
-		t.Fatalf("track operations = %#v", operations)
-	}
-	tracked := operations[0].Value.(terminalexperience.TrackedOperation)
-	if len(tracked.Phases) != 1 || tracked.Phases[0].ID != "scan" || tracked.Phases[0].Name != "Scan cleanup targets" {
-		t.Fatalf("phase catalog = %#v", tracked.Phases)
-	}
-	updates := make([]terminalexperience.OperationPhase, 0, 2)
-	for update := range tracked.Updates {
-		updates = append(updates, update)
-	}
-	if len(updates) != 2 || updates[0].State != terminalexperience.PhaseActive || updates[0].ID != "scan" || updates[1].State != terminalexperience.PhaseCompleted || updates[1].Detail != "Found 1 target" {
-		t.Fatalf("phase updates = %#v", updates)
+func TestRMRichPhaseSinkUsesOneWorkCatalogForEachRoute(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		explicit bool
+		firstID  string
+		first    string
+		last     string
+	}{
+		{name: "smart", firstID: rmScanPhaseID, first: "Found 1 target", last: "Deleting 1 target"},
+		{name: "explicit", explicit: true, firstID: rmResolvePhaseID, first: "Resolved 1 target; 0 missing", last: "Deleting 1 target"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			experience := terminaltest.NewRecordingExperience()
+			run := experience.Open(context.Background())
+			sink := newRMPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}, testCase.explicit)
+			firstName := rmScanPhaseName
+			if testCase.explicit {
+				firstName = rmResolvePhaseName
+			}
+			if err := sink.begin(testCase.firstID, firstName, "starting"); err != nil {
+				t.Fatalf("begin first phase: %v", err)
+			}
+			if err := sink.end(terminalexperience.PhaseCompleted, testCase.first); err != nil {
+				t.Fatalf("end first phase: %v", err)
+			}
+			if err := sink.begin(rmDeletePhaseID, rmDeletePhaseName, testCase.last); err != nil {
+				t.Fatalf("begin delete phase: %v", err)
+			}
+			if err := sink.end(terminalexperience.PhaseCompleted, "Requested: 1; Succeeded: 1; Failed: 0"); err != nil {
+				t.Fatalf("end delete phase: %v", err)
+			}
+			if err := sink.closeActive(); err != nil {
+				t.Fatalf("closeActive() error = %v", err)
+			}
+
+			operations := experience.Run.Operations()
+			var startWork, workClose int
+			var updates []terminalexperience.OperationPhase
+			for _, operation := range operations {
+				switch operation.Kind {
+				case terminaltest.StartWorkOperation:
+					startWork++
+					catalog, ok := operation.Value.(terminalexperience.WorkCatalog)
+					if !ok || !reflect.DeepEqual(catalog, terminalRMWorkCatalog(testCase.explicit)) {
+						t.Fatalf("Work catalog = %#v, want %#v", operation.Value, terminalRMWorkCatalog(testCase.explicit))
+					}
+				case terminaltest.WorkUpdateOperation:
+					updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+				case terminaltest.WorkCloseOperation:
+					workClose++
+				case terminaltest.TrackOperation:
+					t.Fatalf("legacy Track operation = %#v", operations)
+				}
+			}
+			if startWork != 1 || workClose != 1 {
+				t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
+			}
+			if len(updates) != 4 || updates[0].ID != testCase.firstID || updates[0].State != terminalexperience.PhaseActive || updates[1].ID != testCase.firstID || updates[1].State != terminalexperience.PhaseCompleted || updates[2].ID != rmDeletePhaseID || updates[2].State != terminalexperience.PhaseActive || updates[3].ID != rmDeletePhaseID || updates[3].State != terminalexperience.PhaseCompleted {
+				t.Fatalf("work updates = %#v", updates)
+			}
+		})
 	}
 }
 

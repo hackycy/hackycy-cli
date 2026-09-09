@@ -47,12 +47,18 @@ func TestTerminalCMAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 		terminalexperience.InteractionSecret,
 	}
 	wantMessages := []string{"Profile name", "OpenAI-compatible base URL", "Model", "API key"}
+	wantConsoleStepIDs := []string{
+		cmAddIdentityFormID,
+		cmAddEndpointFormID,
+		cmAddModelFormID,
+		cmAddCredentialFormID,
+	}
 	for index := range wantKinds {
 		if operations[index].Kind != terminaltest.AskOperation {
 			t.Fatalf("operation %d = %#v", index, operations[index])
 		}
 		request := operations[index].Value.(terminalexperience.InteractionRequest)
-		if request.Kind != wantKinds[index] || request.Message != wantMessages[index] {
+		if request.Kind != wantKinds[index] || request.Message != wantMessages[index] || request.ConsoleStepID != wantConsoleStepIDs[index] {
 			t.Fatalf("request %d = %#v", index, request)
 		}
 		if request.TranscriptProject == nil && request.Kind != terminalexperience.InteractionSecret {
@@ -70,6 +76,9 @@ func TestTerminalCMAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 	}
 	if err := operations[3].Value.(terminalexperience.InteractionRequest).Validate(terminalexperience.InteractionAnswer{}); err == nil || err.Error() != "API key is required" {
 		t.Fatalf("API key validation = %v", err)
+	}
+	if credential := operations[3].Value.(terminalexperience.InteractionRequest); !credential.Sensitive {
+		t.Fatalf("credential request = %#v, want Sensitive", credential)
 	}
 	if operations[4].Kind != terminaltest.CloseOperation {
 		t.Fatalf("last operation = %#v, want close", operations[4])
@@ -91,15 +100,22 @@ func TestTerminalCMAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 func TestConfigCMAddConsoleDescriptorProvidesSafeBoundedContext(t *testing.T) {
 	want := terminalexperience.ConsoleDescriptor{
 		Command: "YCY / config cm add",
-		Target:  "commit message profile setup",
+		Target:  "Add commit message profile - Configure an OpenAI-compatible provider",
 		Status:  "READY",
-		Metadata: []terminalexperience.ConsoleMetadata{{
-			Label: "scope",
-			Value: "commit message configuration",
-		}},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: cmAddIdentityFormID, Name: "Identity", Detail: "profile name"},
+			{ID: cmAddEndpointFormID, Name: "Endpoint", Detail: "base URL"},
+			{ID: cmAddModelFormID, Name: "Model", Detail: "model"},
+			{ID: cmAddCredentialFormID, Name: "Credential", Detail: "API key", Sensitive: true},
+		},
 	}
 	if got := terminalCMAddConsoleDescriptor(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
+	}
+	for _, field := range []string{want.Command, want.Target, want.Status} {
+		if strings.ContainsAny(field, "\r\n\t\x1b") {
+			t.Fatalf("descriptor field contains terminal control: %q", field)
+		}
 	}
 }
 
@@ -250,26 +266,46 @@ func TestRunCMAddCancellationAfterFormDoesNotWrite(t *testing.T) {
 	}
 }
 
-func TestCMAddPhaseSinkReplaysCollectAndSaveStates(t *testing.T) {
+func TestCMAddPhaseSinkUsesOneControlledWorkCatalog(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	run := experience.Open(context.Background())
 	sink := newCMAddPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
-	sink.beginCollect()
-	sink.endCollect(terminalexperience.PhaseCompleted, "safe summary")
-	sink.beginSave()
-	sink.endSave(terminalexperience.PhaseCompleted, "Profile saved")
+	if err := sink.beginCollect(); err != nil {
+		t.Fatalf("beginCollect() error = %v", err)
+	}
+	if err := sink.endCollect(terminalexperience.PhaseCompleted, "safe summary"); err != nil {
+		t.Fatalf("endCollect() error = %v", err)
+	}
+	if err := sink.beginSave(); err != nil {
+		t.Fatalf("beginSave() error = %v", err)
+	}
+	if err := sink.endSave(terminalexperience.PhaseCompleted, "Profile saved"); err != nil {
+		t.Fatalf("endSave() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
 
 	operations := experience.Run.Operations()
-	if len(operations) != 1 || operations[0].Kind != terminaltest.TrackOperation {
-		t.Fatalf("operations = %#v", operations)
-	}
-	tracked := operations[0].Value.(terminalexperience.TrackedOperation)
-	if got, want := tracked.Phases, []terminalexperience.PhaseDefinition{{ID: cmAddCollectPhaseID, Name: cmAddCollectPhaseName}, {ID: cmAddSavePhaseID, Name: cmAddSavePhaseName}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("phase catalog = %#v, want %#v", got, want)
-	}
+	var startWork, workClose int
 	var updates []terminalexperience.OperationPhase
-	for update := range tracked.Updates {
-		updates = append(updates, update)
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			startWork++
+			if got, want := operation.Value.(terminalexperience.WorkCatalog), terminalCMAddWorkCatalog(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Work Catalog = %#v, want %#v", got, want)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
+		}
+	}
+	if startWork != 1 || workClose != 1 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
 	}
 	want := []terminalexperience.OperationPhase{
 		{ID: cmAddCollectPhaseID, State: terminalexperience.PhaseActive, Detail: "Answer the four profile fields"},
@@ -279,6 +315,100 @@ func TestCMAddPhaseSinkReplaysCollectAndSaveStates(t *testing.T) {
 	}
 	if !reflect.DeepEqual(updates, want) {
 		t.Fatalf("phase updates = %#v, want %#v", updates, want)
+	}
+}
+
+func TestCMAddFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		outcome  terminalexperience.FinishOutcome
+		location string
+		want     terminalexperience.FinishRequest
+	}{
+		{
+			name:    "success",
+			outcome: terminalexperience.Succeeded,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalCMAddOutcomeDocument("Profile saved", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name:     "cancelled during collection",
+			outcome:  terminalexperience.Cancelled,
+			location: cmAddCollectPhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Cancelled,
+				Location: cmAddCollectPhaseName,
+				Summary:  terminalCMAddOutcomeDocument("Profile setup cancelled", terminalexperience.VisualRoleWarning),
+			},
+		},
+		{
+			name:     "collection failure",
+			outcome:  terminalexperience.Failed,
+			location: cmAddCollectPhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: cmAddCollectPhaseName,
+				Summary:  terminalCMAddOutcomeDocument("Unable to collect CM profile details", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name:     "save failure",
+			outcome:  terminalexperience.Failed,
+			location: cmAddSavePhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: cmAddSavePhaseName,
+				Summary:  terminalCMAddOutcomeDocument("Unable to save CM profile", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name:     "unsafe location",
+			outcome:  terminalexperience.Failed,
+			location: "save\n/secret/path",
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Failed,
+				Summary: terminalCMAddOutcomeDocument("Unable to collect CM profile details", terminalexperience.VisualRoleError),
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := terminalCMAddFinishRequest(test.outcome, test.location)
+			if !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("Finish request = %#v, want %#v", got, test.want)
+			}
+			if terminaltest.ContainsTerminalControl([]byte(terminalexperience.RenderPlain(got.Summary))) {
+				t.Fatalf("summary contains terminal controls: %#v", got)
+			}
+		})
+	}
+}
+
+func TestFinishCMAddSubmitsFinishRequestAndSeparateResult(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	sink := newCMAddPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
+	document := terminalCMAddDocument("Profile work added", false)
+	if err := finishCMAdd(run, sink, terminalexperience.Succeeded, "", &document, nil); err != nil {
+		t.Fatalf("finishCMAdd() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	if len(operations) != 1 || operations[0].Kind != terminaltest.FinishOperation {
+		t.Fatalf("operations = %#v", operations)
+	}
+	finish := operations[0].Value.(terminaltest.Finish)
+	wantRequest := terminalCMAddFinishRequest(terminalexperience.Succeeded, "")
+	if !reflect.DeepEqual(finish.Request, wantRequest) {
+		t.Fatalf("Finish request = %#v, want %#v", finish.Request, wantRequest)
+	}
+	if !reflect.DeepEqual(finish.Value.(terminalexperience.FinishRequest), wantRequest) {
+		t.Fatalf("Finish value = %#v, want FinishRequest", finish.Value)
+	}
+	if len(finish.Documents) != 1 || finish.Documents[0] == nil || !reflect.DeepEqual(*finish.Documents[0], document) {
+		t.Fatalf("durable Result = %#v, want %#v", finish.Documents, document)
 	}
 }
 

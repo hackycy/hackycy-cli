@@ -22,9 +22,13 @@ func (adapter *terminalCMRemoveAdapter) Confirm(question RemoveConfirmPrompt) (b
 		Kind:            terminalexperience.InteractionConfirm,
 		Message:         question.Message,
 		Description:     question.Description,
+		ConsoleStepID:   cmRemoveConfirmationFormID,
 		TranscriptLabel: "CM removal confirmation",
 		HasDefault:      true,
 		Default:         terminalexperience.InteractionAnswer{Confirmed: false},
+		TranscriptProject: func(terminalexperience.InteractionAnswer) string {
+			return ""
+		},
 	})
 	if errors.Is(err, context.Canceled) {
 		return false, false, err

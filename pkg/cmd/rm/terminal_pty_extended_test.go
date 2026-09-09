@@ -143,6 +143,7 @@ func assertRMExtendedMutationOutput(t *testing.T, output string, color, wide boo
 		"Delete selected paths (completed)",
 		"Deleted 1 item",
 		"OUTCOME  succeeded",
+		"Removal complete",
 		"Done!",
 	}
 	last := 0
@@ -193,6 +194,110 @@ func TestRunRMExplicitRichPTYFourWayCancellationJourney(t *testing.T) {
 	}
 }
 
+func TestRunRMExplicitRichPTYPartialDeletionPreservesSafeProjection(t *testing.T) {
+	const helperEnvironment = "YCY_RM_EXTENDED_PARTIAL_HELPER"
+	if os.Getenv(helperEnvironment) == "1" {
+		runRMExtendedPartialDeletionHelper(t)
+		return
+	}
+
+	for _, testCase := range []struct {
+		name          string
+		width, height uint16
+		color         bool
+	}{
+		{name: "wide color", width: 120, height: 40, color: true},
+		{name: "compact no color", width: 40, height: 15, color: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			command := exec.Command(os.Args[0], "-test.run=^TestRunRMExplicitRichPTYPartialDeletionPreservesSafeProjection$")
+			command.Env = rmExtendedPTYEnvironment(map[string]string{
+				"NO_COLOR":                  map[bool]string{true: "", false: "1"}[testCase.color],
+				"TERM":                      "xterm-256color",
+				helperEnvironment:           "1",
+				"YCY_RM_EXTENDED_PTY_START": "1",
+			})
+			output := runRMExtendedPTYProcess(t, command, testCase.width, testCase.height, "y\r", "RM_PARTIAL_DELETE_ATTEMPT", "")
+			assertRMExtendedPartialDeletionOutput(t, output, testCase.color)
+		})
+	}
+}
+
+func runRMExtendedPartialDeletionHelper(t *testing.T) {
+	t.Helper()
+	if os.Getenv("YCY_RM_EXTENDED_PTY_START") == "1" {
+		var start [2]byte
+		if _, err := io.ReadFull(os.Stdin, start[:]); err != nil {
+			t.Fatalf("wait for PTY sizing: %v", err)
+		}
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "retained.txt")
+	if err := os.WriteFile(target, []byte("contents"), 0o600); err != nil {
+		t.Fatalf("write partial-deletion target: %v", err)
+	}
+	experience := newRMRichPTYExperience()
+	err := runRM(&Options{
+		Context: context.Background(),
+		Paths:   []string{filepath.Base(target)},
+		WorkingDirectory: func() (string, error) {
+			return root, nil
+		},
+		Terminal: experience,
+		Remover: pathRemoverFunc(func(string) error {
+			_, _ = fmt.Fprintln(os.Stderr, "RM_PARTIAL_DELETE_ATTEMPT")
+			return errors.New("permission denied: /private/secret/path")
+		}),
+	})
+	if err != nil {
+		t.Fatalf("runRM() error = %v", err)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("partial-deletion target = %v, want retained", err)
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "RM_PARTIAL_DELETION_OK")
+}
+
+func assertRMExtendedPartialDeletionOutput(t *testing.T, output string, color bool) {
+	t.Helper()
+	visible := strings.ReplaceAll(output, "\r\n", "\n")
+	enter := strings.Index(visible, "\x1b[?1049h")
+	leave := strings.LastIndex(visible, "\x1b[?1049l")
+	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
+		t.Fatalf("rm Rich PTY partial deletion did not restore primary screen: %q", output)
+	}
+	if strings.Contains(visible, "permission denied") || strings.Contains(visible, "/private/secret/path") {
+		t.Fatalf("rm Rich PTY partial deletion leaked raw error data: %q", output)
+	}
+	transcript := visible[leave:]
+	ordered := []string{
+		"Resolve explicit targets (completed)",
+		"Delete selected paths (completed)",
+		"Requested: 1; Succeeded: 0; Failed: 1",
+		"Deleted 0 items",
+		"skipped (permission)",
+		"OUTCOME  succeeded",
+		"Removal complete",
+		"Done!",
+		"RM_PARTIAL_DELETION_OK",
+	}
+	last := 0
+	for _, expected := range ordered {
+		next := strings.Index(transcript[last:], expected)
+		if next < 0 {
+			t.Fatalf("rm Rich PTY partial deletion Transcript missing ordered event %q: %q", expected, output)
+		}
+		last += next + len(expected)
+	}
+	if !color {
+		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
+			if strings.Contains(output, prefix) {
+				t.Fatalf("NO_COLOR rm Rich PTY partial deletion contains %q: %q", prefix, output)
+			}
+		}
+	}
+}
+
 func runRMExtendedCancellationHelper(t *testing.T) {
 	t.Helper()
 	if os.Getenv("YCY_RM_EXTENDED_PTY_START") == "1" {
@@ -235,7 +340,7 @@ func assertRMExtendedCancellationOutput(t *testing.T, output string, color bool)
 			t.Fatalf("rm Rich PTY cancellation missing %q: %q", expected, output)
 		}
 	}
-	if strings.Contains(visible, "Delete selected paths") || strings.Contains(visible, "RM_DELETE_ENTER") || strings.Contains(visible, "Done!") {
+	if strings.Contains(visible, "Delete selected paths (completed)") || strings.Contains(visible, "RM_DELETE_ENTER") || strings.Contains(visible, "Deleted 1 item") || strings.Contains(visible, "Done!") {
 		t.Fatalf("rm Rich PTY cancellation entered mutation path: %q", output)
 	}
 	enter := strings.Index(visible, "\x1b[?1049h")
@@ -245,6 +350,9 @@ func assertRMExtendedCancellationOutput(t *testing.T, output string, color bool)
 	}
 	if strings.Index(visible[leave:], "Deletion confirmation: cancelled") < 0 || strings.Index(visible[leave:], "Cancelled.") < 0 {
 		t.Fatalf("rm Rich PTY cancellation Transcript was not replayed: %q", output)
+	}
+	if summary := strings.Index(visible[leave:], "Removal cancelled"); summary < 0 || strings.Index(visible[leave:][summary:], "Cancelled.") < 0 {
+		t.Fatalf("rm Rich PTY cancellation did not keep the Outcome summary before the durable Result: %q", output)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {

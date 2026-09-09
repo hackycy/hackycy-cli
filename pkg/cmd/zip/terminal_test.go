@@ -8,22 +8,22 @@ import (
 	"testing"
 
 	terminalexperience "github.com/hackycy/hackycy-cli/internal/terminal"
+	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
-func TestZipPhaseCoordinatorDefersRichTrackingUntilArchiveWork(t *testing.T) {
+func TestZipPhaseCoordinatorUsesOneControlledWorkCatalogAcrossPlanning(t *testing.T) {
 	run := &recordingZIPRun{}
 	coordinator := newZipPhaseCoordinator(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
 
 	for _, update := range []terminalexperience.OperationPhase{
 		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseActive, Detail: "Inspecting workspace"},
 		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Workspace ready"},
+		{ID: zipSelectSourcePhaseID, State: terminalexperience.PhaseActive, Detail: "Reviewing source"},
+		{ID: zipSelectSourcePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Source selected"},
 	} {
 		if err := coordinator.Report(update); err != nil {
-			t.Fatalf("planning Report(%#v) error = %v", update, err)
+			t.Fatalf("Report(%#v) error = %v", update, err)
 		}
-	}
-	if got := run.trackCount(); got != 0 {
-		t.Fatalf("planning started Track %d time(s), want 0", got)
 	}
 
 	for _, update := range []terminalexperience.OperationPhase{
@@ -39,17 +39,35 @@ func TestZipPhaseCoordinatorDefersRichTrackingUntilArchiveWork(t *testing.T) {
 	}
 
 	tracks, updates := run.trackSnapshot()
-	if len(tracks) != 1 || tracks[0].ID != "zip-archive" || !reflect.DeepEqual(tracks[0].Phases, zipPhaseDefinitions) {
-		t.Fatalf("tracks = %#v", tracks)
+	if len(tracks) != 0 {
+		t.Fatalf("legacy Track calls = %#v, want none", tracks)
 	}
 	want := []terminalexperience.OperationPhase{
-		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseActive, Detail: "Workspace ready"},
+		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseActive, Detail: "Inspecting workspace"},
 		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Workspace ready"},
+		{ID: zipSelectSourcePhaseID, State: terminalexperience.PhaseActive, Detail: "Reviewing source"},
+		{ID: zipSelectSourcePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Source selected"},
 		{ID: zipCollectFilesPhaseID, State: terminalexperience.PhaseActive, Detail: "Collecting files"},
 		{ID: zipCollectFilesPhaseID, State: terminalexperience.PhaseCompleted, Detail: "Collected 2 files"},
 	}
-	if !reflect.DeepEqual(updates, want) {
-		t.Fatalf("updates = %#v, want %#v", updates, want)
+	catalogs, workUpdates, closeCount := run.workSnapshot()
+	if len(catalogs) != 1 || catalogs[0].ID != zipWorkCatalogID || catalogs[0].Label != "Create archive" || !reflect.DeepEqual(catalogs[0].Phases, zipPhaseDefinitions) {
+		t.Fatalf("Work Catalogs = %#v", catalogs)
+	}
+	if !reflect.DeepEqual(workUpdates, want) {
+		t.Fatalf("Work updates = %#v, want %#v", workUpdates, want)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("legacy updates = %#v, want none", updates)
+	}
+	if closeCount != 1 {
+		t.Fatalf("Work close count = %d, want 1", closeCount)
+	}
+	if err := coordinator.finish(); err != nil {
+		t.Fatalf("second finish() error = %v", err)
+	}
+	if _, _, closeCount := run.workSnapshot(); closeCount != 1 {
+		t.Fatalf("Work close count after second finish = %d, want 1", closeCount)
 	}
 }
 
@@ -90,7 +108,8 @@ func TestFinishTerminalZIPClassifiesContextCancellationAndRedactsFailures(t *tes
 		t.Fatalf("finishTerminalZIP() error = %v, want context cancellation", err)
 	}
 	finishes := run.finishSnapshot()
-	if len(finishes) != 1 || finishes[0].outcome != terminalexperience.Cancelled || finishes[0].document != nil {
+	wantRequest := terminalZipFinishRequest(terminalexperience.Cancelled, Result{}, zipCollectFilesPhaseID)
+	if len(finishes) != 1 || finishes[0].outcome != terminalexperience.Cancelled || !reflect.DeepEqual(finishes[0].request, wantRequest) || finishes[0].document != nil {
 		t.Fatalf("finishes = %#v", finishes)
 	}
 
@@ -104,6 +123,156 @@ func TestFinishTerminalZIPClassifiesContextCancellationAndRedactsFailures(t *tes
 		if contains := containsZIPText(text, forbidden); contains {
 			t.Fatalf("failure document leaked %q: %q", forbidden, text)
 		}
+	}
+}
+
+func TestTerminalZipFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	success := Result{
+		Kind:           ResultCompleted,
+		Plan:           &ZipPlan{File: "release"},
+		CollectedCount: 5,
+		IncludedCount:  3,
+		RevealFailed:   true,
+	}
+	successSummary := terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
+		{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+		{Role: terminalexperience.VisualRoleTitle, Text: "Archive complete"},
+		{Role: terminalexperience.VisualRoleSuccess, Text: "Archive created"},
+		{Role: terminalexperience.VisualRoleMuted, Text: "Collected 5; included 3; output release.zip"},
+		{Role: terminalexperience.VisualRoleWarning, Text: "Archive created; host reveal unavailable"},
+	}}
+
+	tests := []struct {
+		name     string
+		outcome  terminalexperience.FinishOutcome
+		result   Result
+		location string
+		want     terminalexperience.FinishRequest
+	}{
+		{
+			name:    "success keeps counts basename and reveal warning",
+			outcome: terminalexperience.Succeeded,
+			result:  success,
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: successSummary,
+			},
+		},
+		{
+			name:     "planning cancellation retains a safe phase",
+			outcome:  terminalexperience.Cancelled,
+			result:   Result{Kind: ResultCancelled},
+			location: zipSelectPatternsPhaseID,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Cancelled,
+				Location: "Select patterns",
+				Summary: terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
+					{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+					{Role: terminalexperience.VisualRoleTitle, Text: "Archive outcome"},
+					{Role: terminalexperience.VisualRoleWarning, Text: "Archive planning cancelled"},
+				}},
+			},
+		},
+		{
+			name:     "collection failure excludes raw archive data",
+			outcome:  terminalexperience.Failed,
+			result:   Result{Kind: ResultCollectionFailed, Plan: &ZipPlan{Input: "/private/token", File: "https://secret.example/archive"}, OutputPath: "/private/token/archive.zip", Cause: errors.New("token=secret")},
+			location: zipCollectFilesPhaseID,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: "Collect files",
+				Summary: terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
+					{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+					{Role: terminalexperience.VisualRoleTitle, Text: "Archive outcome"},
+					{Role: terminalexperience.VisualRoleError, Text: "Archive failed (collection)"},
+				}},
+			},
+		},
+		{
+			name:     "unknown failure uses no unsafe location",
+			outcome:  terminalexperience.Failed,
+			location: "unsafe\nlocation",
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Failed,
+				Summary: terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
+					{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
+					{Role: terminalexperience.VisualRoleTitle, Text: "Archive outcome"},
+					{Role: terminalexperience.VisualRoleError, Text: "Archive failed (archive)"},
+				}},
+			},
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := terminalZipFinishRequest(testCase.outcome, testCase.result, testCase.location)
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("Finish request = %#v, want %#v", got, testCase.want)
+			}
+			text := terminalexperience.RenderPlain(got.Summary)
+			if terminaltest.ContainsTerminalControl([]byte(text)) {
+				t.Fatalf("summary contains terminal controls: %q", text)
+			}
+			for _, forbidden := range []string{"/private", "secret", "token="} {
+				if containsZIPText(text, forbidden) {
+					t.Fatalf("summary leaked %q: %q", forbidden, text)
+				}
+			}
+		})
+	}
+
+	for _, failure := range []struct {
+		kind     ResultKind
+		category string
+	}{
+		{ResultDirectoryNotFound, "directory"},
+		{ResultPathNotDirectory, "path"},
+		{ResultNoFiles, "no-files"},
+		{ResultNoValidFiles, "no-valid-files"},
+		{ResultCollectionFailed, "collection"},
+		{ResultCompressionFailed, "compression"},
+		{ResultWriteFailed, "write"},
+	} {
+		request := terminalZipFinishRequest(terminalexperience.Failed, Result{Kind: failure.kind}, zipWriteArchivePhaseID)
+		if request.Location != "Write archive" || !containsZIPText(terminalexperience.RenderPlain(request.Summary), "Archive failed ("+failure.category+")") {
+			t.Fatalf("failure %q request = %#v", failure.kind, request)
+		}
+	}
+}
+
+func TestFinishTerminalZIPSubmitsFinishRequestAndSeparateResult(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	caps := terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}
+	coordinator := newZipPhaseCoordinator(run, caps)
+	for _, update := range []terminalexperience.OperationPhase{
+		{ID: zipWriteArchivePhaseID, State: terminalexperience.PhaseActive, Detail: "Publishing completed archive"},
+		{ID: zipWriteArchivePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Archive published"},
+	} {
+		if err := coordinator.Report(update); err != nil {
+			t.Fatalf("Report(%#v) error = %v", update, err)
+		}
+	}
+	result := Result{Kind: ResultCompleted, Plan: &ZipPlan{File: "release"}, CollectedCount: 4, IncludedCount: 3}
+	if err := finishTerminalZIP(run, caps, coordinator, &terminalZipPresenter{run: run}, result, nil); err != nil {
+		t.Fatalf("finishTerminalZIP() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	if len(operations) == 0 || operations[len(operations)-1].Kind != terminaltest.FinishOperation {
+		t.Fatalf("operations = %#v", operations)
+	}
+	finish := operations[len(operations)-1].Value.(terminaltest.Finish)
+	wantRequest := terminalZipFinishRequest(terminalexperience.Succeeded, result, "Write archive")
+	if !reflect.DeepEqual(finish.Request, wantRequest) || !reflect.DeepEqual(finish.Value.(terminalexperience.FinishRequest), wantRequest) {
+		t.Fatalf("Finish = %#v, want request %#v", finish, wantRequest)
+	}
+	wantResult := terminalZipResultDocument(result, caps)
+	if len(finish.Documents) != 1 || finish.Documents[0] == nil || !reflect.DeepEqual(*finish.Documents[0], wantResult) {
+		t.Fatalf("durable Result = %#v, want %#v", finish.Documents, wantResult)
+	}
+	if reflect.DeepEqual(finish.Request.Summary, wantResult) {
+		t.Fatalf("Finish summary must not be derived from the durable Result: %#v", finish)
 	}
 }
 
@@ -173,15 +342,19 @@ func (reporter *recordingZIPPhases) finalDetail(id string) string {
 
 type recordedZIPFinish struct {
 	outcome  terminalexperience.FinishOutcome
+	request  terminalexperience.FinishRequest
 	document *terminalexperience.PresentationDocument
 }
 
 type recordingZIPRun struct {
-	mu       sync.Mutex
-	notices  []terminalexperience.PresentationDocument
-	tracks   []terminalexperience.TrackedOperation
-	updates  []terminalexperience.OperationPhase
-	finishes []recordedZIPFinish
+	mu           sync.Mutex
+	notices      []terminalexperience.PresentationDocument
+	tracks       []terminalexperience.TrackedOperation
+	updates      []terminalexperience.OperationPhase
+	workCatalogs []terminalexperience.WorkCatalog
+	workUpdates  []terminalexperience.OperationPhase
+	workCloses   int
+	finishes     []recordedZIPFinish
 }
 
 func (run *recordingZIPRun) Ask(terminalexperience.InteractionRequest) (terminalexperience.InteractionAnswer, error) {
@@ -200,6 +373,13 @@ func (run *recordingZIPRun) Track(operation terminalexperience.TrackedOperation)
 	return nil
 }
 
+func (run *recordingZIPRun) StartWork(catalog terminalexperience.WorkCatalog) (terminalexperience.WorkSession, error) {
+	run.mu.Lock()
+	run.workCatalogs = append(run.workCatalogs, catalog)
+	run.mu.Unlock()
+	return &recordingZIPWorkSession{run: run}, nil
+}
+
 func (run *recordingZIPRun) Notice(document terminalexperience.PresentationDocument) error {
 	run.mu.Lock()
 	defer run.mu.Unlock()
@@ -214,13 +394,25 @@ func (run *recordingZIPRun) Finish(value any, documents ...*terminalexperience.P
 	defer run.mu.Unlock()
 	var outcome terminalexperience.FinishOutcome
 	var document *terminalexperience.PresentationDocument
-	if legacy, ok := value.(terminalexperience.FinishOutcome); ok {
-		outcome = legacy
-		if len(documents) == 1 {
-			document = documents[0]
-		}
+	switch request := value.(type) {
+	case terminalexperience.FinishRequest:
+		outcome = request.Outcome
+		run.finishes = append(run.finishes, recordedZIPFinish{outcome: outcome, request: request, document: firstZIPDocument(documents)})
+		return nil
+	case terminalexperience.FinishOutcome:
+		outcome = request
+	}
+	if len(documents) == 1 {
+		document = documents[0]
 	}
 	run.finishes = append(run.finishes, recordedZIPFinish{outcome: outcome, document: document})
+	return nil
+}
+
+func firstZIPDocument(documents []*terminalexperience.PresentationDocument) *terminalexperience.PresentationDocument {
+	if len(documents) == 1 {
+		return documents[0]
+	}
 	return nil
 }
 
@@ -229,6 +421,24 @@ func (*recordingZIPRun) ResultCheckpoint(string, terminalexperience.Presentation
 }
 func (*recordingZIPRun) Result(terminalexperience.PresentationDocument) error { return nil }
 func (*recordingZIPRun) Close() error                                         { return nil }
+
+type recordingZIPWorkSession struct {
+	run *recordingZIPRun
+}
+
+func (session *recordingZIPWorkSession) Update(update terminalexperience.OperationPhase) error {
+	session.run.mu.Lock()
+	session.run.workUpdates = append(session.run.workUpdates, update)
+	session.run.mu.Unlock()
+	return nil
+}
+
+func (session *recordingZIPWorkSession) Close() error {
+	session.run.mu.Lock()
+	session.run.workCloses++
+	session.run.mu.Unlock()
+	return nil
+}
 
 func (run *recordingZIPRun) trackCount() int {
 	run.mu.Lock()
@@ -246,6 +456,12 @@ func (run *recordingZIPRun) trackSnapshot() ([]terminalexperience.TrackedOperati
 	run.mu.Lock()
 	defer run.mu.Unlock()
 	return append([]terminalexperience.TrackedOperation(nil), run.tracks...), append([]terminalexperience.OperationPhase(nil), run.updates...)
+}
+
+func (run *recordingZIPRun) workSnapshot() ([]terminalexperience.WorkCatalog, []terminalexperience.OperationPhase, int) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	return append([]terminalexperience.WorkCatalog(nil), run.workCatalogs...), append([]terminalexperience.OperationPhase(nil), run.workUpdates...), run.workCloses
 }
 
 func (run *recordingZIPRun) finishSnapshot() []recordedZIPFinish {

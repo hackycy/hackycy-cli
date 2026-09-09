@@ -229,6 +229,287 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 }
 
+func TestGitCMRichPTYFailureAndCancellationEvidence(t *testing.T) {
+	const helperEnvironment = "YCY_GIT_CM_FAILURE_PTY_HELPER"
+	if os.Getenv(helperEnvironment) == "1" {
+		runGitCMFailurePTYHelper(t)
+		return
+	}
+
+	for _, testCase := range []struct {
+		name          string
+		scenario      string
+		width, height uint16
+		color         bool
+		input         string
+	}{
+		{name: "provider failure wide color", scenario: "provider", width: 120, height: 40, color: true},
+		{name: "stale scope compact no color", scenario: "stale", width: 40, height: 15, color: false, input: "\r"},
+		{name: "hook failure wide no color", scenario: "hook", width: 120, height: 40, color: false, input: "\r"},
+		{name: "commit cancellation compact color", scenario: "cancel", width: 40, height: 15, color: true, input: "\x1b"},
+		{name: "push failure wide color", scenario: "push", width: 120, height: 40, color: true, input: "\r"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			providerDone := filepath.Join(t.TempDir(), "provider-done")
+			command := exec.Command(os.Args[0], "-test.run=^TestGitCMRichPTYFailureAndCancellationEvidence$")
+			command.Env = gitCMPTYEnvironment(map[string]string{
+				"NO_COLOR":                     map[bool]string{true: "", false: "1"}[testCase.color],
+				"TERM":                         "xterm-256color",
+				helperEnvironment:              "1",
+				"YCY_GIT_CM_FAILURE_SCENARIO":  testCase.scenario,
+				"YCY_GIT_CM_FAILURE_PTY_START": "1",
+				"YCY_GIT_CM_PROVIDER_DONE":     providerDone,
+			})
+			output := runGitCMScenarioPTYProcess(t, command, testCase.width, testCase.height, testCase.input, providerDone)
+			assertGitCMScenarioPTYOutput(t, output, testCase.scenario, testCase.color, testCase.width >= 70)
+		})
+	}
+}
+
+func runGitCMFailurePTYHelper(t *testing.T) {
+	t.Helper()
+	if os.Getenv("YCY_GIT_CM_FAILURE_PTY_START") == "1" {
+		var start [2]byte
+		if _, err := io.ReadFull(os.Stdin, start[:]); err != nil {
+			t.Fatalf("wait for PTY sizing: %v", err)
+		}
+	}
+	scenario := os.Getenv("YCY_GIT_CM_FAILURE_SCENARIO")
+	if scenario == "" {
+		t.Fatal("missing Git CM failure scenario")
+	}
+	repository := newGitCMRepository(t)
+	withGitCMWorkingDirectory(t, repository)
+	writeGitCMFile(t, filepath.Join(repository, "README.md"), "rich failure\n")
+	runGitCM(t, repository, "add", "README.md")
+	if scenario == "hook" {
+		hook := filepath.Join(repository, ".git", "hooks", "pre-commit")
+		writeGitCMFile(t, hook, "#!/bin/sh\necho hook-secret /private/hook/path >&2\nexit 1\n")
+		if err := os.Chmod(hook, 0o700); err != nil {
+			t.Fatalf("chmod pre-commit hook: %v", err)
+		}
+	}
+	if scenario == "push" {
+		runGitCM(t, repository, "remote", "add", "origin", filepath.Join(t.TempDir(), "missing.git"))
+	}
+
+	providerDone := os.Getenv("YCY_GIT_CM_PROVIDER_DONE")
+	staleMutation := make(chan error, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/chat/completions" {
+			t.Errorf("provider request = %s %s", request.Method, request.URL.Path)
+			response.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_, _ = io.Copy(io.Discard, request.Body)
+		if scenario == "stale" {
+			err := os.WriteFile(filepath.Join(repository, "README.md"), []byte("changed after capture\n"), 0o600)
+			if err == nil {
+				command := exec.Command("git", "-C", repository, "add", "README.md")
+				command.Env = environmentWith(map[string]string{"GIT_CONFIG_NOSYSTEM": "1"})
+				_, err = command.CombinedOutput()
+			}
+			staleMutation <- err
+		}
+		if scenario == "provider" {
+			response.WriteHeader(http.StatusBadGateway)
+			_, _ = response.Write([]byte("provider-secret /private/provider/path"))
+		} else {
+			response.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat(cm): rich failure")
+		}
+		if providerDone != "" {
+			_ = os.WriteFile(providerDone, []byte("done"), 0o600)
+		}
+	}))
+	defer server.Close()
+	configureGitCMProvider(t, server.URL)
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{
+			Interaction: terminalexperience.RichInteractive,
+			Stdin:       terminalexperience.StreamCapability{Terminal: true},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: os.Getenv("NO_COLOR") == ""},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: os.Getenv("NO_COLOR") == ""},
+		},
+		Input: os.Stdin, Output: os.Stdout, Diagnostics: os.Stderr,
+	})
+	input := Input{Staged: true}
+	var remote string
+	if scenario == "push" {
+		remote = "origin"
+		input.Push = &remote
+	}
+	result, err := executeCM(&Options{
+		Context: context.Background(),
+		Input:   input,
+		Config: func() (ProfileResolver, error) {
+			return appconfig.New(appconfig.Dependencies{})
+		},
+		HTTP:     server.Client(),
+		Terminal: experience,
+		Git:      &gitprocess.Runner{},
+	})
+	if scenario == "stale" {
+		if mutationErr := <-staleMutation; mutationErr != nil {
+			t.Fatalf("mutate stale-scope fixture: %v", mutationErr)
+		}
+	}
+	switch scenario {
+	case "provider":
+		if err == nil || result.Generated != nil || result.Committed {
+			t.Fatalf("provider failure executeCM() = (%#v, %v)", result, err)
+		}
+	case "stale":
+		var commandErr *CommandError
+		if err == nil || !errors.As(err, &commandErr) || commandErr.Code != ErrorStaleScope || result.Committed {
+			t.Fatalf("stale scope executeCM() = (%#v, %v)", result, err)
+		}
+	case "hook":
+		if err == nil || !result.PromptedCommit || result.Committed {
+			t.Fatalf("hook failure executeCM() = (%#v, %v)", result, err)
+		}
+	case "cancel":
+		if err != nil || !result.Cancelled || result.Committed {
+			t.Fatalf("commit cancellation executeCM() = (%#v, %v)", result, err)
+		}
+	case "push":
+		if err == nil || !result.Committed || result.Pushed {
+			t.Fatalf("push failure executeCM() = (%#v, %v)", result, err)
+		}
+	default:
+		t.Fatalf("unknown Git CM failure scenario %q", scenario)
+	}
+	if _, err := fmt.Fprintf(os.Stderr, "GIT_CM_%s_OK\n", strings.ToUpper(scenario)); err != nil {
+		t.Fatalf("write Git CM scenario marker: %v", err)
+	}
+}
+
+func runGitCMScenarioPTYProcess(t *testing.T, command *exec.Cmd, width, height uint16, input, providerDone string) string {
+	t.Helper()
+	process, err := terminaltest.StartPTY(command)
+	if errors.Is(err, terminaltest.ErrPTYUnsupported) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("start Git CM scenario PTY: %v", err)
+	}
+	defer process.Close()
+	if err := process.Resize(width, height); err != nil {
+		t.Fatalf("resize Git CM scenario PTY to %dx%d: %v", width, height, err)
+	}
+	var output gitCMPTYBuffer
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&output, process.Terminal())
+		close(readDone)
+	}()
+	if _, err := process.Terminal().Write([]byte("go\n")); err != nil {
+		t.Fatalf("release Git CM scenario PTY helper: %v", err)
+	}
+	waitForGitCMPTYFile(t, providerDone)
+	if input != "" {
+		if input == "\r" || input == "\x1b" {
+			waitForGitCMPTYText(t, &output, "feat(cm): rich failure")
+		}
+		time.Sleep(150 * time.Millisecond)
+		if _, err := process.Terminal().Write([]byte(input)); err != nil {
+			t.Fatalf("submit Git CM scenario input: %v", err)
+		}
+	}
+	marker := "GIT_CM_"
+	waitForGitCMPTYText(t, &output, marker)
+	if err := process.Wait(); err != nil {
+		t.Fatalf("wait Git CM scenario helper: %v\n%s", err, output.String())
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("close Git CM scenario PTY: %v", err)
+	}
+	select {
+	case <-readDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out reading Git CM scenario output: %q", output.String())
+	}
+	return output.String()
+}
+
+func assertGitCMScenarioPTYOutput(t *testing.T, output, scenario string, color, wide bool) {
+	t.Helper()
+	visible := strings.ReplaceAll(output, "\r\n", "\n")
+	enter := strings.Index(visible, "\x1b[?1049h")
+	leave := strings.LastIndex(visible, "\x1b[?1049l")
+	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
+		t.Fatalf("Git CM scenario did not restore primary screen: %q", output)
+	}
+	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
+	for _, expected := range []string{"YCY / git cm", "STATE", "PHASE", "DETAIL"} {
+		if !strings.Contains(live, expected) {
+			t.Fatalf("Git CM scenario live Console missing %q: %q", expected, output)
+		}
+	}
+	transcript := visible[leave:]
+	var expectedOutcome string
+	switch scenario {
+	case "provider":
+		expectedOutcome = "Unable to generate commit message"
+		for _, expected := range []string{"Capture commit evidence (completed)", "Resolve provider profile (completed)", "Generate commit message (failed)", "OUTCOME  failed", expectedOutcome, "Commit not created"} {
+			if !strings.Contains(transcript, expected) {
+				t.Fatalf("provider failure Transcript missing %q: %q", expected, output)
+			}
+		}
+	case "stale":
+		expectedOutcome = "Git scope changed; commit not created"
+		for _, expected := range []string{"Verify unchanged scope (failed)", "OUTCOME  failed", expectedOutcome} {
+			if !strings.Contains(transcript, expected) {
+				t.Fatalf("stale-scope Transcript missing %q: %q", expected, output)
+			}
+		}
+	case "hook":
+		expectedOutcome = "Unable to create commit"
+		for _, expected := range []string{"Verify unchanged scope (completed)", "Create commit (failed)", "OUTCOME  failed", expectedOutcome, "Commit not created"} {
+			if !strings.Contains(transcript, expected) {
+				t.Fatalf("hook failure Transcript missing %q: %q", expected, output)
+			}
+		}
+	case "cancel":
+		expectedOutcome = "Commit creation cancelled"
+		for _, expected := range []string{"Commit confirmation: cancelled", "OUTCOME  cancelled", expectedOutcome} {
+			if !strings.Contains(transcript, expected) {
+				t.Fatalf("commit cancellation Transcript missing %q: %q", expected, output)
+			}
+		}
+		if strings.Contains(transcript, "Create commit (completed)") || strings.Contains(transcript, "Commit created\n") {
+			t.Fatalf("commit cancellation entered mutation path: %q", output)
+		}
+	case "push":
+		expectedOutcome = "Commit created locally; push not completed"
+		for _, expected := range []string{"Create commit (completed)", "Push commit (failed)", "OUTCOME  failed", expectedOutcome, "GIT_CM_PUSH_OK"} {
+			if !strings.Contains(transcript, expected) {
+				t.Fatalf("push failure Transcript missing %q: %q", expected, output)
+			}
+		}
+		if strings.Index(transcript, "OUTCOME  failed") > strings.Index(transcript, "GIT_CM_PUSH_OK") {
+			t.Fatalf("push failure Outcome was not emitted before the final marker: %q", output)
+		}
+	default:
+		t.Fatalf("unknown Git CM scenario %q", scenario)
+	}
+	if wide && !strings.Contains(live, expectedOutcome) {
+		t.Fatalf("wide Git CM scenario live Outcome missing %q: %q", expectedOutcome, output)
+	}
+	for _, forbidden := range []string{"provider-secret", "/private/provider/path", "hook-secret", "/private/hook/path", "fixture-api-key", "Authorization: Bearer", "changed after capture"} {
+		if strings.Contains(visible, forbidden) {
+			t.Fatalf("Git CM scenario leaked %q: %q", forbidden, output)
+		}
+	}
+	if !color {
+		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
+			if strings.Contains(output, prefix) {
+				t.Fatalf("NO_COLOR Git CM scenario output contains %q: %q", prefix, output)
+			}
+		}
+	}
+}
+
 func runGitCMStageCommitPTYHelper(t *testing.T) {
 	t.Helper()
 	if os.Getenv("YCY_GIT_CM_STAGE_COMMIT_PTY_START") == "1" {

@@ -55,15 +55,15 @@ func TestTerminalRMAdapterTranslatesPromptClusterAndPresentation(t *testing.T) {
 		t.Fatalf("operations = %#v", operations)
 	}
 	confirm := operations[0].Value.(terminalexperience.InteractionRequest)
-	if confirm.Kind != terminalexperience.InteractionConfirm || confirm.Message != "Delete 1 item?" || !confirm.HasDefault || confirm.Default.Confirmed {
+	if confirm.Kind != terminalexperience.InteractionConfirm || confirm.Message != "Delete 1 item?" || confirm.ConsoleStepID != rmExplicitConfirmationFormID || !confirm.HasDefault || confirm.Default.Confirmed {
 		t.Fatalf("confirmation request = %#v", confirm)
 	}
 	actionRequest := operations[1].Value.(terminalexperience.InteractionRequest)
-	if actionRequest.Kind != terminalexperience.InteractionSelect || actionRequest.Message != "Select a clean action" || !actionRequest.HasDefault || actionRequest.Default.Value != "node-dist" || !reflect.DeepEqual(actionRequest.CancelValues, []string{"q", "quit", "cancel"}) {
+	if actionRequest.Kind != terminalexperience.InteractionSelect || actionRequest.Message != "Select a clean action" || actionRequest.ConsoleStepID != rmSmartActionFormID || !actionRequest.HasDefault || actionRequest.Default.Value != "node-dist" || !reflect.DeepEqual(actionRequest.CancelValues, []string{"q", "quit", "cancel"}) {
 		t.Fatalf("action request = %#v", actionRequest)
 	}
 	targetRequest := operations[2].Value.(terminalexperience.InteractionRequest)
-	if targetRequest.Kind != terminalexperience.InteractionMultiSelect || targetRequest.Message != "Select items to delete" || !targetRequest.HasDefault || !reflect.DeepEqual(targetRequest.Default.Values, []string{"/project/dist"}) {
+	if targetRequest.Kind != terminalexperience.InteractionMultiSelect || targetRequest.Message != "Select items to delete" || targetRequest.ConsoleStepID != rmSmartTargetsFormID || !targetRequest.HasDefault || !reflect.DeepEqual(targetRequest.Default.Values, []string{"/project/dist"}) {
 		t.Fatalf("target request = %#v", targetRequest)
 	}
 	intro := operations[3].Value.(terminalexperience.PresentationDocument)

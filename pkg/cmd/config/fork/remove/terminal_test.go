@@ -46,14 +46,14 @@ func TestTerminalForkRemoveAdapterTranslatesSelectionAndConfirmation(t *testing.
 		t.Fatalf("operations = %#v", operations)
 	}
 	selection := operations[0].Value.(terminalexperience.InteractionRequest)
-	if selection.Kind != terminalexperience.InteractionSelect || selection.Message != "Select instance to remove" || selection.TranscriptLabel != "Selected instance" || selection.TranscriptProject == nil || !selection.HasDefault || selection.Default.Value != "work" || !reflect.DeepEqual(selection.Options, []terminalexperience.InteractionOption{{Label: "work", Value: "work", Description: "gitlab.example"}, {Label: "personal", Value: "personal", Description: "github.example"}}) {
+	if selection.Kind != terminalexperience.InteractionSelect || selection.Message != "Select instance to remove" || selection.ConsoleStepID != forkRemoveSelectionFormID || selection.TranscriptLabel != "Selected instance" || selection.TranscriptProject == nil || !selection.HasDefault || selection.Default.Value != "work" || !reflect.DeepEqual(selection.Options, []terminalexperience.InteractionOption{{Label: "work", Value: "work", Description: "gitlab.example"}, {Label: "personal", Value: "personal", Description: "github.example"}}) {
 		t.Fatalf("selection request = %#v", selection)
 	}
 	if got := selection.TranscriptProject(terminalexperience.InteractionAnswer{Value: "unsafe\nname"}); got != "Selected instance" {
 		t.Fatalf("selection transcript projection = %q", got)
 	}
 	confirmation := operations[1].Value.(terminalexperience.InteractionRequest)
-	if confirmation.Kind != terminalexperience.InteractionConfirm || confirmation.Message != `Remove instance "work"?` || confirmation.TranscriptProject == nil || !confirmation.HasDefault || confirmation.Default.Confirmed {
+	if confirmation.Kind != terminalexperience.InteractionConfirm || confirmation.Message != `Remove instance "work"?` || confirmation.ConsoleStepID != forkRemoveConfirmationFormID || confirmation.TranscriptProject == nil || !confirmation.HasDefault || confirmation.Default.Confirmed {
 		t.Fatalf("confirmation request = %#v", confirmation)
 	}
 	if got := confirmation.TranscriptProject(terminalexperience.InteractionAnswer{Confirmed: true}); got != "" {
@@ -64,15 +64,20 @@ func TestTerminalForkRemoveAdapterTranslatesSelectionAndConfirmation(t *testing.
 func TestConfigForkRemoveConsoleDescriptorProvidesSafeBoundedContext(t *testing.T) {
 	want := terminalexperience.ConsoleDescriptor{
 		Command: "YCY / config fork remove",
-		Target:  "provider connection removal",
+		Target:  "Remove fork provider instance - Choose a configured provider connection to remove",
 		Status:  "READY",
-		Metadata: []terminalexperience.ConsoleMetadata{{
-			Label: "scope",
-			Value: "git fork configuration",
-		}},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: forkRemoveSelectionFormID, Name: "Selection", Detail: "provider instance"},
+			{ID: forkRemoveConfirmationFormID, Name: "Confirmation", Detail: "default No"},
+		},
 	}
 	if got := terminalForkRemoveConsoleDescriptor(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
+	}
+	for _, field := range []string{want.Command, want.Target, want.Status} {
+		if strings.ContainsAny(field, "\r\n\t\x1b") {
+			t.Fatalf("descriptor field contains terminal control: %q", field)
+		}
 	}
 }
 
@@ -362,40 +367,128 @@ func TestConfigForkRemoveRejectsNilStoreAdapters(t *testing.T) {
 	}
 }
 
-func TestForkRemovePhaseSinkTracksLoadAndRemovalSeparately(t *testing.T) {
+func TestForkRemovePhaseSinkUsesOneWorkCatalogForLoadAndRemoval(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	run := experience.Open(context.Background())
 	sink := newForkRemovePhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
-	sink.beginLoad()
-	sink.endLoad(terminalexperience.PhaseCompleted, "Loaded 1 provider instance")
-	sink.beginRemoval()
-	sink.endRemoval(terminalexperience.PhaseCompleted, "Provider instance removed")
+	if err := sink.beginLoad(); err != nil {
+		t.Fatalf("beginLoad() error = %v", err)
+	}
+	if err := sink.endLoad(terminalexperience.PhaseCompleted, "Loaded 1 provider instance"); err != nil {
+		t.Fatalf("endLoad() error = %v", err)
+	}
+	if err := sink.beginRemoval(); err != nil {
+		t.Fatalf("beginRemoval() error = %v", err)
+	}
+	if err := sink.endRemoval(terminalexperience.PhaseCompleted, "Provider instance removed"); err != nil {
+		t.Fatalf("endRemoval() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
 
 	operations := experience.Run.Operations()
-	if len(operations) != 2 || operations[0].Kind != terminaltest.TrackOperation || operations[1].Kind != terminaltest.TrackOperation {
-		t.Fatalf("operations = %#v", operations)
-	}
-	wantCatalog := []terminalexperience.PhaseDefinition{{ID: forkRemoveLoadPhaseID, Name: forkRemoveLoadPhaseName}, {ID: forkRemovePhaseID, Name: forkRemovePhaseName}}
-	for index, operation := range operations {
-		tracked := operation.Value.(terminalexperience.TrackedOperation)
-		if !reflect.DeepEqual(tracked.Phases, wantCatalog) {
-			t.Fatalf("operation %d phase catalog = %#v, want %#v", index, tracked.Phases, wantCatalog)
+	var startWork, workClose int
+	var updates []terminalexperience.OperationPhase
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			startWork++
+			if got, want := operation.Value.(terminalexperience.WorkCatalog), terminalForkRemoveWorkCatalog(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Work catalog = %#v, want %#v", got, want)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
 		}
 	}
-	first := operations[0].Value.(terminalexperience.TrackedOperation)
-	second := operations[1].Value.(terminalexperience.TrackedOperation)
-	var firstUpdates, secondUpdates []terminalexperience.OperationPhase
-	for update := range first.Updates {
-		firstUpdates = append(firstUpdates, update)
+	if startWork != 1 || workClose != 1 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
 	}
-	for update := range second.Updates {
-		secondUpdates = append(secondUpdates, update)
+	if got, want := updates, []terminalexperience.OperationPhase{
+		{ID: forkRemoveLoadPhaseID, State: terminalexperience.PhaseActive, Detail: "Reading provider configuration"},
+		{ID: forkRemoveLoadPhaseID, State: terminalexperience.PhaseCompleted, Detail: "Loaded 1 provider instance"},
+		{ID: forkRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored provider instance"},
+		{ID: forkRemovePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Provider instance removed"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("work updates = %#v, want %#v", got, want)
 	}
-	if got, want := firstUpdates, []terminalexperience.OperationPhase{{ID: forkRemoveLoadPhaseID, State: terminalexperience.PhaseActive, Detail: "Reading provider configuration"}, {ID: forkRemoveLoadPhaseID, State: terminalexperience.PhaseCompleted, Detail: "Loaded 1 provider instance"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("load updates = %#v, want %#v", got, want)
-	}
-	if got, want := secondUpdates, []terminalexperience.OperationPhase{{ID: forkRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored provider instance"}, {ID: forkRemovePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Provider instance removed"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("removal updates = %#v, want %#v", got, want)
+}
+
+func TestForkRemoveFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		request terminalexperience.FinishRequest
+	}{
+		{
+			name: "successful removal",
+			request: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalForkRemoveDocument("Provider instance removed", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name: "empty configuration",
+			request: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Succeeded,
+				Location: forkRemoveLoadPhaseName,
+				Summary:  terminalForkRemoveDocument("No instances configured", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name: "cancelled interaction",
+			request: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Cancelled,
+				Summary: terminalForkRemoveDocument("Provider removal cancelled", terminalexperience.VisualRoleWarning),
+			},
+		},
+		{
+			name: "load failure",
+			request: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: forkRemoveLoadPhaseName,
+				Summary:  terminalForkRemoveDocument("Unable to load fork provider instances", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name: "removal failure",
+			request: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: forkRemovePhaseName,
+				Summary:  terminalForkRemoveDocument("Unable to remove provider instance", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name: "invalid failure location",
+			request: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Failed,
+				Summary: terminalForkRemoveDocument("Provider removal failed", terminalexperience.VisualRoleError),
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var got terminalexperience.FinishRequest
+			switch testCase.name {
+			case "successful removal":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Succeeded, "", false)
+			case "empty configuration":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Succeeded, forkRemoveLoadPhaseName, true)
+			case "cancelled interaction":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Cancelled, "", false)
+			case "load failure":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Failed, forkRemoveLoadPhaseName, false)
+			case "removal failure":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Failed, forkRemovePhaseName, false)
+			case "invalid failure location":
+				got = terminalForkRemoveFinishRequest(terminalexperience.Failed, "unsafe\nlocation", false)
+			}
+			if !reflect.DeepEqual(got, testCase.request) {
+				t.Fatalf("Finish request = %#v, want %#v", got, testCase.request)
+			}
+		})
 	}
 }
 

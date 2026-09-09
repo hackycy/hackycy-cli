@@ -26,6 +26,7 @@ func (adapter *terminalRMAdapter) ConfirmExplicit(prompt ExplicitConfirmationPro
 		Kind:            terminalexperience.InteractionConfirm,
 		Message:         prompt.Message,
 		Description:     prompt.Description,
+		ConsoleStepID:   rmExplicitConfirmationFormID,
 		TranscriptLabel: "Deletion confirmation",
 		HasDefault:      true,
 		Default:         terminalexperience.InteractionAnswer{Confirmed: prompt.Initial},
@@ -41,6 +42,7 @@ func (adapter *terminalRMAdapter) SelectSmartAction(prompt SmartActionPrompt) (S
 		Message:         prompt.Message,
 		PlainLead:       prompt.Message,
 		PlainPrompt:     "> ",
+		ConsoleStepID:   rmSmartActionFormID,
 		TranscriptLabel: "Cleanup action",
 		Options:         rmSmartActionOptions(prompt.Options),
 		CancelValues:    []string{"q", "quit", "cancel"},
@@ -78,6 +80,7 @@ func (adapter *terminalRMAdapter) SelectSmartTargets(prompt SmartTargetPrompt) (
 		Message:         prompt.Message,
 		PlainLead:       prompt.Message,
 		PlainPrompt:     "> ",
+		ConsoleStepID:   rmSmartTargetsFormID,
 		TranscriptLabel: "Selected targets",
 		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
 			return rmTargetTranscript(prompt.Options, answer.Values)

@@ -121,9 +121,38 @@ func TestGitForkRichPTYFourWayOverwriteDeclineAndCancel(t *testing.T) {
 					})
 					marker := "GIT_FORK_OVERWRITE_" + strings.ToUpper(mode.name) + "_OK"
 					output := runGitForkPTYProcess(t, command, testCase.width, testCase.height, mode.input, marker)
-					assertGitForkOverwritePTYOutput(t, output, testCase.color, mode.name)
+					assertGitForkOverwritePTYOutput(t, output, testCase.color, testCase.width >= 70, mode.name)
 				})
 			}
+		})
+	}
+}
+
+func TestGitForkRichPTYFailureDoesNotEmitASuccessResult(t *testing.T) {
+	const helperEnvironment = "YCY_GIT_FORK_FAILURE_PTY_HELPER"
+	if os.Getenv(helperEnvironment) == "1" {
+		runGitForkFailurePTYHelper(t)
+		return
+	}
+
+	for _, testCase := range []struct {
+		name          string
+		width, height uint16
+		color         bool
+	}{
+		{name: "wide color", width: 120, height: 40, color: true},
+		{name: "compact no color", width: 40, height: 15, color: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			command := exec.Command(os.Args[0], "-test.run=^TestGitForkRichPTYFailureDoesNotEmitASuccessResult$")
+			command.Env = gitForkPTYEnvironment(map[string]string{
+				"NO_COLOR":                       map[bool]string{true: "", false: "1"}[testCase.color],
+				"TERM":                           "xterm-256color",
+				helperEnvironment:                "1",
+				"YCY_GIT_FORK_FAILURE_PTY_START": "1",
+			})
+			output := runGitForkPTYProcess(t, command, testCase.width, testCase.height, "", "GIT_FORK_FAILURE_OK")
+			assertGitForkFailurePTYOutput(t, output, testCase.color, testCase.width >= 70)
 		})
 	}
 }
@@ -184,7 +213,7 @@ func runGitForkOverwritePTYHelper(t *testing.T, mode string) {
 	_, _ = fmt.Fprintln(os.Stderr, "GIT_FORK_OVERWRITE_"+strings.ToUpper(mode)+"_OK")
 }
 
-func assertGitForkOverwritePTYOutput(t *testing.T, output string, color bool, mode string) {
+func assertGitForkOverwritePTYOutput(t *testing.T, output string, color, wide bool, mode string) {
 	t.Helper()
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
 	enter := strings.Index(visible, "\x1b[?1049h")
@@ -206,11 +235,23 @@ func assertGitForkOverwritePTYOutput(t *testing.T, output string, color bool, mo
 		t.Fatalf("git fork overwrite %s missing cancellation result: %q", mode, output)
 	}
 	transcript := visible[leave:]
+	if wide {
+		if !strings.Contains(live, "Project acquisition cancelled") || strings.Contains(live, "Project acquired") {
+			t.Fatalf("git fork overwrite %s wide live Outcome is not cancellation-only: %q", mode, output)
+		}
+	} else if !strings.Contains(live, "Replace destination") || !strings.Contains(live, "confirmation") {
+		t.Fatalf("git fork overwrite %s compact live state omitted confirmation phase: %q", mode, output)
+	}
+	if !strings.Contains(transcript, "OUTCOME  cancelled:") || !strings.Contains(transcript, "Project acquisition cancelled") || strings.Contains(transcript, "Project acquired") {
+		t.Fatalf("git fork overwrite %s Transcript Outcome is not cancellation-only: %q", mode, output)
+	}
 	needle := "Destination replacement declined"
 	if mode == "cancel" {
 		needle = "Destination replacement cancelled"
 	}
-	if !strings.Contains(transcript, needle) || !strings.Contains(transcript, "Destination unchanged") || !strings.Contains(transcript, "cancelled") {
+	resultIndex := strings.Index(transcript, "Cancelled")
+	outcomeIndex := strings.Index(transcript, "OUTCOME  cancelled:")
+	if !strings.Contains(transcript, needle) || !strings.Contains(transcript, "Destination unchanged") || !strings.Contains(transcript, "cancelled") || outcomeIndex < 0 || resultIndex < 0 || outcomeIndex > resultIndex {
 		t.Fatalf("git fork overwrite %s Transcript missing safe cancellation facts: %q", mode, output)
 	}
 	if !color {
@@ -290,6 +331,110 @@ func runGitForkFallbackPTYHelper(t *testing.T) {
 		t.Fatalf("fallback Git arguments = %q, %v", arguments, err)
 	}
 	_, _ = fmt.Fprintln(os.Stderr, "GIT_FORK_FALLBACK_OK")
+}
+
+func runGitForkFailurePTYHelper(t *testing.T) {
+	t.Helper()
+	if os.Getenv("YCY_GIT_FORK_FAILURE_PTY_START") == "1" {
+		var start [2]byte
+		if _, err := io.ReadFull(os.Stdin, start[:]); err != nil {
+			t.Fatalf("wait for PTY sizing: %v", err)
+		}
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/api/v3/repos/group/project/tarball/release" {
+			t.Errorf("unexpected failure request path: %s", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer fork-failure-secret" {
+			t.Errorf("archive Authorization = %q", request.Header.Get("Authorization"))
+		}
+		http.Error(response, "archive child detail should not be shown", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	destination := filepath.Join(root, "project")
+	gitPath := filepath.Join(root, "git")
+	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nprintf 'clone child secret\n' >&2\nexit 23\n"), 0o700); err != nil {
+		t.Fatalf("write Git failure fixture: %v", err)
+	}
+	host := strings.TrimPrefix(server.URL, "http://")
+	credentials := appconfig.ForkCredentials{Name: "fixture", Host: host, Scheme: "http", Type: "github", Token: "fork-failure-secret"}
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{
+			Interaction: terminalexperience.RichInteractive,
+			Stdin:       terminalexperience.StreamCapability{Terminal: true},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: os.Getenv("NO_COLOR") == ""},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: os.Getenv("NO_COLOR") == ""},
+		},
+		Input:       os.Stdin,
+		Output:      os.Stdout,
+		Diagnostics: os.Stderr,
+	})
+	result, err := executeFork(&Options{
+		Context:     context.Background(),
+		Repository:  "fixture:group/project#release",
+		Destination: destination,
+		Config: func() (ConfigReader, error) {
+			return richPTYForkConfig{credentials: credentials}, nil
+		},
+		WorkingDirectory: func() (string, error) { return root, nil },
+		HTTP:             server.Client(),
+		Terminal:         experience,
+		Git:              &gitprocess.Runner{Executable: gitPath},
+	})
+	if err == nil || result.Acquisition != "" || result.DiskFact != "Destination may contain a partial clone" {
+		t.Fatalf("executeFork() = (%#v, %v)", result, err)
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "GIT_FORK_FAILURE_OK")
+}
+
+func assertGitForkFailurePTYOutput(t *testing.T, output string, color, wide bool) {
+	t.Helper()
+	visible := strings.ReplaceAll(output, "\r\n", "\n")
+	enter := strings.Index(visible, "\x1b[?1049h")
+	leave := strings.LastIndex(visible, "\x1b[?1049l")
+	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
+		t.Fatalf("git fork failure did not restore primary screen: %q", output)
+	}
+	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
+	for _, expected := range []string{"YCY / git fork", "STATE", "PHASE", "DETAIL"} {
+		if !strings.Contains(live, expected) {
+			t.Fatalf("git fork failure live Console missing %q: %q", expected, output)
+		}
+	}
+	if wide {
+		for _, expected := range []string{"FAILED", "Project acquisition failed", "Unable to clone project", "Destination may contain a partial clone"} {
+			if !strings.Contains(live, expected) {
+				t.Fatalf("wide git fork failure live Outcome missing %q: %q", expected, output)
+			}
+		}
+	} else if !strings.Contains(live, "FAILED") || !strings.Contains(live, "Download archive") {
+		t.Fatalf("compact git fork failure live phase missing: %q", output)
+	}
+	transcript := visible[leave:]
+	if strings.Contains(live, "Project acquired") || strings.Contains(transcript, "Project acquired") || strings.Contains(transcript, "Done! Project created") {
+		t.Fatalf("git fork failure emitted success-looking output: %q", output)
+	}
+	if strings.Contains(output, "fork-failure-secret") || strings.Contains(output, "clone child secret") || strings.Contains(output, "archive child detail") || strings.Contains(output, "Authorization") {
+		t.Fatalf("git fork failure leaked unsafe detail: %q", output)
+	}
+	for _, expected := range []string{"Download archive (failed)", "Clone fallback (failed)", "partial clone", "failed:", "OUTCOME  failed:", "Project acquisition failed", "Unable to clone project", "GIT_FORK_FAILURE_OK"} {
+		if !strings.Contains(transcript, expected) {
+			t.Fatalf("git fork failure Transcript missing %q: %q", expected, output)
+		}
+	}
+	if strings.Index(transcript, "Download archive (failed)") > strings.Index(transcript, "Clone fallback (failed)") {
+		t.Fatalf("git fork failure phase ordering = %q", transcript)
+	}
+	if !color {
+		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
+			if strings.Contains(output, prefix) {
+				t.Fatalf("NO_COLOR git fork failure output contains %q: %q", prefix, output)
+			}
+		}
+	}
 }
 
 func assertGitForkFallbackPTYOutput(t *testing.T, output string, color, wide bool) {

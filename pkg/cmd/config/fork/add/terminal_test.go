@@ -49,6 +49,13 @@ func TestTerminalForkAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 		terminalexperience.InteractionSecret,
 	}
 	wantMessages := []string{"Instance name (alias)", "Host", "Provider type", "Protocol", "Access token"}
+	wantConsoleStepIDs := []string{
+		forkAddIdentityFormID,
+		forkAddHostFormID,
+		forkAddProviderFormID,
+		forkAddProtocolFormID,
+		forkAddCredentialFormID,
+	}
 	for index := range wantKinds {
 		if operations[index].Kind != terminaltest.AskOperation {
 			t.Fatalf("operation %d kind = %q, want ask", index, operations[index].Kind)
@@ -57,7 +64,7 @@ func TestTerminalForkAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 		if !ok {
 			t.Fatalf("operation %d request = %#v", index, operations[index].Value)
 		}
-		if request.Kind != wantKinds[index] || request.Message != wantMessages[index] {
+		if request.Kind != wantKinds[index] || request.Message != wantMessages[index] || request.ConsoleStepID != wantConsoleStepIDs[index] {
 			t.Fatalf("request %d = %#v", index, request)
 		}
 	}
@@ -89,6 +96,10 @@ func TestTerminalForkAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 	if err := operations[4].Value.(terminalexperience.InteractionRequest).Validate(terminalexperience.InteractionAnswer{}); err == nil || err.Error() != "Token is required" {
 		t.Fatalf("token validation = %v", err)
 	}
+	credential := operations[4].Value.(terminalexperience.InteractionRequest)
+	if !credential.Sensitive {
+		t.Fatalf("credential request = %#v, want Sensitive", credential)
+	}
 	if operations[5].Kind != terminaltest.CloseOperation {
 		t.Fatalf("last operation = %#v, want close", operations[5])
 	}
@@ -97,17 +108,20 @@ func TestTerminalForkAddAdapterTranslatesTheOrderedForm(t *testing.T) {
 func TestConfigForkAddConsoleDescriptorProvidesSafeBoundedContext(t *testing.T) {
 	want := terminalexperience.ConsoleDescriptor{
 		Command: "YCY / config fork add",
-		Target:  "provider connection setup",
+		Target:  "Add fork provider instance - Store a provider connection for git fork operations",
 		Status:  "READY",
-		Metadata: []terminalexperience.ConsoleMetadata{{
-			Label: "scope",
-			Value: "git fork configuration",
-		}},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: forkAddIdentityFormID, Name: "Identity", Detail: "alias"},
+			{ID: forkAddHostFormID, Name: "Host", Detail: "hostname"},
+			{ID: forkAddProviderFormID, Name: "Provider", Detail: "type"},
+			{ID: forkAddProtocolFormID, Name: "Protocol", Detail: "scheme"},
+			{ID: forkAddCredentialFormID, Name: "Credential", Detail: "token", Sensitive: true},
+		},
 	}
 	if got := terminalForkAddConsoleDescriptor(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
 	}
-	for _, field := range []string{want.Command, want.Target, want.Status, want.Metadata[0].Label, want.Metadata[0].Value} {
+	for _, field := range []string{want.Command, want.Target, want.Status} {
 		if strings.ContainsAny(field, "\r\n\t\x1b") {
 			t.Fatalf("descriptor field contains terminal control: %q", field)
 		}
@@ -238,7 +252,7 @@ func TestRunForkAddCancellationAfterFormDoesNotWrite(t *testing.T) {
 	defer cancel()
 	reader := &cancelAfterForkAddLines{reader: strings.NewReader("work\ngitlab.example\n1\n1\n"), cancel: cancel, cancelAt: 4}
 	var output, diagnostics bytes.Buffer
-	var writes int
+	var storeCalls, writes int
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
 		Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},
 		Input:        reader,
@@ -249,6 +263,7 @@ func TestRunForkAddCancellationAfterFormDoesNotWrite(t *testing.T) {
 		Context:  ctx,
 		Terminal: experience,
 		Store: func() (AddWriter, error) {
+			storeCalls++
 			return forkAddWriterFunc(func(string, appconfig.ForkInput) error {
 				writes++
 				return nil
@@ -261,6 +276,9 @@ func TestRunForkAddCancellationAfterFormDoesNotWrite(t *testing.T) {
 	if writes != 0 {
 		t.Fatalf("writes = %d, want 0", writes)
 	}
+	if storeCalls != 0 {
+		t.Fatalf("Store calls = %d, want 0 before the form completes", storeCalls)
+	}
 	if got, want := output.String(), "Cancelled\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
@@ -269,26 +287,46 @@ func TestRunForkAddCancellationAfterFormDoesNotWrite(t *testing.T) {
 	}
 }
 
-func TestForkAddPhaseSinkReplaysCollectAndSaveStates(t *testing.T) {
+func TestForkAddPhaseSinkUsesOneWorkCatalogForCollectAndSave(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	run := experience.Open(context.Background())
 	sink := newForkAddPhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
-	sink.beginCollect()
-	sink.endCollect(terminalexperience.PhaseCompleted, "safe summary")
-	sink.beginSave()
-	sink.endSave(terminalexperience.PhaseCompleted, "Provider instance saved")
+	if err := sink.beginCollect(); err != nil {
+		t.Fatalf("beginCollect() error = %v", err)
+	}
+	if err := sink.endCollect(terminalexperience.PhaseCompleted, "safe summary"); err != nil {
+		t.Fatalf("endCollect() error = %v", err)
+	}
+	if err := sink.beginSave(); err != nil {
+		t.Fatalf("beginSave() error = %v", err)
+	}
+	if err := sink.endSave(terminalexperience.PhaseCompleted, "Provider instance saved"); err != nil {
+		t.Fatalf("endSave() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
 
 	operations := experience.Run.Operations()
-	if len(operations) != 1 || operations[0].Kind != terminaltest.TrackOperation {
-		t.Fatalf("operations = %#v", operations)
-	}
-	tracked := operations[0].Value.(terminalexperience.TrackedOperation)
-	if got, want := tracked.Phases, []terminalexperience.PhaseDefinition{{ID: forkAddCollectPhaseID, Name: forkAddCollectPhaseName}, {ID: forkAddSavePhaseID, Name: forkAddSavePhaseName}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("phase catalog = %#v, want %#v", got, want)
-	}
+	var startWork, workClose int
 	var updates []terminalexperience.OperationPhase
-	for update := range tracked.Updates {
-		updates = append(updates, update)
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			startWork++
+			if got, want := operation.Value.(terminalexperience.WorkCatalog), terminalForkAddWorkCatalog(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Work catalog = %#v, want %#v", got, want)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
+		}
+	}
+	if startWork != 1 || workClose != 1 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
 	}
 	want := []terminalexperience.OperationPhase{
 		{ID: forkAddCollectPhaseID, State: terminalexperience.PhaseActive, Detail: "Answer the five provider fields"},
@@ -298,6 +336,32 @@ func TestForkAddPhaseSinkReplaysCollectAndSaveStates(t *testing.T) {
 	}
 	if !reflect.DeepEqual(updates, want) {
 		t.Fatalf("phase updates = %#v, want %#v", updates, want)
+	}
+}
+
+func TestForkAddFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	if got, want := terminalForkAddFinishRequest(terminalexperience.Succeeded, "ignored"), (terminalexperience.FinishRequest{
+		Outcome: terminalexperience.Succeeded,
+		Summary: terminalForkAddOutcomeDocument("Provider instance saved", terminalexperience.VisualRoleSuccess),
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("success Finish request = %#v, want %#v", got, want)
+	}
+	if got, want := terminalForkAddFinishRequest(terminalexperience.Cancelled, forkAddCollectPhaseName), (terminalexperience.FinishRequest{
+		Outcome:  terminalexperience.Cancelled,
+		Location: forkAddCollectPhaseName,
+		Summary:  terminalForkAddOutcomeDocument("Provider setup cancelled", terminalexperience.VisualRoleWarning),
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("cancelled Finish request = %#v, want %#v", got, want)
+	}
+	if got, want := terminalForkAddFinishRequest(terminalexperience.Failed, forkAddSavePhaseName), (terminalexperience.FinishRequest{
+		Outcome:  terminalexperience.Failed,
+		Location: forkAddSavePhaseName,
+		Summary:  terminalForkAddOutcomeDocument("Unable to save provider instance", terminalexperience.VisualRoleError),
+	}); !reflect.DeepEqual(got, want) {
+		t.Fatalf("save failure Finish request = %#v, want %#v", got, want)
+	}
+	if got := terminalForkAddFinishRequest(terminalexperience.Failed, "unsafe\nlocation"); got.Location != "" || terminalexperience.RenderPlain(got.Summary) != "Unable to collect provider details\n" {
+		t.Fatalf("invalid failure location request = %#v", got)
 	}
 }
 

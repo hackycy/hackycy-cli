@@ -118,7 +118,7 @@ func assertCMRemoveRichPTYOutput(t *testing.T, output string, color bool) {
 	for _, expected := range []string{
 		"YCY / config cm remove",
 		"Remove CM profile",
-		"Delete one stored commit message provider",
+		"Delete one stored commit",
 		"Validate CM profile",
 		"Remove CM profile \"work\"?",
 		"Removing the default selects the first remaining stored profile",

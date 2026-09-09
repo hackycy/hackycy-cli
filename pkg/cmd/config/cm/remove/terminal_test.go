@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/appconfig"
@@ -19,12 +21,17 @@ import (
 func TestConfigCMRemoveConsoleDescriptorProvidesSafeBoundedContext(t *testing.T) {
 	want := terminalexperience.ConsoleDescriptor{
 		Command: "YCY / config cm remove",
-		Target:  "commit message profile removal",
+		Target:  "Remove CM profile - Delete one stored commit message provider",
 		Status:  "READY",
 		Metadata: []terminalexperience.ConsoleMetadata{
 			{Label: "scope", Value: "commit message configuration"},
 			{Label: "profile", Value: "work"},
 		},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     cmRemoveConfirmationFormID,
+			Name:   "Confirmation",
+			Detail: "default No",
+		}},
 	}
 	if got := terminalCMRemoveConsoleDescriptor("work"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("Console descriptor = %#v, want %#v", got, want)
@@ -63,8 +70,11 @@ func TestTerminalCMRemoveAdapterTranslatesConfirmation(t *testing.T) {
 		t.Fatalf("operations = %#v", operations)
 	}
 	request := operations[0].Value.(terminalexperience.InteractionRequest)
-	if request.Kind != terminalexperience.InteractionConfirm || request.Message != `Remove CM profile "work"?` || !request.HasDefault || request.Default.Confirmed {
+	if request.Kind != terminalexperience.InteractionConfirm || request.Message != `Remove CM profile "work"?` || request.ConsoleStepID != cmRemoveConfirmationFormID || !request.HasDefault || request.Default.Confirmed || request.TranscriptProject == nil {
 		t.Fatalf("confirmation request = %#v", request)
+	}
+	if got := request.TranscriptProject(terminalexperience.InteractionAnswer{Confirmed: true}); got != "" {
+		t.Fatalf("confirmation transcript projection = %q, want empty", got)
 	}
 }
 
@@ -265,37 +275,182 @@ func TestConfigCMRemoveContextCancellationDuringValidationPreservesError(t *test
 	}
 }
 
-func TestCMRemovePhaseSinkTracksValidationAndRemovalSeparately(t *testing.T) {
+func TestConfigCMRemoveContextCancellationDuringConfirmationUsesCancelledFinish(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var output, diagnostics bytes.Buffer
+	var writes int
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},
+		Input:        &cancelCMRemoveInput{cancel: cancel},
+		Output:       &output,
+		Diagnostics:  &diagnostics,
+	})
+	result, err := executeRemove(&Options{
+		Context:  ctx,
+		Profile:  "work",
+		Terminal: experience,
+		Store: func() (Reader, RemoveWriter, error) {
+			return cmRemoveReaderFunc(func() (appconfig.CMProfileList, error) {
+					return appconfig.CMProfileList{DefaultProfile: "work", Profiles: []appconfig.CMProfile{{Name: "work"}}}, nil
+				}), cmRemoveWriterFunc(func(string) (bool, error) {
+					writes++
+					return true, nil
+				}), nil
+		},
+	})
+	if result != (RemoveResult{}) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("executeRemove() = (%#v, %v), want context cancellation without result", result, err)
+	}
+	if writes != 0 || output.Len() != 0 {
+		t.Fatalf("confirmation cancellation crossed mutation/result boundary: writes=%d stdout=%q", writes, output.String())
+	}
+}
+
+func TestCMRemovePhaseSinkUsesOneWorkCatalogForValidationAndRemoval(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience()
 	run := experience.Open(context.Background())
 	sink := newCMRemovePhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
-	sink.beginValidation()
-	sink.endValidation(terminalexperience.PhaseCompleted, "safe validation")
-	sink.beginRemoval()
-	sink.endRemoval(terminalexperience.PhaseCompleted, "Profile removed")
+	if err := sink.beginValidation(); err != nil {
+		t.Fatalf("beginValidation() error = %v", err)
+	}
+	if err := sink.endValidation(terminalexperience.PhaseCompleted, "safe validation"); err != nil {
+		t.Fatalf("endValidation() error = %v", err)
+	}
+	if err := sink.beginRemoval(); err != nil {
+		t.Fatalf("beginRemoval() error = %v", err)
+	}
+	if err := sink.endRemoval(terminalexperience.PhaseCompleted, "Profile removed"); err != nil {
+		t.Fatalf("endRemoval() error = %v", err)
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
 
 	operations := experience.Run.Operations()
-	if len(operations) != 2 || operations[0].Kind != terminaltest.TrackOperation || operations[1].Kind != terminaltest.TrackOperation {
+	var startWork, workClose int
+	var updates []terminalexperience.OperationPhase
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			startWork++
+			if got, want := operation.Value.(terminalexperience.WorkCatalog), terminalCMRemoveWorkCatalog(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("Work catalog = %#v, want %#v", got, want)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates = append(updates, operation.Value.(terminalexperience.OperationPhase))
+		case terminaltest.WorkCloseOperation:
+			workClose++
+		case terminaltest.TrackOperation:
+			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
+		}
+	}
+	if startWork != 1 || workClose != 1 {
+		t.Fatalf("operations = %#v, startWork=%d workClose=%d", operations, startWork, workClose)
+	}
+	want := []terminalexperience.OperationPhase{
+		{ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseActive, Detail: "Checking profile"},
+		{ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseCompleted, Detail: "safe validation"},
+		{ID: cmRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored profile"},
+		{ID: cmRemovePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Profile removed"},
+	}
+	if !reflect.DeepEqual(updates, want) {
+		t.Fatalf("work updates = %#v, want %#v", updates, want)
+	}
+}
+
+func TestCMRemoveFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
+	tests := []struct {
+		name     string
+		outcome  terminalexperience.FinishOutcome
+		location string
+		want     terminalexperience.FinishRequest
+	}{
+		{
+			name:     "success",
+			outcome:  terminalexperience.Succeeded,
+			location: "ignored",
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Succeeded,
+				Summary: terminalCMRemoveOutcomeDocument("Profile removed", terminalexperience.VisualRoleSuccess),
+			},
+		},
+		{
+			name:     "confirmation cancellation",
+			outcome:  terminalexperience.Cancelled,
+			location: cmRemoveValidationPhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Cancelled,
+				Location: cmRemoveValidationPhaseName,
+				Summary:  terminalCMRemoveOutcomeDocument("CM profile removal cancelled", terminalexperience.VisualRoleWarning),
+			},
+		},
+		{
+			name:     "validation failure",
+			outcome:  terminalexperience.Failed,
+			location: cmRemoveValidationPhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: cmRemoveValidationPhaseName,
+				Summary:  terminalCMRemoveOutcomeDocument("Unable to validate CM profile", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name:     "removal failure",
+			outcome:  terminalexperience.Failed,
+			location: cmRemovePhaseName,
+			want: terminalexperience.FinishRequest{
+				Outcome:  terminalexperience.Failed,
+				Location: cmRemovePhaseName,
+				Summary:  terminalCMRemoveOutcomeDocument("Unable to remove CM profile", terminalexperience.VisualRoleError),
+			},
+		},
+		{
+			name:     "invalid failure location",
+			outcome:  terminalexperience.Failed,
+			location: "unsafe\nlocation",
+			want: terminalexperience.FinishRequest{
+				Outcome: terminalexperience.Failed,
+				Summary: terminalCMRemoveOutcomeDocument("CM profile removal failed", terminalexperience.VisualRoleError),
+			},
+		},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := terminalCMRemoveFinishRequest(testCase.outcome, testCase.location)
+			if !reflect.DeepEqual(got, testCase.want) {
+				t.Fatalf("Finish request = %#v, want %#v", got, testCase.want)
+			}
+			if terminaltest.ContainsTerminalControl([]byte(terminalexperience.RenderPlain(got.Summary))) {
+				t.Fatalf("summary contains terminal controls: %#v", got)
+			}
+		})
+	}
+}
+
+func TestFinishCMRemoveSubmitsFinishRequestAndSeparateResult(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	sink := newCMRemovePhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive})
+	document := terminalCMRemoveDocument("Profile work removed", false)
+	if err := finishCMRemove(run, sink, terminalexperience.Succeeded, "", &document, nil); err != nil {
+		t.Fatalf("finishCMRemove() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	if len(operations) != 1 || operations[0].Kind != terminaltest.FinishOperation {
 		t.Fatalf("operations = %#v", operations)
 	}
-	first := operations[0].Value.(terminalexperience.TrackedOperation)
-	second := operations[1].Value.(terminalexperience.TrackedOperation)
-	wantCatalog := []terminalexperience.PhaseDefinition{{ID: cmRemoveValidationPhaseID, Name: cmRemoveValidationPhaseName}, {ID: cmRemovePhaseID, Name: cmRemovePhaseName}}
-	if !reflect.DeepEqual(first.Phases, wantCatalog) || !reflect.DeepEqual(second.Phases, wantCatalog) {
-		t.Fatalf("phase catalogs = %#v / %#v", first.Phases, second.Phases)
+	finish := operations[0].Value.(terminaltest.Finish)
+	wantRequest := terminalCMRemoveFinishRequest(terminalexperience.Succeeded, "")
+	if !reflect.DeepEqual(finish.Request, wantRequest) {
+		t.Fatalf("Finish request = %#v, want %#v", finish.Request, wantRequest)
 	}
-	var firstUpdates, secondUpdates []terminalexperience.OperationPhase
-	for update := range first.Updates {
-		firstUpdates = append(firstUpdates, update)
+	if !reflect.DeepEqual(finish.Value.(terminalexperience.FinishRequest), wantRequest) {
+		t.Fatalf("Finish value = %#v, want FinishRequest", finish.Value)
 	}
-	for update := range second.Updates {
-		secondUpdates = append(secondUpdates, update)
-	}
-	if !reflect.DeepEqual(firstUpdates, []terminalexperience.OperationPhase{{ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseActive, Detail: "Checking profile"}, {ID: cmRemoveValidationPhaseID, State: terminalexperience.PhaseCompleted, Detail: "safe validation"}}) {
-		t.Fatalf("validation updates = %#v", firstUpdates)
-	}
-	if !reflect.DeepEqual(secondUpdates, []terminalexperience.OperationPhase{{ID: cmRemovePhaseID, State: terminalexperience.PhaseActive, Detail: "Deleting stored profile"}, {ID: cmRemovePhaseID, State: terminalexperience.PhaseCompleted, Detail: "Profile removed"}}) {
-		t.Fatalf("removal updates = %#v", secondUpdates)
+	if len(finish.Documents) != 1 || finish.Documents[0] == nil || !reflect.DeepEqual(*finish.Documents[0], document) {
+		t.Fatalf("durable Result = %#v, want %#v", finish.Documents, document)
 	}
 }
 
@@ -336,6 +491,16 @@ type panicCMRemoveReader struct{}
 
 func (panicCMRemoveReader) Read([]byte) (int, error) {
 	panic("config cm remove attempted to read Automation input")
+}
+
+type cancelCMRemoveInput struct {
+	cancel context.CancelFunc
+	once   sync.Once
+}
+
+func (input *cancelCMRemoveInput) Read([]byte) (int, error) {
+	input.once.Do(input.cancel)
+	return 0, io.EOF
 }
 
 type standaloneCMConfigDocument struct {
