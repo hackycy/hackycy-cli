@@ -20,6 +20,7 @@ func TestRuntimeRecoversStoppedRichRendererAndBlocksReplay(t *testing.T) {
 		Output:       &output,
 	})
 	run := runtime.Open(context.Background()).(*runtimeRun)
+	run.console.FormCatalog = []ConsoleFormStep{{ID: "retry", Name: "Retry"}}
 	run.ledger.Append(TranscriptEvent{Kind: TranscriptMilestone, Text: "safe checkpoint"})
 
 	controller := &richController{
@@ -48,7 +49,7 @@ func TestRuntimeRecoversStoppedRichRendererAndBlocksReplay(t *testing.T) {
 		t.Fatalf("diagnostics after lease release = %q, want %q", got, want)
 	}
 
-	if _, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Retry?"}); !errors.Is(err, rendererErr) {
+	if _, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Retry?", ConsoleStepID: "retry"}); !errors.Is(err, rendererErr) {
 		t.Fatalf("Ask() after renderer failure = %v, want original failure", err)
 	}
 	if err := run.Finish(Succeeded, &PresentationDocument{Blocks: []PresentationBlock{{Text: "result"}}}); !errors.Is(err, rendererErr) {

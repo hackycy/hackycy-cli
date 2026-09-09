@@ -3,8 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
+	"io"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -14,6 +15,9 @@ import (
 	"time"
 
 	"github.com/hackycy/hackycy-cli/internal/logging"
+	"github.com/hackycy/hackycy-cli/internal/terminal"
+	"github.com/hackycy/hackycy-cli/internal/terminaltest"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 func TestResolveServerConfigPrefersExplicitOptionsOverEnvironment(t *testing.T) {
@@ -277,6 +281,147 @@ func TestRunServerOwnsTheForegroundUntilContextCancellation(t *testing.T) {
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatalf("reopened Runtime.Close() error = %v", err)
+	}
+}
+
+func TestRunServerRichServiceBoundaryKeepsLifecycleLogOutsideConsole(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve control port: %v", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release control port: %v", err)
+	}
+	dataDirectory := filepath.Join(t.TempDir(), "server-state")
+	config := ServerConfig{
+		Settings: ServerHTTPServerSettings{
+			Address: "127.0.0.1", ControlPort: port, FRPPort: 17000, HTTPPort: 18080,
+			PortRange: ServerHTTPPortRange{Start: 20000, End: 20100}, DataDir: dataDirectory, AdminUser: "admin",
+		},
+		AdminPassword:       "server-admin-password",
+		SessionIdleLifetime: time.Hour,
+		FRPToken:            "server-frp-token",
+	}
+	artifact, err := tunnelruntime.CurrentFRPArtifact()
+	if err != nil {
+		t.Fatalf("CurrentFRPArtifact() error = %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	experience := terminal.NewExperience(terminal.ExperienceOptions{
+		Capabilities: terminal.Capabilities{
+			Interaction: terminal.RichInteractive,
+			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+		},
+		Output:      &stdout,
+		Diagnostics: &stderr,
+	})
+	logRuntime := logging.NewRuntime(logging.Options{
+		Writer: experience.DiagnosticWriter(),
+		Format: logging.JSONFormat,
+		Color:  true,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished := make(chan error, 1)
+	go func() {
+		finished <- RunServer(ctx, config, ServerRunOptions{
+			Logger: logRuntime.Logger("tunnel.server"),
+			newRuntime: func(ctx context.Context, options ServerRuntimeOptions) (*ServerRuntime, error) {
+				options.frpArtifact = &artifact
+				options.frpRuntimeDirectory = filepath.Join(t.TempDir(), "frp", tunnelruntime.FRPVersion)
+				options.ensureFRPRuntime = func(context.Context, string, tunnelruntime.FRPArtifact) (tunnelruntime.FRPRuntimePaths, error) {
+					return tunnelruntime.FRPRuntimePaths{}, errors.New("test runtime acquisition failure")
+				}
+				return NewServerRuntime(ctx, options)
+			},
+		})
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	endpoint := "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) + "/healthz"
+	for {
+		response, requestErr := http.Get(endpoint)
+		if requestErr == nil {
+			if response.StatusCode != http.StatusOK {
+				_ = response.Body.Close()
+				t.Fatalf("GET /healthz status = %d, want %d", response.StatusCode, http.StatusOK)
+			}
+			if err := response.Body.Close(); err != nil {
+				t.Fatalf("close health response: %v", err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Tunnel server did not start at %s: %v", endpoint, requestErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatalf("RunServer() error after cancellation = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunServer() did not return after cancellation")
+	}
+
+	if stdout.Len() != 0 {
+		t.Fatalf("Tunnel server wrote stdout: %q", stdout.String())
+	}
+	if terminaltest.ContainsTerminalControl(stdout.Bytes()) || terminaltest.ContainsTerminalControl(stderr.Bytes()) {
+		t.Fatalf("Tunnel server service boundary emitted terminal control: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	for _, secret := range []string{config.AdminPassword, config.FRPToken, config.Settings.DataDir} {
+		if strings.Contains(stderr.String(), secret) {
+			t.Fatalf("Tunnel server Lifecycle Log leaked %q: %q", secret, stderr.String())
+		}
+	}
+
+	var records []struct {
+		Scope   string         `json:"scope"`
+		Context map[string]any `json:"context"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(stderr.String()))
+	for {
+		var record struct {
+			Scope   string         `json:"scope"`
+			Context map[string]any `json:"context"`
+		}
+		err := decoder.Decode(&record)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("decode tunnel server Lifecycle Log: %v\n%s", err, stderr.String())
+		}
+		records = append(records, record)
+	}
+	if len(records) < 6 {
+		t.Fatalf("Tunnel server Lifecycle Log records = %#v", records)
+	}
+	for index, event := range []string{"server.starting", "state.opened", "control.listening", "server.started"} {
+		if records[index].Scope != "tunnel.server" || records[index].Context["event"] != event {
+			t.Fatalf("Lifecycle record %d = %#v, want event %q", index, records[index], event)
+		}
+	}
+	last := records[len(records)-1]
+	if last.Context["event"] != "server.stopped" || last.Context["outcome"] != "cancelled" {
+		t.Fatalf("last Lifecycle Log record = %#v, want cancelled server.stopped", last)
+	}
+	shutdown := false
+	for _, record := range records {
+		if record.Context["event"] == "shutdown.requested" {
+			shutdown = true
+		}
+		if record.Context["event"] == "server.failed" {
+			t.Fatalf("cancellation emitted server.failed: %#v", records)
+		}
+	}
+	if !shutdown {
+		t.Fatalf("Lifecycle Log omitted shutdown.requested: %#v", records)
 	}
 }
 

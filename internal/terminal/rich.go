@@ -377,11 +377,6 @@ type richRootModel struct {
 	color   bool
 	console ConsoleDescriptor
 	mode    richMode
-	// legacyIntro is a bounded compatibility projection for commands that have
-	// not supplied a ConsoleDescriptor yet. It keeps their established safe
-	// command heading observable in the B shell without making Notice history
-	// durable or introducing a second renderer path.
-	legacyIntro *legacyConsoleIntro
 
 	notices          []PresentationDocument
 	formID           uint64
@@ -470,7 +465,6 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
-		model.captureLegacyIntro(value.document)
 		if model.track == nil || !model.trackRetainsForm {
 			model.preserveTrack()
 			model.mode = richNoticeMode
@@ -485,7 +479,6 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
-		model.captureLegacyIntro(value.document)
 		if model.track == nil || !model.trackRetainsForm {
 			model.preserveTrack()
 			model.mode = richNoticeMode
@@ -521,16 +514,6 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				phase:  model.formRows[row].name,
 				detail: step.detail,
 			}
-		} else {
-			// Legacy adapters without a catalog retain their established
-			// append-on-Ask behavior until their command slice supplies IDs.
-			step.row = len(model.statusRows)
-			model.statusRows = append(model.statusRows, consoleStatusRow{
-				state:  step.state,
-				phase:  step.name,
-				detail: step.detail,
-			})
-			model.formRows = append(model.formRows, step)
 		}
 		model.configureForm()
 		close(value.ack)
@@ -820,49 +803,14 @@ func (model *richRootModel) consoleMetadataView(styles map[VisualRole]lipgloss.S
 		}
 		fields = append(fields, styles[VisualRoleMuted].Render(label+" ")+styles[VisualRolePlain].Render(value))
 	}
-	legacy := model.legacyIntro
-	if legacy != nil && model.usingDefaultConsoleDescriptor() {
-		intro := legacy.title
-		if legacy.description != "" {
-			if intro != "" {
-				intro += " "
-			}
-			intro += legacy.description
-		}
-		if intro != "" {
-			// The legacy introduction is the only safe context available until
-			// a command supplies a descriptor. Use compact separators so its
-			// established description survives the one-line width bound.
-			fields = append(fields, styles[VisualRoleMuted].Render(intro))
-		}
-	}
 	if len(fields) == 0 {
 		return ""
 	}
 	separator := styles[VisualRoleMuted].Render("    ")
-	if legacy != nil && model.usingDefaultConsoleDescriptor() {
-		separator = styles[VisualRoleMuted].Render(" ")
-	}
 	return consoleTruncate(strings.Join(fields, separator), width)
 }
 
-func (model *richRootModel) usingDefaultConsoleDescriptor() bool {
-	defaultDescriptor := defaultConsoleDescriptor()
-	if model.console.Command != defaultDescriptor.Command || model.console.Target != defaultDescriptor.Target || model.console.Status != defaultDescriptor.Status || len(model.console.Metadata) != len(defaultDescriptor.Metadata) {
-		return false
-	}
-	for index, field := range model.console.Metadata {
-		if field != defaultDescriptor.Metadata[index] {
-			return false
-		}
-	}
-	return true
-}
-
 func (model *richRootModel) consoleCommand() string {
-	if model.legacyIntro != nil && model.usingDefaultConsoleDescriptor() && model.legacyIntro.command != "" {
-		return model.legacyIntro.command
-	}
 	return model.console.Command
 }
 
@@ -885,45 +833,6 @@ type consoleStatusRow struct {
 	detail string
 }
 
-type legacyConsoleIntro struct {
-	command     string
-	title       string
-	description string
-}
-
-// captureLegacyIntro recognizes only the established static introduction
-// shape used by pre-descriptor command adapters. Values are normalized and
-// bounded before they can enter the persistent B shell; arbitrary Notice
-// documents remain transient latest-context content.
-func (model *richRootModel) captureLegacyIntro(document PresentationDocument) {
-	if model.legacyIntro != nil || !model.usingDefaultConsoleDescriptor() || len(document.Blocks) < 3 {
-		return
-	}
-	for _, block := range document.Blocks[:3] {
-		if block.Sensitive {
-			return
-		}
-	}
-	command := legacyIntroField(document.Blocks[0].Text)
-	if !strings.HasPrefix(command, "YCY / ") {
-		return
-	}
-	title := legacyIntroField(document.Blocks[1].Text)
-	description := legacyIntroField(document.Blocks[2].Text)
-	if title == "" || description == "" {
-		return
-	}
-	model.legacyIntro = &legacyConsoleIntro{command: command, title: title, description: description}
-}
-
-func legacyIntroField(value string) string {
-	value = strings.Join(strings.Fields(stripTerminalControl(strings.ToValidUTF8(value, "�"))), " ")
-	if value == "" || len(value) > maxConsoleField {
-		return ""
-	}
-	return value
-}
-
 type consoleFormStep struct {
 	id        uint64
 	catalogID string
@@ -934,13 +843,6 @@ type consoleFormStep struct {
 }
 
 func newConsoleFormStep(id uint64, request InteractionRequest) consoleFormStep {
-	name := strings.TrimSpace(stripTerminalControl(request.TranscriptLabel))
-	if name == "" {
-		name = strings.TrimSpace(stripTerminalControl(request.Message))
-	}
-	if name == "" {
-		name = "Interaction"
-	}
 	detail := "text input"
 	switch request.Kind {
 	case InteractionSecret:
@@ -955,7 +857,7 @@ func newConsoleFormStep(id uint64, request InteractionRequest) consoleFormStep {
 	if request.Sensitive {
 		detail = "redacted input"
 	}
-	return consoleFormStep{id: id, catalogID: strings.TrimSpace(stripTerminalControl(request.ConsoleStepID)), name: name, detail: detail, state: PhaseActive}
+	return consoleFormStep{id: id, catalogID: strings.TrimSpace(stripTerminalControl(request.ConsoleStepID)), detail: detail, state: PhaseActive}
 }
 
 func (model *richRootModel) formCatalogRow(catalogID string) int {

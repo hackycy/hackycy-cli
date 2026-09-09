@@ -19,16 +19,12 @@ type upgradePhaseSink struct {
 	cancel       context.CancelFunc
 
 	mu              sync.Mutex
-	current         *upgradePhaseTrack
-	pendingConsume  *updater.UpgradePhaseEvent
+	work            terminalexperience.WorkSession
+	workStarted     bool
+	workClosed      bool
+	workErr         error
 	previousResult  *terminalexperience.PresentationDocument
 	presentationErr error
-}
-
-type upgradePhaseTrack struct {
-	phase   updater.UpgradePhase
-	updates chan terminalexperience.OperationPhase
-	done    chan error
 }
 
 func newUpgradePhaseSink(run terminalexperience.ExperienceRun, capabilities terminalexperience.Capabilities, cancel context.CancelFunc) *upgradePhaseSink {
@@ -44,90 +40,68 @@ func (sink *upgradePhaseSink) observer() updater.UpgradeObserver {
 
 func (sink *upgradePhaseSink) phase(event updater.UpgradePhaseEvent) {
 	sink.mu.Lock()
-	defer sink.mu.Unlock()
 	if sink.presentationErr != nil {
+		sink.mu.Unlock()
 		return
 	}
-	if event.State == updater.UpgradePhaseActive {
-		if event.Phase == updater.UpgradePhaseConsumeStartupTransaction {
-			copy := event
-			sink.pendingConsume = &copy
-			return
-		}
-		sink.start(event)
+	work, err := sink.ensureWorkLocked()
+	sink.mu.Unlock()
+	if err != nil {
+		sink.record(err)
 		return
 	}
-	if sink.pendingConsume != nil && sink.pendingConsume.Phase == event.Phase {
-		pending := *sink.pendingConsume
-		sink.pendingConsume = nil
-		sink.start(pending)
-	}
-	if sink.current == nil || sink.current.phase != event.Phase {
-		sink.recordLocked(errors.New("upgrade phase stream is out of order"))
-		return
-	}
-	sink.current.updates <- terminalexperience.OperationPhase{
+	err = work.Update(terminalexperience.OperationPhase{
 		ID:     string(event.Phase),
 		Detail: terminalUpgradePhaseDetail(event),
 		State:  terminalUpgradePhaseState(event.State),
-	}
-	close(sink.current.updates)
-	sink.recordLocked(<-sink.current.done)
-	sink.current = nil
+	})
+	sink.record(err)
 }
 
-func (sink *upgradePhaseSink) start(event updater.UpgradePhaseEvent) {
-	if sink.current != nil {
-		sink.recordLocked(errors.New("upgrade phase stream overlaps active work"))
-		return
+func (sink *upgradePhaseSink) ensureWorkLocked() (terminalexperience.WorkSession, error) {
+	if sink.workStarted {
+		return sink.work, sink.workErr
 	}
-	name, ok := terminalUpgradePhaseName(event.Phase)
-	if !ok {
-		sink.recordLocked(errors.New("upgrade phase is not known to the terminal adapter"))
-		return
-	}
-	track := &upgradePhaseTrack{
-		phase:   event.Phase,
-		updates: make(chan terminalexperience.OperationPhase, 2),
-		done:    make(chan error, 1),
-	}
-	sink.current = track
-	go func() {
-		track.done <- sink.run.Track(terminalexperience.TrackedOperation{
-			ID:            "upgrade-" + string(event.Phase),
-			OperationID:   "upgrade-" + string(event.Phase),
-			Label:         "Upgrade ycy",
-			Phases:        []terminalexperience.PhaseDefinition{{ID: string(event.Phase), Name: name}},
-			Updates:       track.updates,
-			RequestCancel: sink.cancel,
-		})
-	}()
-	track.updates <- terminalexperience.OperationPhase{ID: string(event.Phase), State: terminalexperience.PhaseActive}
+	sink.workStarted = true
+	work, err := terminalexperience.StartWork(sink.run, terminalUpgradeWorkCatalog(sink.cancel))
+	sink.work = work
+	sink.workErr = err
+	return work, err
 }
 
 func (sink *upgradePhaseSink) previousState(state updater.UpdateTransaction) {
 	sink.mu.Lock()
-	defer sink.mu.Unlock()
 	if sink.presentationErr != nil {
+		sink.mu.Unlock()
 		return
 	}
 	document := terminalUpgradeDocument(StateMessage(state), terminalUpgradeStateRole(state))
 	sink.previousResult = &document
-	if sink.capabilities.Interaction == terminalexperience.RichInteractive && sink.current == nil {
-		sink.recordLocked(sink.run.Milestone(document))
+	rich := sink.capabilities.Interaction == terminalexperience.RichInteractive
+	sink.mu.Unlock()
+	if rich {
+		sink.record(sink.run.Milestone(document))
 	}
 }
 
-func (sink *upgradePhaseSink) close() {
+func (sink *upgradePhaseSink) close() error {
 	sink.mu.Lock()
-	defer sink.mu.Unlock()
-	if sink.current == nil {
-		sink.pendingConsume = nil
-		return
+	if sink.workClosed {
+		err := sink.workErr
+		sink.mu.Unlock()
+		return err
 	}
-	close(sink.current.updates)
-	sink.recordLocked(<-sink.current.done)
-	sink.current = nil
+	sink.workClosed = true
+	work := sink.work
+	err := sink.workErr
+	sink.mu.Unlock()
+	if work != nil {
+		err = errors.Join(err, work.Close())
+	}
+	sink.mu.Lock()
+	sink.workErr = err
+	sink.mu.Unlock()
+	return err
 }
 
 func (sink *upgradePhaseSink) previousDocument() *terminalexperience.PresentationDocument {
@@ -147,13 +121,38 @@ func (sink *upgradePhaseSink) err() error {
 	return sink.presentationErr
 }
 
-func (sink *upgradePhaseSink) recordLocked(err error) {
+func (sink *upgradePhaseSink) record(err error) {
 	if err == nil {
 		return
 	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
 	sink.presentationErr = errors.Join(sink.presentationErr, err)
 	if sink.cancel != nil {
 		sink.cancel()
+	}
+}
+
+const upgradeWorkCatalogID = "upgrade-release"
+
+var terminalUpgradePhaseDefinitions = []terminalexperience.PhaseDefinition{
+	{ID: string(updater.UpgradePhaseConsumeStartupTransaction), Name: "Consume startup transaction"},
+	{ID: string(updater.UpgradePhaseResolveRelease), Name: "Resolve release"},
+	{ID: string(updater.UpgradePhaseResolveArtifact), Name: "Resolve artifact"},
+	{ID: string(updater.UpgradePhaseDownloadCandidate), Name: "Download candidate"},
+	{ID: string(updater.UpgradePhaseVerifyCandidate), Name: "Verify candidate"},
+	{ID: string(updater.UpgradePhaseStageUpdater), Name: "Stage updater"},
+	{ID: string(updater.UpgradePhasePublishPending), Name: "Publish pending update"},
+	{ID: string(updater.UpgradePhaseScheduleUpdater), Name: "Schedule updater"},
+	{ID: string(updater.UpgradePhaseComplete), Name: "Complete"},
+}
+
+func terminalUpgradeWorkCatalog(cancel context.CancelFunc) terminalexperience.WorkCatalog {
+	return terminalexperience.WorkCatalog{
+		ID:            upgradeWorkCatalogID,
+		Label:         "Upgrade ycy",
+		Phases:        append([]terminalexperience.PhaseDefinition(nil), terminalUpgradePhaseDefinitions...),
+		RequestCancel: cancel,
 	}
 }
 
@@ -162,29 +161,42 @@ func finishUpgradeRun(run terminalexperience.ExperienceRun, diagnostics io.Write
 		// Cancellation is a process lifecycle outcome, even when the lower-level
 		// updater preserves its historical ExitCodeError wrapper.
 		if errors.Is(resultErr, context.Canceled) || errors.Is(resultErr, context.DeadlineExceeded) {
-			return errors.Join(resultErr, run.Finish(terminalexperience.Cancelled, previous))
+			return errors.Join(resultErr, run.Finish(terminalUpgradeFinishRequest(terminalexperience.Cancelled, "Upgrade cancelled.", terminalexperience.VisualRoleWarning), previous))
 		}
 		var exit *updater.ExitCodeError
 		if result.Aborted && errors.As(resultErr, &exit) {
 			_, _ = fmt.Fprintln(diagnostics, "error: "+terminalUpgradeDiagnostic(resultErr))
 			document := terminalUpgradeDocument("Update aborted.", terminalexperience.VisualRoleWarning)
-			return errors.Join(resultErr, run.Finish(terminalexperience.Failed, terminalUpgradeCombinedDocument(previous, &document)))
+			return errors.Join(resultErr, run.Finish(terminalUpgradeFinishRequest(terminalexperience.Failed, "Update aborted.", terminalexperience.VisualRoleWarning), terminalUpgradeCombinedDocument(previous, &document)))
 		}
 		outcome := terminalexperience.Failed
 		if errors.Is(resultErr, context.Canceled) || errors.Is(resultErr, context.DeadlineExceeded) {
 			outcome = terminalexperience.Cancelled
 		}
-		return errors.Join(resultErr, run.Finish(outcome, previous))
+		summary := "Unable to complete upgrade."
+		role := terminalexperience.VisualRoleError
+		if outcome == terminalexperience.Cancelled {
+			summary = "Upgrade cancelled."
+			role = terminalexperience.VisualRoleWarning
+		}
+		return errors.Join(resultErr, run.Finish(terminalUpgradeFinishRequest(outcome, summary, role), previous))
 	}
 	if result.AlreadyCurrent {
 		document := terminalUpgradeDocument(fmt.Sprintf("Current version v%s is the latest.\nNo update needed.", result.CurrentVersion), terminalexperience.VisualRoleSuccess)
-		return run.Finish(terminalexperience.Succeeded, terminalUpgradeCombinedDocument(previous, &document))
+		return run.Finish(terminalUpgradeFinishRequest(terminalexperience.Succeeded, fmt.Sprintf("Current version v%s is the latest. No update needed.", terminalUpgradeSafeDetail(result.CurrentVersion)), terminalexperience.VisualRoleSuccess), terminalUpgradeCombinedDocument(previous, &document))
 	}
 	if result.Scheduled {
 		document := terminalUpgradeDocument(fmt.Sprintf("Update to v%s has been scheduled and will finish after ycy exits.", result.ScheduledVersion), terminalexperience.VisualRoleSuccess)
-		return run.Finish(terminalexperience.Succeeded, terminalUpgradeCombinedDocument(previous, &document))
+		return run.Finish(terminalUpgradeFinishRequest(terminalexperience.Succeeded, fmt.Sprintf("Update to v%s has been scheduled and will finish after ycy exits.", terminalUpgradeSafeDetail(result.ScheduledVersion)), terminalexperience.VisualRoleSuccess), terminalUpgradeCombinedDocument(previous, &document))
 	}
-	return run.Finish(terminalexperience.Succeeded, previous)
+	return run.Finish(terminalUpgradeFinishRequest(terminalexperience.Succeeded, "Upgrade complete.", terminalexperience.VisualRoleSuccess), previous)
+}
+
+func terminalUpgradeFinishRequest(outcome terminalexperience.FinishOutcome, summary string, role terminalexperience.VisualRole) terminalexperience.FinishRequest {
+	return terminalexperience.FinishRequest{
+		Outcome: outcome,
+		Summary: terminalUpgradeDocument(summary, role),
+	}
 }
 
 func terminalUpgradeCombinedDocument(first, second *terminalexperience.PresentationDocument) *terminalexperience.PresentationDocument {

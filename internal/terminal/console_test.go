@@ -53,7 +53,7 @@ func TestOpenConsoleRichPreflightFailureFallsBackToPlain(t *testing.T) {
 	if concrete.controller != nil || !concrete.richDisabled {
 		t.Fatalf("preflight fallback state = controller:%v disabled:%v", concrete.controller, concrete.richDisabled)
 	}
-	answer, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Workspace"})
+	answer, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Workspace", ConsoleStepID: "workspace"})
 	if err != nil || answer.Value != "project" {
 		t.Fatalf("Plain fallback Ask() = (%#v, %v)", answer, err)
 	}
@@ -448,7 +448,13 @@ func TestBThemeCanRenderWithoutColor(t *testing.T) {
 }
 
 func TestConsoleFormRowsRetainReachedOrderAndRedactedStepDetail(t *testing.T) {
-	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command: "YCY / config",
+		FormCatalog: []ConsoleFormStep{
+			{ID: "workspace", Name: "Workspace", Detail: "choose project"},
+			{ID: "token", Name: "Access token", Detail: "credential", Sensitive: true},
+		},
+	})
 	response := make(chan richAskResult, 2)
 	show := func(id uint64, request InteractionRequest) {
 		_, _ = model.Update(richShowFormMsg{
@@ -461,10 +467,13 @@ func TestConsoleFormRowsRetainReachedOrderAndRedactedStepDetail(t *testing.T) {
 		})
 	}
 
-	show(1, InteractionRequest{Kind: InteractionText, Message: "Workspace", TranscriptLabel: "Workspace"})
+	show(1, InteractionRequest{Kind: InteractionText, Message: "Workspace", ConsoleStepID: "workspace", TranscriptLabel: "Workspace"})
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-response
-	show(2, InteractionRequest{Kind: InteractionSecret, Message: "Access token", TranscriptLabel: "Access token"})
+	show(2, InteractionRequest{Kind: InteractionSecret, Message: "Access token", ConsoleStepID: "token", TranscriptLabel: "Access token", Sensitive: true})
+	if len(model.formRows) != 2 || len(model.statusRows) != 2 {
+		t.Fatalf("declared form rows = (%d form, %d status), want two each", len(model.formRows), len(model.statusRows))
+	}
 
 	view := model.View().Content
 	completed := strings.Index(view, "✓ DONE")
@@ -480,6 +489,39 @@ func TestConsoleFormRowsRetainReachedOrderAndRedactedStepDetail(t *testing.T) {
 	view = model.View().Content
 	if !strings.Contains(view, "⊘ CANCELLED") || !strings.Contains(view, "Access token") || !strings.Contains(view, "cancelled") {
 		t.Fatalf("cancelled form row = %q", view)
+	}
+}
+
+func TestConsoleDoesNotAppendUndeclaredFormRows(t *testing.T) {
+	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
+		Command:     "YCY / config",
+		FormCatalog: []ConsoleFormStep{{ID: "workspace", Name: "Workspace"}},
+	})
+	_, _ = model.Update(richShowFormMsg{
+		id:       1,
+		form:     consoleTestForm{},
+		answer:   func() InteractionAnswer { return InteractionAnswer{} },
+		step:     newConsoleFormStep(1, InteractionRequest{Kind: InteractionText, Message: "Unexpected", ConsoleStepID: "unexpected"}),
+		response: make(chan richAskResult, 1),
+		ack:      make(chan struct{}),
+	})
+	if len(model.formRows) != 1 || len(model.statusRows) != 1 || model.formRows[0].catalogID != "workspace" {
+		t.Fatalf("undeclared form appended rows: form=%#v status=%#v", model.formRows, model.statusRows)
+	}
+}
+
+func TestRichConsoleRequiresDeclaredFormCatalogEntry(t *testing.T) {
+	run := &runtimeRun{console: ConsoleDescriptor{FormCatalog: []ConsoleFormStep{{ID: "workspace", Name: "Workspace"}}}}
+	for _, request := range []InteractionRequest{
+		{Kind: InteractionText, Message: "Workspace"},
+		{Kind: InteractionText, Message: "Workspace", ConsoleStepID: "unexpected"},
+	} {
+		if err := run.validateConsoleForm(request); !errors.Is(err, ErrUndeclaredConsoleForm) {
+			t.Fatalf("validateConsoleForm(%#v) error = %v, want ErrUndeclaredConsoleForm", request, err)
+		}
+	}
+	if err := run.validateConsoleForm(InteractionRequest{Kind: InteractionText, Message: "Workspace", ConsoleStepID: "workspace"}); err != nil {
+		t.Fatalf("declared Console form error = %v", err)
 	}
 }
 

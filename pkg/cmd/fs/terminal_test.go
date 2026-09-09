@@ -144,6 +144,71 @@ func TestTerminalFSRichServiceCheckpointsRemainOutsideAltScreen(t *testing.T) {
 	}
 }
 
+func TestRunFSRichServiceBoundaryKeepsLifecycleLogOutsideConsole(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	output := &cancelAfterFirstFSWrite{cancel: cancel}
+	var diagnostics bytes.Buffer
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{
+			Interaction: terminalexperience.RichInteractive,
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+		},
+		Output:      output,
+		Diagnostics: &diagnostics,
+	})
+	logRuntime := logging.NewRuntime(logging.Options{
+		Writer: experience.DiagnosticWriter(),
+		Format: logging.JSONFormat,
+		Color:  true,
+	})
+
+	err := runFS(&Options{
+		Context:  ctx,
+		Input:    Input{Directory: t.TempDir(), Address: "127.0.0.1", Port: 0},
+		Terminal: experience,
+		NetworkInterfaces: func() ([]NetworkInterface, error) {
+			return nil, nil
+		},
+		Logger: logRuntime.Logger("fs"),
+	})
+	if err != nil {
+		t.Fatalf("runFS() error = %v", err)
+	}
+	if output.writes != 2 {
+		t.Fatalf("checkpoint writes = %d, want 2", output.writes)
+	}
+	if got := terminaltest.StripANSI(output.output.String()); !strings.Contains(got, "File Browser") || !strings.Contains(got, "File Browser stopped.") {
+		t.Fatalf("FS service checkpoints = %q", got)
+	}
+	for _, sequence := range []string{"\x1b[?1049h", "\x1b[?1049l", "\x1b[?1047h", "\x1b[?1047l", "\x1b[?47h", "\x1b[?47l"} {
+		if strings.Contains(output.output.String(), sequence) || strings.Contains(diagnostics.String(), sequence) {
+			t.Fatalf("FS service boundary entered AltScreen with %q: stdout=%q stderr=%q", sequence, output.output.String(), diagnostics.String())
+		}
+	}
+	if terminaltest.ContainsTerminalControl(diagnostics.Bytes()) {
+		t.Fatalf("FS NDJSON Lifecycle Log contains terminal control: %q", diagnostics.String())
+	}
+
+	records := decodeFSLifecycleRecords(t, diagnostics.String())
+	messages := fsLifecycleMessages(records)
+	if len(messages) < 6 {
+		t.Fatalf("FS Lifecycle Log messages = %#v", messages)
+	}
+	if want := []string{"File Browser started", "Browse root configured", "File Browser capabilities configured", "File Browser authentication configured"}; !equalStrings(messages[:len(want)], want) {
+		t.Fatalf("FS Lifecycle Log startup = %#v, want %#v", messages[:len(want)], want)
+	}
+	if messages[len(messages)-2] != "File Browser stopping" || messages[len(messages)-1] != "File Browser stopped" {
+		t.Fatalf("FS Lifecycle Log shutdown = %#v", messages[len(messages)-2:])
+	}
+	for _, record := range records {
+		if record.Scope != "fs" {
+			t.Fatalf("FS Lifecycle Log scope = %q, want fs", record.Scope)
+		}
+	}
+}
+
 func TestRunFSClosesTheOperationWhenStartupPresentationFails(t *testing.T) {
 	output := &failingFSWriter{}
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
@@ -242,6 +307,9 @@ func (writer *cancelAfterFirstFSWrite) Write(value []byte) (int, error) {
 	_, _ = writer.output.Write(value)
 	if writer.writes == 1 {
 		writer.cancel()
+		return len(value), nil
+	}
+	if writer.err == nil {
 		return len(value), nil
 	}
 	return 0, writer.err

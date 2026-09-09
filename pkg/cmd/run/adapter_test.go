@@ -72,6 +72,61 @@ func TestTerminalRunAdapterTranslatesSelectionAndPresentation(t *testing.T) {
 	}
 }
 
+func TestTerminalRunAdapterDetailedPathUsesOneControlledWorkCatalog(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience(
+		terminaltest.SemanticAnswer{Value: terminalexperience.InteractionAnswer{Value: "check"}},
+		terminaltest.SemanticAnswer{Value: terminalexperience.InteractionAnswer{Value: string(PackageManagerNPM)}},
+	)
+	run := experience.Open(context.Background())
+	adapter := newTerminalRunAdapter(run)
+	adapter.enableDetailed()
+
+	if _, cancelled, err := adapter.SelectScript(ScriptPrompt{Message: "Select a script", Options: []ScriptChoice{{Value: "check", Label: "check"}}}); err != nil || cancelled {
+		t.Fatalf("SelectScript() = (%t, %v)", cancelled, err)
+	}
+	if _, cancelled, err := adapter.SelectPackageManager(PackageManagerPrompt{Message: "Select a package manager", Options: []PackageManagerChoice{{Value: PackageManagerNPM, Label: "npm"}}}); err != nil || cancelled {
+		t.Fatalf("SelectPackageManager() = (%t, %v)", cancelled, err)
+	}
+	for _, phase := range runPhaseDefinitions {
+		adapter.reportRunPhase(phase.ID, terminalexperience.PhaseActive, "working")
+		adapter.reportRunPhase(phase.ID, terminalexperience.PhaseCompleted, "complete")
+	}
+	if err := adapter.finishDetailed(); err != nil {
+		t.Fatalf("finishDetailed() error = %v", err)
+	}
+
+	operations := experience.Run.Operations()
+	var starts, updates, closes, tracks int
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			starts++
+			catalog := operation.Value.(terminalexperience.WorkCatalog)
+			if catalog.ID != runWorkCatalogID || !reflect.DeepEqual(catalog.Phases, runPhaseDefinitions) {
+				t.Fatalf("work catalog = %#v", catalog)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates++
+		case terminaltest.WorkCloseOperation:
+			closes++
+		case terminaltest.TrackOperation:
+			tracks++
+		}
+	}
+	if starts != 1 || updates != len(runPhaseDefinitions)*2 || closes != 1 || tracks != 0 {
+		t.Fatalf("work operations = starts:%d updates:%d closes:%d tracks:%d (%#v)", starts, updates, closes, tracks, operations)
+	}
+	requests := []terminalexperience.InteractionRequest{}
+	for _, operation := range operations {
+		if operation.Kind == terminaltest.AskOperation {
+			requests = append(requests, operation.Value.(terminalexperience.InteractionRequest))
+		}
+	}
+	if len(requests) != 2 || requests[0].ConsoleStepID != runScriptFormID || requests[1].ConsoleStepID != runManagerFormID {
+		t.Fatalf("form IDs = %#v", requests)
+	}
+}
+
 func TestTerminalRunAdapterMapsAutomationInteractionFailure(t *testing.T) {
 	experience := terminaltest.NewRecordingExperience(terminaltest.SemanticAnswer{Err: terminalexperience.ErrAutomationInteraction})
 	adapter := newTerminalRunAdapter(experience.Open(context.Background()))

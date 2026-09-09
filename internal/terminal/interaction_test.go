@@ -302,11 +302,20 @@ func TestRichAskUsesExplicitPTYInputAndDiagnosticOutput(t *testing.T) {
 			Output:       os.Stdout,
 			Diagnostics:  os.Stderr,
 		})
-		run := experience.Open(context.Background())
+		run, err := experience.OpenConsole(context.Background(), terminal.ConsoleDescriptor{
+			Command: "YCY / terminal test",
+			FormCatalog: []terminal.ConsoleFormStep{
+				{ID: "project-name", Name: "Project name"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("OpenConsole() error = %v", err)
+		}
 		defer run.Close()
 		answer, err := run.Ask(terminal.InteractionRequest{
-			Kind:    terminal.InteractionText,
-			Message: "Project name",
+			Kind:          terminal.InteractionText,
+			Message:       "Project name",
+			ConsoleStepID: "project-name",
 			Validate: func(answer terminal.InteractionAnswer) error {
 				if answer.Value == "" {
 					return errors.New("project name is required")
@@ -372,8 +381,16 @@ func TestRichAskCtrlCRestoresTerminalBeforeReturningCancellation(t *testing.T) {
 			Output:       os.Stdout,
 			Diagnostics:  os.Stderr,
 		})
-		run := experience.Open(context.Background())
-		_, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionText, Message: "Project name"})
+		run, err := experience.OpenConsole(context.Background(), terminal.ConsoleDescriptor{
+			Command: "YCY / terminal test",
+			FormCatalog: []terminal.ConsoleFormStep{
+				{ID: "project-name", Name: "Project name"},
+			},
+		})
+		if err != nil {
+			t.Fatalf("OpenConsole() error = %v", err)
+		}
+		_, err = run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionText, Message: "Project name", ConsoleStepID: "project-name"})
 		if !errors.Is(err, terminal.ErrInteractionCancelled) {
 			t.Fatalf("Ask() error = %v, want ErrInteractionCancelled", err)
 		}

@@ -28,7 +28,7 @@ func TestRichRuntimeLongListsStayVisibleAcrossNavigationAndResize(t *testing.T) 
 	process, output, readDone := startRichPTYTest(t, command, "Choose one")
 	defer process.Close()
 	respondToHuhTerminalQueries(t, process, output)
-	waitForTrackedPrompt(t, output, "Choose one")
+	waitForTrackedPrompt(t, output, "item-000")
 
 	writeRichPTYInput(t, process, "G")
 	waitForTrackedPrompt(t, output, "item-199")
@@ -299,17 +299,26 @@ func runRichLongListHelper(t *testing.T) {
 		Output:       os.Stdout,
 		Diagnostics:  os.Stderr,
 	})
-	run := experience.Open(context.Background())
+	run, err := experience.OpenConsole(context.Background(), terminal.ConsoleDescriptor{
+		Command: "YCY / terminal test",
+		FormCatalog: []terminal.ConsoleFormStep{
+			{ID: "choose-one", Name: "Choose one"},
+			{ID: "choose-many", Name: "Choose many"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenConsole() error = %v", err)
+	}
 	defer run.Close()
 	if err := run.Notice(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "Long-list context"}}}); err != nil {
 		t.Fatalf("Notice() error = %v", err)
 	}
 	options := richListOptions(200)
-	selected, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionSelect, Message: "Choose one", Options: options})
+	selected, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionSelect, Message: "Choose one", ConsoleStepID: "choose-one", Options: options})
 	if err != nil {
 		t.Fatalf("select Ask() error = %v", err)
 	}
-	multiple, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionMultiSelect, Message: "Choose many", Options: options})
+	multiple, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionMultiSelect, Message: "Choose many", ConsoleStepID: "choose-many", Options: options})
 	if err != nil {
 		t.Fatalf("multi-select Ask() error = %v", err)
 	}
@@ -338,7 +347,15 @@ func runRichCancellationHelper(t *testing.T, mode string) {
 		Output:       os.Stdout,
 		Diagnostics:  os.Stderr,
 	})
-	run := experience.Open(ctx)
+	run, err := experience.OpenConsole(ctx, terminal.ConsoleDescriptor{
+		Command: "YCY / terminal test",
+		FormCatalog: []terminal.ConsoleFormStep{
+			{ID: "cancel-list", Name: "Cancel list"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenConsole() error = %v", err)
+	}
 	defer run.Close()
 	if mode == "context" {
 		go func() {
@@ -346,7 +363,7 @@ func runRichCancellationHelper(t *testing.T, mode string) {
 			cancel()
 		}()
 	}
-	_, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionSelect, Message: "Cancel list", Options: richListOptions(200)})
+	_, err = run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionSelect, Message: "Cancel list", ConsoleStepID: "cancel-list", Options: richListOptions(200)})
 	marker := ""
 	switch {
 	case errors.Is(err, terminal.ErrInteractionCancelled):
@@ -371,12 +388,20 @@ func runRichRedirectHelper(t *testing.T) {
 		Output:       os.Stdout,
 		Diagnostics:  os.Stderr,
 	})
-	run := experience.Open(context.Background())
+	run, err := experience.OpenConsole(context.Background(), terminal.ConsoleDescriptor{
+		Command: "YCY / terminal test",
+		FormCatalog: []terminal.ConsoleFormStep{
+			{ID: "continue", Name: "Confirmation"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenConsole() error = %v", err)
+	}
 	defer run.Close()
 	if err := run.Notice(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "stderr notice"}}}); err != nil {
 		t.Fatalf("Notice() error = %v", err)
 	}
-	if _, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionConfirm, Message: "Continue?", HasDefault: true, Default: terminal.InteractionAnswer{Confirmed: true}}); err != nil {
+	if _, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionConfirm, Message: "Continue?", ConsoleStepID: "continue", HasDefault: true, Default: terminal.InteractionAnswer{Confirmed: true}}); err != nil {
 		t.Fatalf("Ask() error = %v", err)
 	}
 	if _, err := io.WriteString(experience.DiagnosticWriter(), "deferred diagnostic\n"); err != nil {

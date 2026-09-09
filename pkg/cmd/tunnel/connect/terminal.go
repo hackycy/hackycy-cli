@@ -18,20 +18,31 @@ func terminalTunnelConnectionSelectorFor(experience *terminalexperience.Runtime)
 		return nil
 	}
 	return func(ctx context.Context, connections []appconfig.TunnelConnection) (string, bool, error) {
-		run, err := experience.OpenConsole(ctx, terminalexperience.ConsoleDescriptor{
-			Command: "YCY",
-			Target:  "Tunnel connection",
-			Status:  "SELECT",
-			Metadata: []terminalexperience.ConsoleMetadata{{
-				Label: "candidates",
-				Value: strconv.Itoa(len(connections)),
-			}},
-		})
+		run, err := experience.OpenConsole(ctx, tunnelConnectionSelectionConsoleDescriptor(len(connections)))
 		if err != nil {
 			return "", false, err
 		}
-		defer run.Close()
-		return newTerminalTunnelConnectionAdapter(run).Select(ctx, connections)
+		selected, cancelled, selectErr := newTerminalTunnelConnectionAdapter(run).Select(ctx, connections)
+		return selected, cancelled, errors.Join(selectErr, run.Close())
+	}
+}
+
+const tunnelConnectionSelectionStepID = "tunnel-connection-selection"
+
+func tunnelConnectionSelectionConsoleDescriptor(candidateCount int) terminalexperience.ConsoleDescriptor {
+	return terminalexperience.ConsoleDescriptor{
+		Command: "YCY",
+		Target:  "Tunnel connection",
+		Status:  "SELECT",
+		Metadata: []terminalexperience.ConsoleMetadata{{
+			Label: "candidates",
+			Value: strconv.Itoa(candidateCount),
+		}},
+		FormCatalog: []terminalexperience.ConsoleFormStep{{
+			ID:     tunnelConnectionSelectionStepID,
+			Name:   "Tunnel connection",
+			Detail: strconv.Itoa(candidateCount) + " remembered connections",
+		}},
 	}
 }
 
@@ -49,6 +60,7 @@ func (adapter *terminalTunnelConnectionAdapter) Select(_ context.Context, connec
 		Message:         "Select a tunnel connection",
 		PlainLead:       "Select a tunnel connection",
 		PlainPrompt:     "> ",
+		ConsoleStepID:   tunnelConnectionSelectionStepID,
 		Options:         tunnelConnectionInteractionOptions(connections),
 		CancelValues:    []string{"", "q", "quit", "cancel"},
 		TranscriptLabel: "Selected tunnel connection",

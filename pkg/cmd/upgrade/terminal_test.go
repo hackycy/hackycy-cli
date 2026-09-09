@@ -34,6 +34,64 @@ func TestUpgradeConsoleDescriptorProvidesSafeCurrentVersionContext(t *testing.T)
 	}
 }
 
+func TestUpgradePhaseSinkUsesOneControlledWorkCatalog(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	sink := newUpgradePhaseSink(run, terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}, func() {})
+
+	for _, definition := range terminalUpgradePhaseDefinitions {
+		sink.phase(updater.UpgradePhaseEvent{Phase: updater.UpgradePhase(definition.ID), State: updater.UpgradePhaseActive})
+		sink.phase(updater.UpgradePhaseEvent{Phase: updater.UpgradePhase(definition.ID), State: updater.UpgradePhaseCompleted, Detail: definition.Name + " complete"})
+	}
+	if err := sink.close(); err != nil {
+		t.Fatalf("close() error = %v", err)
+	}
+
+	var starts, updates, closes, tracks int
+	for _, operation := range experience.Run.Operations() {
+		switch operation.Kind {
+		case terminaltest.StartWorkOperation:
+			starts++
+			catalog := operation.Value.(terminalexperience.WorkCatalog)
+			if catalog.ID != upgradeWorkCatalogID || catalog.Label != "Upgrade ycy" || !reflect.DeepEqual(catalog.Phases, terminalUpgradePhaseDefinitions) {
+				t.Fatalf("work catalog = %#v", catalog)
+			}
+		case terminaltest.WorkUpdateOperation:
+			updates++
+		case terminaltest.WorkCloseOperation:
+			closes++
+		case terminaltest.TrackOperation:
+			tracks++
+		}
+	}
+	if starts != 1 || updates != len(terminalUpgradePhaseDefinitions)*2 || closes != 1 || tracks != 0 {
+		t.Fatalf("work operations = starts:%d updates:%d closes:%d tracks:%d", starts, updates, closes, tracks)
+	}
+}
+
+func TestFinishUpgradeRunSeparatesSafeSummaryFromDurableResult(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience()
+	run := experience.Open(context.Background())
+	result := updater.UpgradeResult{Scheduled: true, ScheduledVersion: "2.0.0"}
+	durable := terminalUpgradeDocument("Update to v2.0.0 has been scheduled and will finish after ycy exits.", terminalexperience.VisualRoleSuccess)
+	if err := finishUpgradeRun(run, experience.DiagnosticWriter(), nil, result, nil); err != nil {
+		t.Fatalf("finishUpgradeRun() error = %v", err)
+	}
+
+	var finish terminaltest.Finish
+	for _, operation := range experience.Run.Operations() {
+		if operation.Kind == terminaltest.FinishOperation {
+			finish = operation.Value.(terminaltest.Finish)
+		}
+	}
+	if finish.Request.Outcome != terminalexperience.Succeeded || terminalexperience.RenderPlain(finish.Request.Summary) == "" {
+		t.Fatalf("finish request = %#v", finish.Request)
+	}
+	if len(finish.Documents) != 1 || !reflect.DeepEqual(*finish.Documents[0], durable) {
+		t.Fatalf("durable result = %#v", finish.Documents)
+	}
+}
+
 func TestRunUpgradeProjectsParentPhasesAndSubmitsOneResult(t *testing.T) {
 	stdout, stderr := &countingUpgradeWriter{}, &bytes.Buffer{}
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{

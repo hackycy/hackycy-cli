@@ -8,9 +8,24 @@ import (
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/appconfig"
+	"github.com/hackycy/hackycy-cli/internal/logging"
 	terminalexperience "github.com/hackycy/hackycy-cli/internal/terminal"
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
+
+func TestTunnelConnectionSelectionUsesOneDeclaredFormStep(t *testing.T) {
+	descriptor := tunnelConnectionSelectionConsoleDescriptor(3)
+	if descriptor.Command != "YCY" || descriptor.Target != "Tunnel connection" || descriptor.Status != "SELECT" {
+		t.Fatalf("descriptor identity = %#v", descriptor)
+	}
+	if len(descriptor.FormCatalog) != 1 || descriptor.FormCatalog[0] != (terminalexperience.ConsoleFormStep{
+		ID:     tunnelConnectionSelectionStepID,
+		Name:   "Tunnel connection",
+		Detail: "3 remembered connections",
+	}) {
+		t.Fatalf("descriptor form catalog = %#v", descriptor.FormCatalog)
+	}
+}
 
 func TestTerminalTunnelConnectionAdapterTranslatesSelectionAndCancellation(t *testing.T) {
 	connections := []appconfig.TunnelConnection{
@@ -35,7 +50,7 @@ func TestTerminalTunnelConnectionAdapterTranslatesSelectionAndCancellation(t *te
 		{Label: "https://first.example.test  last authenticated 2026-01-02 03:04 UTC", Value: "first"},
 		{Label: "https://second.example.test  last authenticated 2026-01-01 03:04 UTC", Value: "second"},
 	}
-	if request.Kind != terminalexperience.InteractionSelect || request.Message != "Select a tunnel connection" || request.PlainLead != "Select a tunnel connection" || request.PlainPrompt != "> " || !reflect.DeepEqual(request.Options, wantOptions) || !reflect.DeepEqual(request.CancelValues, []string{"", "q", "quit", "cancel"}) || request.ParsePlain == nil {
+	if request.Kind != terminalexperience.InteractionSelect || request.Message != "Select a tunnel connection" || request.PlainLead != "Select a tunnel connection" || request.PlainPrompt != "> " || request.ConsoleStepID != tunnelConnectionSelectionStepID || !reflect.DeepEqual(request.Options, wantOptions) || !reflect.DeepEqual(request.CancelValues, []string{"", "q", "quit", "cancel"}) || request.ParsePlain == nil {
 		t.Fatalf("selection request = %#v", request)
 	}
 	if strings.Contains(request.Options[0].Label, "abcdefgh01234567wxyz") || strings.Contains(request.Options[1].Label, "short-token") {
@@ -99,6 +114,38 @@ func TestTerminalTunnelConnectionAdapterPlainPreservesNumberedInputCancellationA
 				t.Fatalf("Close() error = %v", err)
 			}
 		})
+	}
+}
+
+func TestTunnelConnectionSelectionClosesBeforeClientLifecycleStarts(t *testing.T) {
+	diagnostics := &bytes.Buffer{}
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},
+		Input:        strings.NewReader("2\n"),
+		Diagnostics:  diagnostics,
+	})
+	connections := []appconfig.TunnelConnection{
+		{ID: "first", Server: "https://first.example.test", LastAuthenticatedAt: "2026-01-02T03:04:05Z"},
+		{ID: "second", Server: "https://second.example.test", LastAuthenticatedAt: "2026-01-01T03:04:05Z"},
+	}
+	selected, cancelled, err := terminalTunnelConnectionSelectorFor(experience)(context.Background(), connections)
+	if err != nil || cancelled || selected != "second" {
+		t.Fatalf("selection = (%q, %t, %v)", selected, cancelled, err)
+	}
+	selectionOutput := diagnostics.String()
+	if !strings.Contains(selectionOutput, "https://second.example.test") || terminaltest.ContainsTerminalControl([]byte(selectionOutput)) {
+		t.Fatalf("selection output = %q", selectionOutput)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	logRuntime := logging.NewRuntime(logging.Options{Writer: diagnostics})
+	if err := RunClient(ctx, ClientConfig{}, ClientRunOptions{Logger: logRuntime.Logger("tunnel.client")}); err != nil {
+		t.Fatalf("RunClient() error = %v", err)
+	}
+	clientStart := strings.Index(diagnostics.String(), "Tunnel client starting")
+	if clientStart < len(selectionOutput) || clientStart < 0 {
+		t.Fatalf("client lifecycle started before selection closed: %q", diagnostics.String())
 	}
 }
 

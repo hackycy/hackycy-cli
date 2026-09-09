@@ -38,6 +38,9 @@ var (
 	// ErrUndeclaredWorkSessionForm reports an interaction that was not declared
 	// in the Console Form Catalog retained by a controlled Work session.
 	ErrUndeclaredWorkSessionForm = errors.New("terminal work session form is not declared")
+	// ErrUndeclaredConsoleForm reports a Rich interaction that has no declared
+	// Console Form Catalog entry.
+	ErrUndeclaredConsoleForm = errors.New("terminal console form is not declared")
 )
 
 // ExperienceOptions supplies terminal-owned dependencies for one invocation.
@@ -179,6 +182,9 @@ func (run *runtimeRun) Ask(request InteractionRequest) (InteractionAnswer, error
 	if run.richEnabled() {
 		controller, err := run.ensureRich()
 		if err == nil {
+			if err := run.validateConsoleForm(request); err != nil {
+				return InteractionAnswer{}, err
+			}
 			answer, askErr := controller.ask(run.ctx, run.interactions, request)
 			if askErr != nil && controller.stopped() {
 				askErr = run.recoverRichFailure(askErr)
@@ -489,6 +495,19 @@ func (run *runtimeRun) disableRich() {
 	capabilities := run.interactions.capabilities
 	capabilities.Interaction = PlainInteractive
 	run.interactions.capabilities = capabilities
+}
+
+func (run *runtimeRun) validateConsoleForm(request InteractionRequest) error {
+	id := strings.TrimSpace(stripTerminalControl(request.ConsoleStepID))
+	if id == "" {
+		return ErrUndeclaredConsoleForm
+	}
+	for _, step := range run.console.FormCatalog {
+		if step.ID == id {
+			return nil
+		}
+	}
+	return ErrUndeclaredConsoleForm
 }
 
 func (run *runtimeRun) ensureRich() (*richController, error) {

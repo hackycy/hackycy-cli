@@ -58,7 +58,7 @@ func runUpgrade(options *Options) error {
 	defer run.Close()
 	if options.Terminal.Capabilities().Interaction == terminal.RichInteractive {
 		if err := run.Notice(terminalUpgradeIntroDocument()); err != nil {
-			return errors.Join(err, run.Finish(terminal.Failed, nil))
+			return errors.Join(err, run.Finish(terminalUpgradeFinishRequest(terminal.Failed, "Unable to start upgrade.", terminal.VisualRoleError), nil))
 		}
 	}
 	sink := newUpgradePhaseSink(run, options.Terminal.Capabilities(), cancel)
@@ -70,8 +70,7 @@ func runUpgrade(options *Options) error {
 		Resolver: updater.ReleaseResolverOptions{CurrentVersion: options.CurrentVersion},
 		Observer: sink.observer(),
 	})
-	sink.close()
-	resultErr = errors.Join(resultErr, sink.err())
+	resultErr = errors.Join(resultErr, sink.close(), sink.err())
 	return finishUpgradeRun(run, options.Terminal.DiagnosticWriter(), sink.previousDocument(), result, resultErr)
 }
 

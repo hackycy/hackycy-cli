@@ -12,6 +12,9 @@ const (
 	runResolveManagerPhaseID  = "resolve-package-manager"
 	runPrepareCommandPhaseID  = "prepare-child-command"
 	runReleaseTerminalPhaseID = "release-terminal"
+	runScriptFormID           = "script-selection"
+	runManagerFormID          = "package-manager-selection"
+	runWorkCatalogID          = "run-handoff"
 )
 
 var runPhaseDefinitions = []terminalexperience.PhaseDefinition{
@@ -28,6 +31,14 @@ func runPhaseDefinitionsFor(id string) []terminalexperience.PhaseDefinition {
 		}
 	}
 	return nil
+}
+
+func runWorkCatalog() terminalexperience.WorkCatalog {
+	return terminalexperience.WorkCatalog{
+		ID:     runWorkCatalogID,
+		Label:  "Run handoff",
+		Phases: append([]terminalexperience.PhaseDefinition(nil), runPhaseDefinitions...),
+	}
 }
 
 type runDetailedObserver interface {

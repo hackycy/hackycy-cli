@@ -44,7 +44,7 @@ func runRun(options *Options) error {
 		}
 		return adapter.releaseTerminal(func() error {
 			closed = true
-			return run.Finish(outcome, document)
+			return run.Finish(adapter.finishRequest(outcome), document)
 		})
 	}
 	defer run.Close()
@@ -63,7 +63,7 @@ func runRun(options *Options) error {
 	})
 	if err != nil {
 		_ = adapter.finishDetailed()
-		_ = run.Finish(terminalexperience.Failed, nil)
+		_ = run.Finish(adapter.finishRequest(terminalexperience.Failed), nil)
 		closed = true
 		return err
 	}
@@ -80,7 +80,7 @@ func runRun(options *Options) error {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			outcome = terminalexperience.Cancelled
 		}
-		finishErr := run.Finish(outcome, adapter.finalDocument(outcome))
+		finishErr := run.Finish(adapter.finishRequest(outcome), adapter.finalDocument(outcome))
 		closed = true
 		return errors.Join(err, finishErr)
 	}
@@ -125,15 +125,17 @@ func osRunPathExists(path string) (bool, error) {
 type terminalRunAdapter struct {
 	run terminalexperience.ExperienceRun
 
-	mu         sync.Mutex
-	detailed   bool
-	activeID   string
-	active     bool
-	updates    chan terminalexperience.OperationPhase
-	trackDone  chan error
-	milestones []terminalexperience.PresentationDocument
-	cancelled  *terminalexperience.PresentationDocument
-	released   bool
+	mu              sync.Mutex
+	detailed        bool
+	work            terminalexperience.WorkSession
+	workStart       chan struct{}
+	workStarted     bool
+	workClosed      bool
+	workErr         error
+	presentationErr error
+	milestones      []terminalexperience.PresentationDocument
+	cancelled       *terminalexperience.PresentationDocument
+	released        bool
 }
 
 func newTerminalRunAdapter(run terminalexperience.ExperienceRun) *terminalRunAdapter {
@@ -148,12 +150,17 @@ func (adapter *terminalRunAdapter) enableDetailed() {
 
 func (adapter *terminalRunAdapter) SelectScript(prompt ScriptPrompt) (string, bool, error) {
 	answer, cancelled, err := adapter.ask(terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionSelect,
-		Message:      prompt.Message,
-		PlainLead:    prompt.Message,
-		PlainPrompt:  "> ",
-		Options:      runScriptOptions(prompt.Options),
-		CancelValues: []string{"", "q", "quit", "cancel"},
+		Kind:            terminalexperience.InteractionSelect,
+		Message:         prompt.Message,
+		PlainLead:       prompt.Message,
+		PlainPrompt:     "> ",
+		Options:         runScriptOptions(prompt.Options),
+		CancelValues:    []string{"", "q", "quit", "cancel"},
+		ConsoleStepID:   runScriptFormID,
+		TranscriptLabel: "Script",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return safeRunText(answer.Value, "selected script")
+		},
 		ParsePlain: func(value string) (terminalexperience.InteractionAnswer, error) {
 			return parseRunSelection(value, runScriptOptions(prompt.Options))
 		},
@@ -163,12 +170,17 @@ func (adapter *terminalRunAdapter) SelectScript(prompt ScriptPrompt) (string, bo
 
 func (adapter *terminalRunAdapter) SelectPackageManager(prompt PackageManagerPrompt) (PackageManager, bool, error) {
 	answer, cancelled, err := adapter.ask(terminalexperience.InteractionRequest{
-		Kind:         terminalexperience.InteractionSelect,
-		Message:      prompt.Message,
-		PlainLead:    prompt.Message,
-		PlainPrompt:  "> ",
-		Options:      runPackageManagerOptions(prompt.Options),
-		CancelValues: []string{"", "q", "quit", "cancel"},
+		Kind:            terminalexperience.InteractionSelect,
+		Message:         prompt.Message,
+		PlainLead:       prompt.Message,
+		PlainPrompt:     "> ",
+		Options:         runPackageManagerOptions(prompt.Options),
+		CancelValues:    []string{"", "q", "quit", "cancel"},
+		ConsoleStepID:   runManagerFormID,
+		TranscriptLabel: "Package manager",
+		TranscriptProject: func(answer terminalexperience.InteractionAnswer) string {
+			return safeRunText(answer.Value, "selected manager")
+		},
 		ParsePlain: func(value string) (terminalexperience.InteractionAnswer, error) {
 			return parseRunSelection(value, runPackageManagerOptions(prompt.Options))
 		},
@@ -181,8 +193,8 @@ func (adapter *terminalRunAdapter) Intro(message string) {
 	detailed := adapter.detailed
 	adapter.mu.Unlock()
 	if detailed {
-		// The descriptor carries the stable command identity; retain the legacy
-		// title as a transient context line for Plain and Rich compatibility.
+		// Plain fallback retains the established heading. Rich has an explicit
+		// descriptor, so this bounded notice is only transient context there.
 		_ = adapter.run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{
 			{Role: terminalexperience.VisualRoleTitle, Text: "HACKYCY CLI"},
 			{Role: terminalexperience.VisualRoleActive, Text: safeRunText(message, "Run Script")},
@@ -230,50 +242,25 @@ func (adapter *terminalRunAdapter) Cancel(message string) {
 
 func (adapter *terminalRunAdapter) reportRunPhase(id string, state terminalexperience.PhaseState, detail string) {
 	adapter.mu.Lock()
-	if !adapter.detailed {
-		adapter.mu.Unlock()
-		return
-	}
-	if state == terminalexperience.PhaseActive {
-		if adapter.active {
-			adapter.mu.Unlock()
-			return
-		}
-		updates := make(chan terminalexperience.OperationPhase, 8)
-		done := make(chan error, 1)
-		adapter.activeID = id
-		adapter.active = true
-		adapter.updates = updates
-		adapter.trackDone = done
-		adapter.mu.Unlock()
-		go func() {
-			done <- adapter.run.Track(terminalexperience.TrackedOperation{
-				ID:          "run-" + id,
-				OperationID: "run-" + id,
-				Label:       "Run",
-				Phases:      runPhaseDefinitionsFor(id),
-				Updates:     updates,
-			})
-		}()
-		updates <- terminalexperience.OperationPhase{ID: id, State: terminalexperience.PhaseActive, Detail: safeRunText(detail, "working")}
-		return
-	}
-	if !adapter.active || adapter.activeID != id {
-		adapter.mu.Unlock()
-		return
-	}
-	updates := adapter.updates
-	done := adapter.trackDone
+	detailed := adapter.detailed
 	adapter.mu.Unlock()
-	updates <- terminalexperience.OperationPhase{ID: id, State: state, Detail: safeRunText(detail, "complete")}
-	close(updates)
-	_ = <-done
-	adapter.mu.Lock()
-	adapter.active = false
-	adapter.activeID = ""
-	adapter.updates = nil
-	adapter.trackDone = nil
-	adapter.mu.Unlock()
+	if !detailed {
+		return
+	}
+	work, err := adapter.ensureWork()
+	if err != nil {
+		adapter.recordPresentationError(err)
+		return
+	}
+	if work == nil {
+		return
+	}
+	err = work.Update(terminalexperience.OperationPhase{
+		ID:     id,
+		State:  state,
+		Detail: safeRunText(detail, "working"),
+	})
+	adapter.recordPresentationError(err)
 }
 
 func (adapter *terminalRunAdapter) reportRunMilestone(text string) {
@@ -288,15 +275,85 @@ func (adapter *terminalRunAdapter) reportRunMilestone(text string) {
 }
 
 func (adapter *terminalRunAdapter) finishDetailed() error {
+	workErr := adapter.closeWork()
 	adapter.mu.Lock()
 	milestones := append([]terminalexperience.PresentationDocument(nil), adapter.milestones...)
+	presentationErr := adapter.presentationErr
 	adapter.milestones = nil
 	adapter.mu.Unlock()
-	var err error
+	err := errors.Join(workErr, presentationErr)
 	for _, milestone := range milestones {
 		err = errors.Join(err, adapter.run.Milestone(milestone))
 	}
 	return err
+}
+
+func (adapter *terminalRunAdapter) ensureWork() (terminalexperience.WorkSession, error) {
+	adapter.mu.Lock()
+	if adapter.workStarted {
+		ready := adapter.workStart
+		work := adapter.work
+		err := adapter.workErr
+		adapter.mu.Unlock()
+		if ready != nil && work == nil && err == nil {
+			<-ready
+			adapter.mu.Lock()
+			work, err = adapter.work, adapter.workErr
+			adapter.mu.Unlock()
+		}
+		return work, err
+	}
+	adapter.workStarted = true
+	adapter.workStart = make(chan struct{})
+	ready := adapter.workStart
+	adapter.mu.Unlock()
+
+	work, err := terminalexperience.StartWork(adapter.run, runWorkCatalog())
+	adapter.mu.Lock()
+	adapter.work = work
+	adapter.workErr = err
+	close(ready)
+	adapter.mu.Unlock()
+	return work, err
+}
+
+func (adapter *terminalRunAdapter) closeWork() error {
+	adapter.mu.Lock()
+	if !adapter.workStarted {
+		adapter.mu.Unlock()
+		return nil
+	}
+	ready := adapter.workStart
+	adapter.mu.Unlock()
+	if ready != nil {
+		<-ready
+	}
+	adapter.mu.Lock()
+	if adapter.workClosed {
+		err := adapter.workErr
+		adapter.mu.Unlock()
+		return err
+	}
+	adapter.workClosed = true
+	work := adapter.work
+	err := adapter.workErr
+	adapter.mu.Unlock()
+	if work != nil {
+		err = errors.Join(err, work.Close())
+	}
+	adapter.mu.Lock()
+	adapter.workErr = err
+	adapter.mu.Unlock()
+	return err
+}
+
+func (adapter *terminalRunAdapter) recordPresentationError(err error) {
+	if err == nil {
+		return
+	}
+	adapter.mu.Lock()
+	adapter.presentationErr = errors.Join(adapter.presentationErr, err)
+	adapter.mu.Unlock()
 }
 
 func (adapter *terminalRunAdapter) finalDocument(outcome terminalexperience.FinishOutcome) *terminalexperience.PresentationDocument {
@@ -307,6 +364,19 @@ func (adapter *terminalRunAdapter) finalDocument(outcome terminalexperience.Fini
 		return &document
 	}
 	return nil
+}
+
+func (adapter *terminalRunAdapter) finishRequest(outcome terminalexperience.FinishOutcome) terminalexperience.FinishRequest {
+	summary := "Run handoff complete."
+	if outcome == terminalexperience.Cancelled {
+		summary = "Run selection cancelled."
+	} else if outcome == terminalexperience.Failed {
+		summary = "Unable to prepare run handoff."
+	}
+	return terminalexperience.FinishRequest{
+		Outcome: outcome,
+		Summary: terminalRunDocument(summary, terminalexperience.VisualRoleMuted),
+	}
 }
 
 func (adapter *terminalRunAdapter) releaseTerminal(finish func() error) error {
@@ -392,6 +462,10 @@ func runConsoleDescriptor(directory string) terminalexperience.ConsoleDescriptor
 			Label: "project",
 			Value: runProjectLabel(directory),
 		}},
+		FormCatalog: []terminalexperience.ConsoleFormStep{
+			{ID: runScriptFormID, Name: "Select script", Detail: "choose a package script"},
+			{ID: runManagerFormID, Name: "Select package manager", Detail: "choose a package manager"},
+		},
 	}
 }
 
