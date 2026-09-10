@@ -1,10 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO="hackycy/hackycy-cli"
-INSTALL_DIR="$HOME/.ycy-cli/bin"
-BINARY_NAME="ycy"
+REPO="${YCY_INSTALL_REPO:-hackycy/hackycy-cli}"
+INSTALL_DIR="${YCY_INSTALL_DIR:-$HOME/.ycy-cli/bin}"
+BINARY_NAME="${YCY_INSTALL_BINARY_NAME:-ycy}"
 CHECKSUMS_FILE="SHA256SUMS"
+API_URL="${YCY_INSTALL_API_URL:-https://api.github.com/repos/${REPO}/releases/latest}"
+DOWNLOAD_BASE_URL="${YCY_INSTALL_DOWNLOAD_BASE:-https://github.com/${REPO}/releases/download}"
 ACTIVE_TEMP_PATH=""
 
 cleanup_temp_file() {
@@ -47,8 +49,8 @@ sha256_file() {
 detect_platform() {
   local os arch
 
-  os=$(uname -s)
-  arch=$(uname -m)
+  os="${YCY_INSTALL_OS:-$(uname -s)}"
+  arch="${YCY_INSTALL_ARCH:-$(uname -m)}"
 
   case "$os" in
     Darwin) OS="macos" ;;
@@ -73,7 +75,7 @@ get_latest_version() {
     error "curl is required but not installed."
   fi
 
-  RELEASE_JSON=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")
+  RELEASE_JSON=$(curl -fsSL -H 'Accept: application/vnd.github.v3+json' "$API_URL")
 
   VERSION=$(printf '%s' "$RELEASE_JSON" \
     | grep '"tag_name"' \
@@ -87,7 +89,7 @@ get_latest_version() {
 }
 
 fetch_expected_hash() {
-  local checksums_url="https://github.com/${REPO}/releases/download/${VERSION}/${CHECKSUMS_FILE}"
+  local checksums_url="${DOWNLOAD_BASE_URL}/${VERSION}/${CHECKSUMS_FILE}"
   local checksums_content=""
 
   info "Fetching checksums..."
@@ -104,13 +106,14 @@ fetch_expected_hash() {
       }
     ')
 
-  if [ -n "$EXPECTED_HASH" ]; then
+  if [ -n "$EXPECTED_HASH" ] && printf '%s' "$EXPECTED_HASH" | grep -Eq '^[A-Fa-f0-9]{64}$'; then
+    EXPECTED_HASH=$(printf '%s' "$EXPECTED_HASH" | tr '[:upper:]' '[:lower:]')
     return
   fi
 
   checksums_content=$(curl -fsSL "$checksums_url")
 
-  EXPECTED_HASH=$(printf '%s\n' "$checksums_content" | awk -v artifact="$ARTIFACT_NAME" '$2 == artifact { print $1 }' | tail -n 1)
+  EXPECTED_HASH=$(printf '%s\n' "$checksums_content" | awk -v artifact="$ARTIFACT_NAME" 'length($1) == 64 && $1 ~ /^[A-Fa-f0-9]+$/ { name=$2; sub(/^\*/, "", name); if (name == artifact) print tolower($1) }' | tail -n 1)
 
   if [ -z "$EXPECTED_HASH" ]; then
     error "Failed to find checksum for ${ARTIFACT_NAME}."
@@ -292,9 +295,11 @@ main() {
   get_latest_version
   fetch_expected_hash
 
-  local download_url="https://github.com/${REPO}/releases/download/${VERSION}/${ARTIFACT_NAME}"
+  local download_url="${DOWNLOAD_BASE_URL}/${VERSION}/${ARTIFACT_NAME}"
   download_binary "$download_url"
-  setup_path
+  if [ "${YCY_INSTALL_SKIP_PATH:-0}" != "1" ]; then
+    setup_path
+  fi
   print_success
 }
 

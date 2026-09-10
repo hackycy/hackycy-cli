@@ -1,0 +1,147 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #18181b;
+  --card: #ffffff;
+  --border: #d4d4d8;
+  --muted-foreground: #71717a;
+  --muted: #f4f4f5;
+  --sidebar: #fafafa;
+  --feed: #f6f7f8;
+}
+
+.dark {
+  --background: #101113;
+  --foreground: #f4f4f5;
+  --card: #18191c;
+  --border: #34363b;
+  --muted-foreground: #a1a1aa;
+  --muted: #27282d;
+  --sidebar: #141518;
+  --feed: #111214;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-sidebar: var(--sidebar);
+  --color-feed: var(--feed);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--foreground);
+  background: var(--background);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+button,
+input {
+  font: inherit;
+  letter-spacing: 0;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+}
+
+.summary-bar {
+  scrollbar-width: none;
+}
+
+.summary-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.summary-filter {
+  display: inline-flex;
+  height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0 7px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.summary-filter:hover,
+.summary-filter.active {
+  border-color: var(--border);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.summary-added.active { border-color: #86efac; color: #15803d; }
+.summary-deleted.active { border-color: #fca5a5; color: #b91c1c; }
+.summary-modified.active { border-color: #fcd34d; color: #a16207; }
+.summary-unchanged.active { border-color: #a1a1aa; color: var(--foreground); }
+.summary-issue.active { border-color: #67e8f9; color: #0e7490; }
+.dark .summary-added.active { border-color: #166534; color: #86efac; }
+.dark .summary-deleted.active { border-color: #991b1b; color: #fca5a5; }
+.dark .summary-modified.active { border-color: #92400e; color: #fcd34d; }
+.dark .summary-issue.active { border-color: #0e7490; color: #67e8f9; }
+
+.status-badge {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid;
+  padding: 0 7px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.status-added { border-color: #86efac; background: #f0fdf4; color: #166534; }
+.status-deleted { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+.status-modified { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
+.status-unchanged { border-color: #d4d4d8; background: #f4f4f5; color: #52525b; }
+.status-issue { border-color: #67e8f9; background: #ecfeff; color: #155e75; }
+.dark .status-added { border-color: #166534; background: #052e16; color: #86efac; }
+.dark .status-deleted { border-color: #991b1b; background: #450a0a; color: #fca5a5; }
+.dark .status-modified { border-color: #92400e; background: #451a03; color: #fcd34d; }
+.dark .status-unchanged { border-color: #52525b; background: #27272a; color: #d4d4d8; }
+.dark .status-issue { border-color: #0e7490; background: #083344; color: #67e8f9; }
+
+.bg-image-grid {
+  background-color: var(--muted);
+  background-image:
+    linear-gradient(45deg, color-mix(in srgb, var(--border) 42%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--border) 42%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--border) 42%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--border) 42%, transparent) 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+
+diffs-container {
+  width: 100%;
+  --diffs-font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --diffs-font-size: 12px;
+}
+
+@media (max-width: 899px) {
+  .status-badge {
+    padding-inline: 5px;
+  }
+}

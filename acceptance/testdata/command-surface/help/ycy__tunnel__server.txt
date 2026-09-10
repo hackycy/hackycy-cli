@@ -1,0 +1,18 @@
+ycy tunnel server
+Run the Tunnel Control Plane and supervised frps process
+Usage:
+  ycy tunnel server [flags]
+Flags:
+  --address	Address for all tunnel server listeners
+  --advertise-frp-addr	FRP endpoint advertised to trusted clients
+  --control-port	Tunnel Control Plane port
+  --data-dir	Tunnel server state directory
+  --frp-port	FRP bind port
+  -h, --help	help for server
+  --http-port	FRP HTTP vhost port
+  --port-range	Server Port Pool
+  --session-idle-days	Session idle lifetime in days
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

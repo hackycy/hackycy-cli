@@ -1,0 +1,20 @@
+assert_lefthook_installed: true
+no_auto_install: true
+lefthook: ./tools/lefthook/bin/lefthook
+rc: ./lefthook.rc
+
+pre-commit:
+  parallel: true
+  commands:
+    whitespace:
+      run: git diff --cached --check
+    gofmt:
+      glob: "**/*.go"
+      exclude: "legacy/bun/**"
+      run: test -z "$(gofmt -l {staged_files})"
+      fail_text: "Run make fmt and stage the formatted Go files."
+    web-eslint:
+      root: web
+      glob: "**/*.{js,mjs,cjs,ts,tsx,jsx}"
+      run: pnpm exec eslint --max-warnings=0 {staged_files}
+      fail_text: "Web dependencies are required. Run make bootstrap."

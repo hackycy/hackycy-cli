@@ -1,0 +1,104 @@
+//go:build !windows
+
+package pulse
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/hackycy/hackycy-cli/internal/gitprocess"
+)
+
+type pulseTestSignalCause struct {
+	signal os.Signal
+}
+
+const (
+	pulseGitFixtureStartupTimeout  = 15 * time.Second
+	pulseGitFixtureShutdownTimeout = 15 * time.Second
+)
+
+func (cause pulseTestSignalCause) Error() string {
+	return cause.signal.String()
+}
+
+func (cause pulseTestSignalCause) Signal() os.Signal {
+	return cause.signal
+}
+
+func TestGitRunnerAdapterStopsTheChildProcessGroupWithoutAnOrphan(t *testing.T) {
+	root := t.TempDir()
+	grandchild := writePulseGitScript(t, root, "grandchild", "#!/bin/sh\nwhile :; do\n  sleep 1\ndone\n")
+	pidPath := filepath.Join(root, "grandchild-pid")
+	parent := writePulseGitScript(t, root, "parent", "#!/bin/sh\n\"$PULSE_GIT_GRANDCHILD\" &\nchild=$!\nprintf '%s\\n' \"$child\" > \"$PULSE_GIT_GRANDCHILD_PID\"\nwait \"$child\"\n")
+	t.Setenv("PULSE_GIT_GRANDCHILD", grandchild)
+	t.Setenv("PULSE_GIT_GRANDCHILD_PID", pidPath)
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	runner := gitRunnerAdapter{runner: &gitprocess.Runner{Executable: parent}}
+	results := make(chan error, 1)
+	go func() {
+		_, err := runner.Run(ctx, nil)
+		results <- err
+	}()
+
+	pid := waitForPulseGitPID(t, pidPath)
+	cancel(pulseTestSignalCause{signal: syscall.SIGTERM})
+	select {
+	case err := <-results:
+		var outcome *pulseGitSignalOutcome
+		if !errors.As(err, &outcome) || !errors.Is(err, context.Canceled) || outcome.ExitCode() != 143 {
+			t.Fatalf("Run() error = %v, want SIGTERM outcome with code 143", err)
+		}
+	case <-time.After(pulseGitFixtureShutdownTimeout):
+		t.Fatal("Git child process group did not stop")
+	}
+	if !waitForPulseGitGone(pid, pulseGitFixtureShutdownTimeout) {
+		t.Fatalf("grandchild %d remained after Git cancellation", pid)
+	}
+}
+
+func waitForPulseGitPID(t *testing.T, path string) int {
+	t.Helper()
+	deadline := time.Now().Add(pulseGitFixtureStartupTimeout)
+	for time.Now().Before(deadline) {
+		contents, err := os.ReadFile(path)
+		if err == nil {
+			value := strings.TrimSpace(string(contents))
+			if value == "" {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			pid, parseErr := strconv.Atoi(value)
+			if parseErr != nil {
+				t.Fatalf("parse Git child pid %q: %v", contents, parseErr)
+			}
+			return pid
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read Git child pid: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Git child pid was not recorded")
+	return 0
+}
+
+func waitForPulseGitGone(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
+}

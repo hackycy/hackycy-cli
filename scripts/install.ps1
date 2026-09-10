@@ -3,10 +3,12 @@
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "hackycy/hackycy-cli"
-$BinaryName = "ycy.exe"
-$InstallDir = "$env:USERPROFILE\.ycy-cli\bin"
+$Repo = if ($env:YCY_INSTALL_REPO) { $env:YCY_INSTALL_REPO } else { "hackycy/hackycy-cli" }
+$BinaryName = if ($env:YCY_INSTALL_BINARY_NAME) { $env:YCY_INSTALL_BINARY_NAME } else { "ycy.exe" }
+$InstallDir = if ($env:YCY_INSTALL_DIR) { $env:YCY_INSTALL_DIR } else { "$env:USERPROFILE\.ycy-cli\bin" }
 $ChecksumsFile = "SHA256SUMS"
+$ApiUrl = if ($env:YCY_INSTALL_API_URL) { $env:YCY_INSTALL_API_URL } else { "https://api.github.com/repos/$Repo/releases/latest" }
+$DownloadBaseUrl = if ($env:YCY_INSTALL_DOWNLOAD_BASE) { $env:YCY_INSTALL_DOWNLOAD_BASE } else { "https://github.com/$Repo/releases/download" }
 
 function Write-Info {
     param([string]$Message)
@@ -78,7 +80,7 @@ try {
 
     # 1. Get latest version
     Write-Info "Fetching latest version..."
-    $Release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ Accept = "application/vnd.github.v3+json" }
+    $Release = Invoke-RestMethod -Uri $ApiUrl -Headers @{ Accept = "application/vnd.github.v3+json" }
     $Version = $Release.tag_name
 
     if (-not $Version) {
@@ -88,8 +90,16 @@ try {
     Write-Info "Latest version: $Version"
 
     # 2. Download binary
-    $ArtifactName = "ycy-windows-x64.exe"
-    $DownloadUrl = "https://github.com/$Repo/releases/download/$Version/$ArtifactName"
+    $architecture = if ($env:YCY_INSTALL_ARCH) { $env:YCY_INSTALL_ARCH } else { [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() }
+    switch ($architecture.ToLowerInvariant()) {
+        "x64" { $publicArchitecture = "x64" }
+        "amd64" { $publicArchitecture = "x64" }
+        "arm64" { $publicArchitecture = "arm64" }
+        "aarch64" { $publicArchitecture = "arm64" }
+        default { Write-Error "Unsupported architecture: $architecture" }
+    }
+    $ArtifactName = "ycy-windows-$publicArchitecture.exe"
+    $DownloadUrl = "$DownloadBaseUrl/$Version/$ArtifactName"
     $Asset = $Release.assets | Where-Object { $_.name -eq $ArtifactName } | Select-Object -First 1
     if (-not $Asset) {
         Write-Error "Failed to find release asset metadata for $ArtifactName."
@@ -100,7 +110,7 @@ try {
         $ExpectedHash = $Asset.digest.Substring(7).ToLowerInvariant()
     }
     else {
-        $ChecksumsUrl = "https://github.com/$Repo/releases/download/$Version/$ChecksumsFile"
+        $ChecksumsUrl = "$DownloadBaseUrl/$Version/$ChecksumsFile"
         $ChecksumsContent = (Invoke-WebRequest -Uri $ChecksumsUrl -UseBasicParsing).Content
         $ExpectedHash = Get-ExpectedHash -ChecksumsContent $ChecksumsContent -ArtifactName $ArtifactName
     }
@@ -170,10 +180,12 @@ try {
     }
 
     # 3. Add to PATH
-    $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-    if ($CurrentPath -notlike "*$InstallDir*") {
-        [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$CurrentPath", "User")
-        Write-Info "Added $InstallDir to your PATH."
+    if ($env:YCY_INSTALL_SKIP_PATH -ne "1") {
+        $CurrentPath = [Environment]::GetEnvironmentVariable("PATH", "User")
+        if ($CurrentPath -notlike "*$InstallDir*") {
+            [Environment]::SetEnvironmentVariable("PATH", "$InstallDir;$CurrentPath", "User")
+            Write-Info "Added $InstallDir to your PATH."
+        }
     }
 
     # 4. Success message

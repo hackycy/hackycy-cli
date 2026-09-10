@@ -1,0 +1,10 @@
+ycy config cm remove
+Remove a commit message provider profile
+Usage:
+  ycy config cm remove <profile> [flags]
+Flags:
+  -h, --help	help for remove
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

@@ -1,0 +1,20 @@
+ycy git cm
+Generate an Angular-style commit message from uncommitted changes
+Usage:
+  ycy git cm [flags]
+Flags:
+  -b, --body	Allow a short commit body
+  -d, --dry-run	Generate and print only
+  -h, --help	help for cm
+  -l, --lang	Commit message language: en or zh
+  --profile	CM provider profile to use
+  -p, --push	Push to remote after creating the commit, defaults to origin
+  -s, --stage	Select files to stage before generating
+  -a, --stage-all	Stage all changes before generating
+  -c, --stage-push	Select files to stage, commit, then push, defaults to origin
+  -S, --staged	Only use staged changes
+  --timeout-ms	Provider request timeout in milliseconds
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

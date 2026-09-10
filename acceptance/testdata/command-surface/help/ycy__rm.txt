@@ -1,0 +1,12 @@
+ycy rm
+Remove files/dirs, or smartly clean project artifacts when no path given
+Usage:
+  ycy rm [paths...] [flags]
+Flags:
+  -d, --depth	Smart scan depth (default: 5)
+  -f, --force	Skip confirmation prompt
+  -h, --help	help for rm
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

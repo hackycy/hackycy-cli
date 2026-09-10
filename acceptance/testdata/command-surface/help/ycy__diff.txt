@@ -1,0 +1,14 @@
+ycy diff
+Compare two directories in a browser
+Usage:
+  ycy diff <baseline-directory> <target-directory> [flags]
+Flags:
+  -x, --exclude	Add an exclusion
+  -h, --help	help for diff
+  --no-gitignore	Do not apply Target Directory .gitignore files
+  -p, --port	Port to serve on
+  --public	Make the diff available on the local network
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

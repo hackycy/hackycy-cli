@@ -1,0 +1,17 @@
+ycy config cm
+Manage CM profiles
+Usage:
+  ycy config cm [flags]
+Commands:
+  add	Add a CM profile
+  list	List configured CM profiles
+  remove	Remove a commit message provider profile
+  set	Set an optional commit message provider profile value
+  test	Test a commit message provider profile
+  use	Set the default commit message provider profile
+Flags:
+  -h, --help	help for cm
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

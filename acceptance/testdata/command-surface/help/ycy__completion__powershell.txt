@@ -1,0 +1,11 @@
+ycy completion powershell
+Generate the autocompletion script for powershell
+Usage:
+  ycy completion powershell [flags]
+Flags:
+  -h, --help	help for powershell
+  --no-descriptions	disable completion descriptions
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

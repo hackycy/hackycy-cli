@@ -1,0 +1,10 @@
+ycy config cm list
+List configured CM profiles
+Usage:
+  ycy config cm list [flags]
+Flags:
+  -h, --help	help for list
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

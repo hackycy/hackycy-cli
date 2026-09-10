@@ -1,0 +1,16 @@
+ycy git heat
+Show frequently changed files and directories in recent commits
+Usage:
+  ycy git heat [flags]
+Flags:
+  -d, --days	Number of recent days to inspect
+  -h, --help	help for heat
+  -n, --limit	Number of recent commits to inspect
+  -q, --query	Highlight files or directories that contain text
+  -r, --relative-time	Show Changed at as relative time
+  -s, --sort	Sort by count or path
+  -t, --type	Report type: files or directories
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

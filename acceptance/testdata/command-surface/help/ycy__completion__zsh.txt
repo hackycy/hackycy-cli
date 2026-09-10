@@ -1,0 +1,11 @@
+ycy completion zsh
+Generate the autocompletion script for zsh
+Usage:
+  ycy completion zsh [flags]
+Flags:
+  -h, --help	help for zsh
+  --no-descriptions	disable completion descriptions
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

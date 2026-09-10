@@ -1,0 +1,12 @@
+ycy zip
+Zip a directory into a zip file
+Usage:
+  ycy zip [directory] [flags]
+Flags:
+  -h, --help	help for zip
+  -d, --with-dir	Include the directory name as a top-level folder in the zip
+  -w, --without-open	Do not open the zip file after creation
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

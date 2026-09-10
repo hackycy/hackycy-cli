@@ -1,0 +1,12 @@
+ycy export
+Export command output
+Usage:
+  ycy export [flags]
+Commands:
+  env	Export .env file contents as JSON
+Flags:
+  -h, --help	help for export
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

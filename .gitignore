@@ -1,20 +1,44 @@
-.cache
 .DS_Store
 .idea
-*.log
-*.tgz
-coverage
-dist
-lib-cov
-logs
-node_modules
-temp
-cache
-.eslintcache
-*.zip
+.cache
+.tmp
 .agents
 .claude
-.tmp
+
+# Go build and test output
+/build/
+/coverage/
+coverage.out
+*.test
+*.prof
+
+# Frontend dependencies and generated Vite output
+/node_modules/
+/web/node_modules/
+/web/dist/
+/web/.eslintcache
+/.eslintcache
+*.map
+playwright-report/
+test-results/
+
+# Generated target-specific 7-Zip embedding payloads
+/internal/sevenzipruntime/payload/
+
+# Pinned development-tool binary and local caches
+/tools/lefthook/bin/
+
+# Local release and legacy build artifacts
+/ycy
+/ycy-*
+/SHA256SUMS
+/release/
+*.tgz
+*.zip
+
+# Generated terminal acceptance and prototype binaries
+/.scratch/terminal-experience-modernization/g2-acceptance/ycy
+/internal/terminal/prototype-vivid/prototype-vivid
+
+# Workspace-local tooling state
 skills-lock.json
-playwright-report
-test-results

@@ -1,0 +1,19 @@
+ycy fs
+Browse a directory in a browser
+Usage:
+  ycy fs [directory] [flags]
+Flags:
+  --account	Account in username:password form (repeatable)
+  -a, --address	Address to bind
+  --chunked-upload	Enable retryable large-file uploads
+  -h, --help	help for fs
+  -m, --manage	Enable filesystem management
+  -p, --port	Port to serve on
+  --safe-html	Serve HTML and XHTML originals as sandboxed downloads
+  --session-dir	Directory for Go-owned login sessions
+  --session-idle-days	Session idle lifetime in days
+  --upload-chunk-size	Chunk size in MiB (4-16)
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

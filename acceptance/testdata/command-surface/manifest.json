@@ -1,0 +1,1906 @@
+{
+  "schemaVersion": 1,
+  "binary": "ycy",
+  "version": "0.0.0-dev",
+  "commands": [
+    {
+      "path": "ycy",
+      "use": "ycy",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "version",
+          "shorthand": "V",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        }
+      ]
+    },
+    {
+      "path": "ycy completion",
+      "use": "completion",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy completion bash",
+      "use": "bash",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "no-descriptions",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy completion fish",
+      "use": "fish",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "no-descriptions",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy completion powershell",
+      "use": "powershell",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "no-descriptions",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy completion zsh",
+      "use": "zsh",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "no-descriptions",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config",
+      "use": "config",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm",
+      "use": "cm",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm add",
+      "use": "add",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm list",
+      "use": "list",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm remove",
+      "use": "remove \u003cprofile\u003e",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm set",
+      "use": "set \u003cprofile\u003e \u003ckey\u003e \u003cvalue\u003e",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm test",
+      "use": "test [profile]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config cm use",
+      "use": "use \u003cprofile\u003e",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config fork",
+      "use": "fork",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config fork add",
+      "use": "add",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config fork list",
+      "use": "list",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config fork remove",
+      "use": "remove",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy diff",
+      "use": "diff \u003cbaseline-directory\u003e \u003ctarget-directory\u003e",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "exclude",
+          "shorthand": "x",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "no-gitignore",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "port",
+          "shorthand": "p",
+          "type": "string",
+          "default": "1205",
+          "scope": "local"
+        },
+        {
+          "name": "public",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy export",
+      "use": "export",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy export env",
+      "use": "env [dir]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "env",
+          "shorthand": "e",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "merge",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "out",
+          "shorthand": "o",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy fs",
+      "use": "fs [directory]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "account",
+          "type": "stringArray",
+          "default": "[]",
+          "scope": "local"
+        },
+        {
+          "name": "address",
+          "shorthand": "a",
+          "type": "string",
+          "default": "0.0.0.0",
+          "scope": "local"
+        },
+        {
+          "name": "chunked-upload",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "manage",
+          "shorthand": "m",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "port",
+          "shorthand": "p",
+          "type": "string",
+          "default": "1204",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "safe-html",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "session-dir",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "session-idle-days",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "upload-chunk-size",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy git",
+      "use": "git",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy git cm",
+      "use": "cm",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "body",
+          "shorthand": "b",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "dry-run",
+          "shorthand": "d",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "lang",
+          "shorthand": "l",
+          "type": "string",
+          "default": "en",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "profile",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "push",
+          "shorthand": "p",
+          "type": "string",
+          "default": "",
+          "noOptDefault": "origin",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "stage",
+          "shorthand": "s",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "stage-all",
+          "shorthand": "a",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "stage-push",
+          "shorthand": "c",
+          "type": "string",
+          "default": "",
+          "noOptDefault": "origin",
+          "scope": "local"
+        },
+        {
+          "name": "staged",
+          "shorthand": "S",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "timeout-ms",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy git fork",
+      "use": "fork \u003crepo\u003e [dest]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy git heat",
+      "use": "heat",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "days",
+          "shorthand": "d",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "limit",
+          "shorthand": "n",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "query",
+          "shorthand": "q",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "relative-time",
+          "shorthand": "r",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "sort",
+          "shorthand": "s",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "type",
+          "shorthand": "t",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy git pulse",
+      "use": "pulse [directory]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "days",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy help",
+      "use": "help [command]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy rm",
+      "use": "rm [paths...]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "depth",
+          "shorthand": "d",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "force",
+          "shorthand": "f",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy run",
+      "use": "run [path]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy tunnel",
+      "use": "tunnel",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy tunnel connect",
+      "use": "connect",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "server",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy tunnel server",
+      "use": "server",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "address",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "advertise-frp-addr",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "control-port",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "data-dir",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "frp-port",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "http-port",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "port-range",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "session-idle-days",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy upgrade",
+      "use": "upgrade",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy zip",
+      "use": "zip [directory]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "with-dir",
+          "shorthand": "d",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "without-open",
+          "shorthand": "w",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        }
+      ]
+    }
+  ]
+}

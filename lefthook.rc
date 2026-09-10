@@ -1,0 +1,4 @@
+ROOT=$(git rev-parse --show-toplevel)
+export LEFTHOOK_BIN="$ROOT/tools/lefthook/bin/lefthook"
+export GOWORK=off
+export GOPROXY=off

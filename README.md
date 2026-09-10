@@ -1,60 +1,35 @@
-# hackycy-cli
+# ycy
 
-[![License][license-src]][license-href]
+`ycy` 是正在从 Bun 迁移到 Go 的命令行工具。当前开发构建版本为 `0.0.0-dev`；活动代码是 CGO-free Go CLI，`legacy/bun/` 仅保留为行为兼容的只读参考，不能作为当前开发入口。仓库结构契约见[项目结构文档](docs/project-layout.md)。
 
-hackycy的脚手架工具集
+## 开始运行
 
-## 安装
+已具备项目要求的 Go、Node.js、pnpm 和 Make 后，在仓库根目录执行一次：
 
-### macOS & Linux
-
-``` bash
-curl -fsSL https://raw.githubusercontent.com/hackycy/hackycy-cli/main/scripts/install.sh | bash
+```sh
+make bootstrap
+make hooks-install
 ```
 
-### Windows
+构建并试跑当前 CLI：
 
-``` powershell
-powershell -c "irm https://raw.githubusercontent.com/hackycy/hackycy-cli/main/scripts/install.ps1 | iex"
+```sh
+make build
+./build/ycy --help
+./build/ycy --version
 ```
 
-> Windows users upgrading from v0.0.46 or earlier must run this installer once before using `ycy upgrade`.
+`make build` 会先构建三个 Vite 前端入口，再将 `web/dist` 和运行所需资源嵌入 `build/ycy`。因此这是本项目的标准启动方式，而不是直接运行旧的 Bun 代码。
 
-## 运行
+常用校验命令：
 
-``` bash
-$ ycy --help
-Usage: ycy [options] [command]
-
-Options:
-  -V, --version                output the version number
-  -h, --help                   display help for command
-
-Commands:
-  export                       Export utilities
-  config                        Manage ycy configuration
-  git                          Git utilities
-  rm [options] [paths...]      Remove files/dirs, or smartly clean project artifacts when no path given
-  fs [options] [directory]     Browse files in a directory (defaults to current directory)
-  diff [options] <baseline-directory> <target-directory>
-                               Compare two directories in a browser
-  zip [options] [directory]    Zip a directory into a zip file
-  run [path]                   Run package.json scripts
-  tunnel                       Manage trusted tunnel clients and tunnel definitions
-  upgrade                      Upgrade cli to the latest version
-  help [command]               display help for command
+```sh
+make check       # 完整检查：Web、Go、锁文件和活动树隔离
+make check-web   # 只检查并构建 Web
+go test ./...    # 只执行 Go 测试；需要已有 web/dist
+make fmt         # 有意应用 Go 格式化与 ESLint 自动修复时使用
 ```
 
-## Thanks
+## 使用与调试
 
-- [frp](https://github.com/fatedier/frp)
-- [7z](https://www.7-zip.org/)
-
-## License
-
-[MIT](./LICENSE) License © [hackycy](https://github.com/hackycy)
-
-<!-- Badges -->
-
-[license-src]: https://img.shields.io/github/license/hackycy/hackycy-cli.svg?style=flat&colorA=080f12&colorB=1fa669
-[license-href]: https://github.com/hackycy/hackycy-cli/blob/main/LICENSE
+完整的本地使用、前后端联调、VS Code/Delve 断点调试和代码导航说明见[开发指南](DEVELOPMENT.md)。质量门、Git hook 和跨平台构建细节见[贡献指南](CONTRIBUTING.md)。

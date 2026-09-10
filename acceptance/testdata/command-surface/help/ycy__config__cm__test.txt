@@ -1,0 +1,10 @@
+ycy config cm test
+Test a commit message provider profile
+Usage:
+  ycy config cm test [profile] [flags]
+Flags:
+  -h, --help	help for test
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics
