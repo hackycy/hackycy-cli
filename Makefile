@@ -18,7 +18,7 @@ prototype-terminal:
 bootstrap:
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) version
 	@node --version
-	@test "$$($(PNPM) --version)" = "11.13.0" || { printf '%s\n' 'pnpm 11.13.0 is required'; exit 1; }
+	@$(PNPM) --version
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) mod download
 	@cd tools/lefthook && GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) mod download all
 	@mkdir -p tools/lefthook/bin

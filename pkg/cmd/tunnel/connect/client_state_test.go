@@ -163,6 +163,25 @@ func TestClientAppliedStateRoundTripsAtomicallyAndIgnoresInvalidCache(t *testing
 	}
 }
 
+func TestClientRestartResultRoundTripsAtomicallyAndRejectsInvalidState(t *testing.T) {
+	directory := t.TempDir()
+	want := tunnelruntime.RestartResult{Generation: 7, Success: false, Error: &tunnelruntime.StructuredRuntimeError{Code: "CONFIGURATION_FAILED", Message: "invalid local configuration"}}
+	if err := WriteClientRestartResult(directory, want); err != nil {
+		t.Fatalf("WriteClientRestartResult() error = %v", err)
+	}
+	got, found, err := ReadClientRestartResult(directory)
+	if err != nil || !found || got.Generation != want.Generation || got.Success || got.Error == nil || got.Error.Code != want.Error.Code {
+		t.Fatalf("ReadClientRestartResult() = (%#v, %t, %v)", got, found, err)
+	}
+	assertClientPrivateFile(t, clientRestartResultPath(directory), 0o600)
+	if err := os.WriteFile(clientRestartResultPath(directory), []byte(`{"generation":7,"success":true,"error":{"code":"FAIL","message":"unexpected"}}`), 0o600); err != nil {
+		t.Fatalf("write invalid restart result: %v", err)
+	}
+	if _, _, err := ReadClientRestartResult(directory); err == nil {
+		t.Fatal("ReadClientRestartResult(invalid) error = nil")
+	}
+}
+
 func TestClientStateRootUsesPlatformStateRoot(t *testing.T) {
 	root, err := clientStateRoot(func(name string) string {
 		if name == "XDG_STATE_HOME" {

@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"errors"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"sync"
 	"testing"
+	"time"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 func TestServerAgentGatewayRequiresControlPlaneAndFRPSState(t *testing.T) {
@@ -195,7 +197,56 @@ func TestServerAgentGatewayProjectsOnlyActiveConnectionsAsConnectedRuntime(t *te
 	}
 }
 
-func TestServerAgentGatewayRestartsOnlyPresentedActiveConnections(t *testing.T) {
+func TestServerAgentGatewayObservesConnectionAndProcessStateChanges(t *testing.T) {
+	state := openServerDomainState(t)
+	plane := openServerControlPlane(t, state)
+	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
+		ControlPlane: plane,
+		FRPS:         &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+	})
+	if err != nil {
+		t.Fatalf("NewServerAgentGateway() error = %v", err)
+	}
+	client, err := plane.CreateClient(context.Background(), "environment-admin", "observed agent")
+	if err != nil {
+		t.Fatalf("CreateClient() error = %v", err)
+	}
+	events := make(chan string, 3)
+	stop := gateway.ObserveAgentChanges(func(clientID string) { events <- clientID })
+	t.Cleanup(stop)
+	reservation, err := gateway.Authorize(context.Background(), "Bearer "+client.Token)
+	if err != nil {
+		t.Fatalf("Authorize() error = %v", err)
+	}
+	connection := reservation.Activate()
+	if connection == nil {
+		t.Fatal("Activate() = nil")
+	}
+	if protocolError := connection.AcceptHello(context.Background(), []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); protocolError != nil {
+		t.Fatalf("AcceptHello() error = %v", protocolError)
+	}
+	assertServerAgentChange(t, events, client.ID, "connect")
+	if protocolError := connection.AcceptProcessState(context.Background(), []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); protocolError != nil {
+		t.Fatalf("AcceptProcessState() error = %v", protocolError)
+	}
+	assertServerAgentChange(t, events, client.ID, "process state")
+	connection.Close()
+	assertServerAgentChange(t, events, client.ID, "disconnect")
+}
+
+func assertServerAgentChange(t *testing.T, events <-chan string, clientID, change string) {
+	t.Helper()
+	select {
+	case got := <-events:
+		if got != clientID {
+			t.Fatalf("%s event client = %q, want %q", change, got, clientID)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("%s event was not observed", change)
+	}
+}
+
+func TestServerAgentGatewayPresentsDurableRestartGenerationToActiveConnection(t *testing.T) {
 	state := openServerDomainState(t)
 	plane := openServerControlPlane(t, state)
 	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
@@ -209,14 +260,6 @@ func TestServerAgentGatewayRestartsOnlyPresentedActiveConnections(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateClient() error = %v", err)
 	}
-	before, err := plane.GetClient(context.Background(), client.ID)
-	if err != nil {
-		t.Fatalf("GetClient(before restart) error = %v", err)
-	}
-	if gateway.RestartFRPC(client.ID) {
-		t.Fatal("RestartFRPC() succeeded without an active connection")
-	}
-
 	reservation, err := gateway.Authorize(context.Background(), "Bearer "+client.Token)
 	if err != nil {
 		t.Fatalf("Authorize() error = %v", err)
@@ -226,32 +269,22 @@ func TestServerAgentGatewayRestartsOnlyPresentedActiveConnections(t *testing.T) 
 		t.Fatal("Activate() = nil")
 	}
 	t.Cleanup(connection.Close)
-	if gateway.RestartFRPC(client.ID) {
-		t.Fatal("RestartFRPC() succeeded before welcome presentation")
-	}
-
 	var frames []any
 	connection.presentationActive = true
 	connection.writeFrame = func(frame any) error {
 		frames = append(frames, frame)
 		return nil
 	}
-	if !gateway.RestartFRPC(client.ID) {
-		t.Fatal("RestartFRPC() = false for a presented active connection")
+	updated, err := plane.RequestClientRestart(context.Background(), client.ID)
+	if err != nil {
+		t.Fatalf("RequestClientRestart() error = %v", err)
 	}
 	if len(frames) != 1 {
 		t.Fatalf("restart frames = %#v", frames)
 	}
-	restart, ok := frames[0].(tunnelruntime.RestartFRPC)
-	if !ok || restart.Type != "restart_frpc" || restart.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion {
-		t.Fatalf("restart frame = %#v", frames[0])
-	}
-	after, err := plane.GetClient(context.Background(), client.ID)
-	if err != nil {
-		t.Fatalf("GetClient(after restart) error = %v", err)
-	}
-	if after.Remark != before.Remark || after.Token != before.Token || after.DesiredRevision != before.DesiredRevision || after.LastAppliedRevision != before.LastAppliedRevision || after.RevocationPending != before.RevocationPending {
-		t.Fatalf("restart changed durable client state: before=%#v after=%#v", before, after)
+	desired, ok := frames[0].(tunnelruntime.DesiredState)
+	if !ok || desired.Type != "desired_state" || desired.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || desired.DesiredRestartGeneration != updated.DesiredRestartGeneration {
+		t.Fatalf("desired frame = %#v", frames[0])
 	}
 }
 
@@ -293,27 +326,31 @@ func TestServerAgentGatewayRevokesActiveConnectionsAfterTokenMutation(t *testing
 				t.Fatal("Activate() = nil")
 			}
 			t.Cleanup(connection.Close)
-			var frames []any
+			frames := make(chan any, 1)
 			connection.presentationActive = true
 			connection.writeFrame = func(frame any) error {
-				frames = append(frames, frame)
+				frames <- frame
 				return nil
 			}
-			var closeError *ServerAgentProtocolError
+			closed := make(chan *ServerAgentProtocolError, 1)
 			connection.AttachCloser(func(protocolError *ServerAgentProtocolError) {
-				closeError = protocolError
+				closed <- protocolError
 			})
 
 			if err := test.revoke(context.Background(), plane, client.ID); err != nil {
 				t.Fatalf("token mutation error = %v", err)
 			}
-			if len(frames) != 1 {
-				t.Fatalf("revoke frames = %#v", frames)
+			var frame any
+			select {
+			case frame = <-frames:
+			case <-time.After(time.Second):
+				t.Fatal("revoke frame was not delivered")
 			}
-			revoke, ok := frames[0].(tunnelruntime.Revoke)
+			revoke, ok := frame.(tunnelruntime.Revoke)
 			if !ok || revoke.Type != "revoke" || revoke.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || revoke.Reason != test.reason {
-				t.Fatalf("revoke frame = %#v", frames[0])
+				t.Fatalf("revoke frame = %#v", frame)
 			}
+			closeError := <-closed
 			if closeError == nil || closeError.CloseCode != serverAgentCloseRevoked {
 				t.Fatalf("revoke close = %#v, want %d", closeError, serverAgentCloseRevoked)
 			}

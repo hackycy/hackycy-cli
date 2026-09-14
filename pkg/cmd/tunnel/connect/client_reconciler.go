@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 var ErrClientReconcilerStopped = errors.New("Tunnel client is stopping")
@@ -212,6 +213,9 @@ func (reconciler *ClientReconciler) Restart() error {
 		return clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("Tunnel client FRP runtime cannot restart"))
 	}
 	if err := restarter.Restart(); err != nil {
+		if clientReconciliationErrorCode(err) != "" {
+			return err
+		}
 		return clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("restart frpc: %w", err))
 	}
 	return nil

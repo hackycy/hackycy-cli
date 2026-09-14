@@ -2,6 +2,7 @@ export type AccountRole = 'admin' | 'user'
 export type AccountKind = 'environment' | 'local'
 export type ClientConnectionState = 'connected' | 'disconnected' | 'incompatible' | 'revocation_pending'
 export type FrpProcessState = 'stopped' | 'running' | 'recovering' | 'configuration_failed'
+export type RestartState = 'idle' | 'pending' | 'failed'
 export type TunnelPresentationState = 'Disabled' | 'Pending' | 'Applied' | 'Error'
 export type TunnelProtocol = 'http' | 'tcp' | 'udp'
 
@@ -58,6 +59,12 @@ export interface ClientRecord {
   revocationPending: boolean
   createdAt: string
   rotatedAt: string | null
+  restart: {
+    state: RestartState
+    desiredGeneration: number
+    completedGeneration: number
+    error?: { code: string, message: string }
+  }
 }
 
 export interface ClientRuntimeState {

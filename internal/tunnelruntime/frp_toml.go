@@ -22,7 +22,7 @@ type FRPServerConfiguration struct {
 	LogLevel         string
 }
 
-// FRPClientConfiguration contains one authenticated v3 snapshot for frpc.
+// FRPClientConfiguration contains one authenticated v4 snapshot for frpc.
 type FRPClientConfiguration struct {
 	AdvertisedFRPHost string
 	AdvertisedFRPPort int64

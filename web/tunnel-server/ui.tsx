@@ -14,9 +14,9 @@ export function navigate(path: string): void {
 function statusClass(value: string): string {
   if (['connected', 'running', 'Applied'].includes(value))
     return 'status status-good'
-  if (['recovering', 'Pending', 'revocation_pending'].includes(value))
+  if (['recovering', 'Pending', 'pending', 'revocation_pending'].includes(value))
     return 'status status-warn'
-  if (['incompatible', 'configuration_failed', 'Error'].includes(value))
+  if (['incompatible', 'configuration_failed', 'Error', 'failed'].includes(value))
     return 'status status-error'
   return 'status status-muted'
 }

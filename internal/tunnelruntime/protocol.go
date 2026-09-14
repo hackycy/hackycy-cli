@@ -7,11 +7,11 @@ import (
 	"runtime"
 )
 
-const TunnelProtocolVersion = 3
+const TunnelProtocolVersion = 4
 
 var ErrUnsupportedPlatform = errors.New("unsupported Tunnel platform")
 
-// WirePlatform and WireArchitecture retain the protocol-v3 vocabulary rather
+// WirePlatform and WireArchitecture retain the protocol-v4 vocabulary rather
 // than exposing raw GOOS and GOARCH values to a peer.
 type WirePlatform string
 type WireArchitecture string
@@ -25,13 +25,13 @@ const (
 	WireArchitectureARM64 WireArchitecture = "arm64"
 )
 
-// WireTarget identifies one protocol-v3 and FRP target.
+// WireTarget identifies one protocol-v4 and FRP target.
 type WireTarget struct {
 	Platform     WirePlatform
 	Architecture WireArchitecture
 }
 
-// WireTargetForGo maps one Go target to the protocol-v3 wire vocabulary.
+// WireTargetForGo maps one Go target to the protocol-v4 wire vocabulary.
 func WireTargetForGo(goos, goarch string) (WireTarget, error) {
 	platform, found := map[string]WirePlatform{
 		"darwin":  WirePlatformDarwin,
@@ -51,7 +51,7 @@ func WireTargetForGo(goos, goarch string) (WireTarget, error) {
 	return WireTarget{Platform: platform, Architecture: architecture}, nil
 }
 
-// GoTarget maps a protocol-v3 target back to its Go target.
+// GoTarget maps a protocol-v4 target back to its Go target.
 func (target WireTarget) GoTarget() (string, string, error) {
 	goos, found := map[WirePlatform]string{
 		WirePlatformDarwin: "darwin",
@@ -71,7 +71,7 @@ func (target WireTarget) GoTarget() (string, string, error) {
 	return goos, goarch, nil
 }
 
-// CurrentWireTarget reports the current executable's protocol-v3 target.
+// CurrentWireTarget reports the current executable's protocol-v4 target.
 func CurrentWireTarget() (WireTarget, error) {
 	return WireTargetForGo(runtime.GOOS, runtime.GOARCH)
 }
@@ -138,7 +138,7 @@ type TunnelOptions struct {
 	HTTP        *TunnelHTTPOptions     `json:"http"`
 }
 
-// TunnelDefinition is the protocol-v3 snapshot shape. Validation and database
+// TunnelDefinition is the protocol-v4 snapshot shape. Validation and database
 // ownership remain with the later server-domain slice.
 type TunnelDefinition struct {
 	ID            string         `json:"id"`
@@ -207,29 +207,32 @@ type StructuredRuntimeError struct {
 }
 
 type AgentHello struct {
-	Type                  string `json:"type"`
-	TunnelProtocolVersion int    `json:"tunnelProtocolVersion"`
-	YCYVersion            string `json:"ycyVersion"`
-	Platform              string `json:"platform"`
-	Architecture          string `json:"architecture"`
-	LastAppliedRevision   int64  `json:"lastAppliedRevision"`
+	Type                  string         `json:"type"`
+	TunnelProtocolVersion int            `json:"tunnelProtocolVersion"`
+	YCYVersion            string         `json:"ycyVersion"`
+	Platform              string         `json:"platform"`
+	Architecture          string         `json:"architecture"`
+	LastAppliedRevision   int64          `json:"lastAppliedRevision"`
+	LastRestartResult     *RestartResult `json:"lastRestartResult,omitempty"`
 }
 
 type AgentWelcome struct {
-	Type                  string                 `json:"type"`
-	TunnelProtocolVersion int                    `json:"tunnelProtocolVersion"`
-	RequiredFRPVersion    string                 `json:"requiredFrpVersion"`
-	Artifact              FRPArtifactDescription `json:"artifact"`
-	AdvertisedFRPHost     string                 `json:"advertisedFrpHost"`
-	AdvertisedFRPPort     int64                  `json:"advertisedFrpPort"`
-	InternalFRPToken      string                 `json:"internalFrpToken"`
-	Snapshot              TunnelSnapshot         `json:"snapshot"`
+	Type                     string                 `json:"type"`
+	TunnelProtocolVersion    int                    `json:"tunnelProtocolVersion"`
+	RequiredFRPVersion       string                 `json:"requiredFrpVersion"`
+	Artifact                 FRPArtifactDescription `json:"artifact"`
+	AdvertisedFRPHost        string                 `json:"advertisedFrpHost"`
+	AdvertisedFRPPort        int64                  `json:"advertisedFrpPort"`
+	InternalFRPToken         string                 `json:"internalFrpToken"`
+	Snapshot                 TunnelSnapshot         `json:"snapshot"`
+	DesiredRestartGeneration int64                  `json:"desiredRestartGeneration"`
 }
 
 type DesiredState struct {
-	Type                  string         `json:"type"`
-	TunnelProtocolVersion int            `json:"tunnelProtocolVersion"`
-	Snapshot              TunnelSnapshot `json:"snapshot"`
+	Type                     string         `json:"type"`
+	TunnelProtocolVersion    int            `json:"tunnelProtocolVersion"`
+	Snapshot                 TunnelSnapshot `json:"snapshot"`
+	DesiredRestartGeneration int64          `json:"desiredRestartGeneration"`
 }
 
 type ApplyResult struct {
@@ -247,9 +250,12 @@ type ProcessState struct {
 	Error                 *StructuredRuntimeError `json:"error,omitempty"`
 }
 
-type RestartFRPC struct {
-	Type                  string `json:"type"`
-	TunnelProtocolVersion int    `json:"tunnelProtocolVersion"`
+type RestartResult struct {
+	Type                  string                  `json:"type,omitempty"`
+	TunnelProtocolVersion int                     `json:"tunnelProtocolVersion,omitempty"`
+	Generation            int64                   `json:"generation"`
+	Success               bool                    `json:"success"`
+	Error                 *StructuredRuntimeError `json:"error,omitempty"`
 }
 
 type Revoke struct {

@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
+	"sync"
 	"testing"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 func TestServerWorkspaceScopesClientAndTunnelOperationsByOwner(t *testing.T) {
@@ -166,6 +168,79 @@ func TestServerWorkspaceLimitsFRPSControlToAdministrators(t *testing.T) {
 	assertServerDomainCode(t, unconfigured.ControlFRPS(context.Background(), ServerFRPSActionStart), "FRPS_UNAVAILABLE")
 }
 
+func TestServerWorkspaceFiltersAgentRuntimeChangesByClientOwner(t *testing.T) {
+	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatalf("OpenState() error = %v", err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	accounts := openServerAccounts(t, state, "admin", "environment-secret")
+	sessions := openServerSessions(t, accounts, state)
+	plane := openServerControlPlane(t, state)
+	admin := openWorkspaceAfterSignIn(t, sessions, accounts, plane, "admin", "environment-secret")
+	if _, err := admin.CreateLocalAccount(context.Background(), "alice", "alice-secret", AccountRoleUser); err != nil {
+		t.Fatalf("CreateLocalAccount(alice) error = %v", err)
+	}
+	if _, err := admin.CreateLocalAccount(context.Background(), "bob", "bob-secret", AccountRoleUser); err != nil {
+		t.Fatalf("CreateLocalAccount(bob) error = %v", err)
+	}
+	alice := openWorkspaceAfterSignIn(t, sessions, accounts, plane, "alice", "alice-secret")
+	bob := openWorkspaceAfterSignIn(t, sessions, accounts, plane, "bob", "bob-secret")
+	aliceClient, err := alice.CreateClient(context.Background(), "alice agent")
+	if err != nil {
+		t.Fatalf("alice CreateClient() error = %v", err)
+	}
+	bobClient, err := bob.CreateClient(context.Background(), "bob agent")
+	if err != nil {
+		t.Fatalf("bob CreateClient() error = %v", err)
+	}
+
+	changes := &serverWorkspaceTestAgentChanges{}
+	openObserved := func(username, password string) *ServerWorkspace {
+		grant, err := sessions.SignIn(context.Background(), username, password)
+		if err != nil {
+			t.Fatalf("SignIn(%q) error = %v", username, err)
+		}
+		workspace, err := OpenServerWorkspace(context.Background(), ServerWorkspaceDependencies{
+			Sessions: sessions, Accounts: accounts, ControlPlane: plane, AgentChanges: changes,
+		}, grant.Token)
+		if err != nil {
+			t.Fatalf("OpenServerWorkspace(%q) error = %v", username, err)
+		}
+		return workspace
+	}
+	adminEvents := make(chan ServerWorkspaceEvent, 2)
+	aliceEvents := make(chan ServerWorkspaceEvent, 2)
+	bobEvents := make(chan ServerWorkspaceEvent, 2)
+	stopAdmin, err := openObserved("admin", "environment-secret").Observe(context.Background(), func(event ServerWorkspaceEvent) { adminEvents <- event })
+	if err != nil {
+		t.Fatalf("admin Observe() error = %v", err)
+	}
+	t.Cleanup(stopAdmin)
+	stopAlice, err := openObserved("alice", "alice-secret").Observe(context.Background(), func(event ServerWorkspaceEvent) { aliceEvents <- event })
+	if err != nil {
+		t.Fatalf("alice Observe() error = %v", err)
+	}
+	t.Cleanup(stopAlice)
+	stopBob, err := openObserved("bob", "bob-secret").Observe(context.Background(), func(event ServerWorkspaceEvent) { bobEvents <- event })
+	if err != nil {
+		t.Fatalf("bob Observe() error = %v", err)
+	}
+	t.Cleanup(stopBob)
+
+	changes.Emit(aliceClient.ID)
+	assertServerWorkspaceChanged(t, adminEvents, "administrator")
+	assertServerWorkspaceChanged(t, aliceEvents, "alice")
+	select {
+	case event := <-bobEvents:
+		t.Fatalf("bob received alice agent event %q", event)
+	default:
+	}
+	changes.Emit(bobClient.ID)
+	assertServerWorkspaceChanged(t, adminEvents, "administrator")
+	assertServerWorkspaceChanged(t, bobEvents, "bob")
+}
+
 func TestServerWorkspaceLimitsCustom404PageReadingToAdministrators(t *testing.T) {
 	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})
 	if err != nil {
@@ -275,6 +350,52 @@ func TestServerWorkspaceLimitsCustom404PageWritingToAdministrators(t *testing.T)
 
 type serverWorkspaceTestFRPSController struct {
 	calls []ServerFRPSAction
+}
+
+type serverWorkspaceTestAgentChanges struct {
+	mu        sync.Mutex
+	next      uint64
+	listeners map[uint64]func(string)
+}
+
+func (changes *serverWorkspaceTestAgentChanges) ObserveAgentChanges(listener func(string)) func() {
+	changes.mu.Lock()
+	if changes.listeners == nil {
+		changes.listeners = make(map[uint64]func(string))
+	}
+	id := changes.next
+	changes.next++
+	changes.listeners[id] = listener
+	changes.mu.Unlock()
+	return func() {
+		changes.mu.Lock()
+		delete(changes.listeners, id)
+		changes.mu.Unlock()
+	}
+}
+
+func (changes *serverWorkspaceTestAgentChanges) Emit(clientID string) {
+	changes.mu.Lock()
+	listeners := make([]func(string), 0, len(changes.listeners))
+	for _, listener := range changes.listeners {
+		listeners = append(listeners, listener)
+	}
+	changes.mu.Unlock()
+	for _, listener := range listeners {
+		listener(clientID)
+	}
+}
+
+func assertServerWorkspaceChanged(t *testing.T, events <-chan ServerWorkspaceEvent, audience string) {
+	t.Helper()
+	select {
+	case event := <-events:
+		if event != ServerWorkspaceChanged {
+			t.Fatalf("%s agent event = %q", audience, event)
+		}
+	default:
+		t.Fatalf("%s did not receive agent event", audience)
+	}
 }
 
 func (controller *serverWorkspaceTestFRPSController) Start(context.Context) error {

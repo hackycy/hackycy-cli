@@ -3,16 +3,17 @@ package connect
 import (
 	"context"
 	"errors"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
-func TestClientAgentConnectProbesBeforeV3HelloAndPinnedWelcome(t *testing.T) {
+func TestClientAgentConnectProbesBeforeV4HelloAndPinnedWelcome(t *testing.T) {
 	artifact, err := tunnelruntime.CurrentFRPArtifact()
 	if err != nil {
 		t.Fatalf("CurrentFRPArtifact() error = %v", err)
@@ -122,6 +123,124 @@ func TestClientAgentConnectProbesBeforeV3HelloAndPinnedWelcome(t *testing.T) {
 	mu.Unlock()
 	if gotProbes != 2 || gotUpgrades != 2 || authenticated != 1 {
 		t.Fatalf("probe/upgrades/authenticated = %d/%d/%d, want 2/2/1", gotProbes, gotUpgrades, authenticated)
+	}
+}
+
+func TestClientControlConnectionTimesOutWhenPongIsMissing(t *testing.T) {
+	previousPing := clientControlPingInterval
+	previousRead := clientControlReadTimeout
+	clientControlPingInterval = 20 * time.Millisecond
+	clientControlReadTimeout = 60 * time.Millisecond
+	t.Cleanup(func() {
+		clientControlPingInterval = previousPing
+		clientControlReadTimeout = previousRead
+	})
+	artifact, err := tunnelruntime.CurrentFRPArtifact()
+	if err != nil {
+		t.Fatalf("CurrentFRPArtifact() error = %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !websocket.IsWebSocketUpgrade(request) {
+			writer.WriteHeader(http.StatusUpgradeRequired)
+			return
+		}
+		socket, upgradeErr := websocket.Upgrade(writer, request, nil, 0, 0)
+		if upgradeErr != nil {
+			t.Errorf("upgrade: %v", upgradeErr)
+			return
+		}
+		defer socket.Close()
+		socket.SetPingHandler(func(string) error { return nil })
+		var hello tunnelruntime.AgentHello
+		if err := socket.ReadJSON(&hello); err != nil {
+			return
+		}
+		if err := socket.WriteJSON(tunnelruntime.AgentWelcome{
+			Type: "welcome", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, RequiredFRPVersion: tunnelruntime.FRPVersion,
+			Artifact: artifact.Description, AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "token",
+			Snapshot: tunnelruntime.TunnelSnapshot{ClientKey: "client"},
+		}); err != nil {
+			return
+		}
+		for {
+			if _, _, err := socket.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	controlServer, err := normalizeControlPlaneURL(server.URL)
+	if err != nil {
+		t.Fatalf("normalize server: %v", err)
+	}
+	agent, err := NewClientAgent(ClientAgentOptions{Config: ClientConfig{Server: controlServer, Token: "client-token"}})
+	if err != nil {
+		t.Fatalf("NewClientAgent() error = %v", err)
+	}
+	connection, err := agent.Connect(context.Background())
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	defer connection.Close()
+	started := time.Now()
+	if _, err := connection.ReadMessage(); err == nil {
+		t.Fatal("ReadMessage() error = nil")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("liveness timeout took %s", elapsed)
+	}
+}
+
+func TestClientAgentConnectTimesOutWhenWelcomeIsMissing(t *testing.T) {
+	previousTimeout := clientControlAttemptTimeout
+	clientControlAttemptTimeout = 80 * time.Millisecond
+	t.Cleanup(func() { clientControlAttemptTimeout = previousTimeout })
+	helloReceived := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !websocket.IsWebSocketUpgrade(request) {
+			writer.WriteHeader(http.StatusUpgradeRequired)
+			return
+		}
+		socket, err := websocket.Upgrade(writer, request, nil, 0, 0)
+		if err != nil {
+			t.Errorf("upgrade: %v", err)
+			return
+		}
+		defer socket.Close()
+		var hello tunnelruntime.AgentHello
+		if err := socket.ReadJSON(&hello); err != nil {
+			return
+		}
+		close(helloReceived)
+		_, _, _ = socket.ReadMessage()
+	}))
+	defer server.Close()
+	controlServer, err := normalizeControlPlaneURL(server.URL)
+	if err != nil {
+		t.Fatalf("normalize server: %v", err)
+	}
+	agent, err := NewClientAgent(ClientAgentOptions{Config: ClientConfig{Server: controlServer, Token: "client-token"}})
+	if err != nil {
+		t.Fatalf("NewClientAgent() error = %v", err)
+	}
+	started := time.Now()
+	if _, err := agent.Connect(context.Background()); err == nil {
+		t.Fatal("Connect() error = nil")
+	}
+	select {
+	case <-helloReceived:
+	default:
+		t.Fatal("client did not send hello before timing out")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("missing-welcome timeout took %s", elapsed)
+	}
+}
+
+func TestClientControlReadErrorTreatsInvalidMessageCloseAsFatalProtocolError(t *testing.T) {
+	err := clientControlReadError(&websocket.CloseError{Code: 4400, Text: "Invalid Restart Result"})
+	if !errors.Is(err, ErrClientProtocol) {
+		t.Fatalf("clientControlReadError() = %v, want ErrClientProtocol", err)
 	}
 }
 

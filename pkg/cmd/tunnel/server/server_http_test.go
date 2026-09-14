@@ -3178,12 +3178,13 @@ func TestServerHTTPHandlerProjectsAcceptedAgentSocketLifecycle(t *testing.T) {
 	}
 }
 
-func TestServerHTTPHandlerKeepsAwaitingHelloAgentAliveWhenItPongs(t *testing.T) {
+func TestServerHTTPHandlerKeepsActiveAgentAliveWhenItPongs(t *testing.T) {
 	previousInterval := serverAgentWebSocketPingInterval
 	serverAgentWebSocketPingInterval = 25 * time.Millisecond
 	t.Cleanup(func() { serverAgentWebSocketPingInterval = previousInterval })
 
 	gateway, client, socket := openServerHTTPAgentSocket(t)
+	activateServerHTTPAgentSocket(t, socket)
 	pings := make(chan struct{}, 3)
 	socket.SetPingHandler(func(message string) error {
 		select {
@@ -3221,12 +3222,31 @@ func TestServerHTTPHandlerKeepsAwaitingHelloAgentAliveWhenItPongs(t *testing.T) 
 	}
 }
 
+func TestServerHTTPHandlerClosesAgentThatDoesNotSendHello(t *testing.T) {
+	previousTimeout := serverAgentWebSocketHelloTimeout
+	serverAgentWebSocketHelloTimeout = 25 * time.Millisecond
+	t.Cleanup(func() { serverAgentWebSocketHelloTimeout = previousTimeout })
+
+	gateway, client, socket := openServerHTTPAgentSocket(t)
+	if _, _, err := socket.ReadMessage(); err == nil {
+		t.Fatal("read hello timeout = nil")
+	}
+	deadline := time.Now().Add(time.Second)
+	for gateway.State(client.ID).ConnectionState != ServerClientDisconnected {
+		if time.Now().After(deadline) {
+			t.Fatal("agent slot remained connected after hello timeout")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestServerHTTPHandlerClosesAgentWhenPongIsMissing(t *testing.T) {
 	previousInterval := serverAgentWebSocketPingInterval
 	serverAgentWebSocketPingInterval = 25 * time.Millisecond
 	t.Cleanup(func() { serverAgentWebSocketPingInterval = previousInterval })
 
 	gateway, client, socket := openServerHTTPAgentSocket(t)
+	activateServerHTTPAgentSocket(t, socket)
 	pinged := make(chan struct{}, 1)
 	socket.SetPingHandler(func(string) error {
 		select {
@@ -3268,6 +3288,9 @@ func openServerHTTPAgentSocket(t *testing.T) (*ServerAgentGateway, TrustedTunnel
 	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
 		ControlPlane: plane,
 		FRPS:         &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		WelcomeSource: serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{
+			AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "internal-token",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("NewServerAgentGateway() error = %v", err)
@@ -3299,6 +3322,20 @@ func openServerHTTPAgentSocket(t *testing.T) (*ServerAgentGateway, TrustedTunnel
 	}
 	t.Cleanup(func() { _ = socket.Close() })
 	return gateway, client, socket
+}
+
+func activateServerHTTPAgentSocket(t *testing.T, socket *websocket.Conn) {
+	t.Helper()
+	if err := socket.WriteJSON(tunnelruntime.AgentHello{
+		Type: "hello", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, YCYVersion: "0.0.0-test",
+		Platform: "linux", Architecture: "x64", LastAppliedRevision: 0,
+	}); err != nil {
+		t.Fatalf("write hello: %v", err)
+	}
+	var welcome tunnelruntime.AgentWelcome
+	if err := socket.ReadJSON(&welcome); err != nil || welcome.Type != "welcome" {
+		t.Fatalf("read welcome = (%#v, %v)", welcome, err)
+	}
 }
 
 func TestServerHTTPHandlerReleasesAgentReservationWhenUpgradeFails(t *testing.T) {
@@ -3382,7 +3419,7 @@ func TestServerHTTPHandlerClosesInvalidAgentHello(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	defer socket.Close()
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":3}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4}`)); err != nil {
 		t.Fatalf("write invalid hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err == nil {
@@ -3460,7 +3497,7 @@ func TestServerHTTPHandlerSendsWelcomeAfterValidAgentHello(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	defer socket.Close()
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	messageType, source, err := socket.ReadMessage()
@@ -3503,7 +3540,7 @@ func TestServerHTTPHandlerSendsWelcomeAfterValidAgentHello(t *testing.T) {
 	if err := socket.SetReadDeadline(time.Time{}); err != nil {
 		t.Fatalf("clear desired-state read deadline: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":true}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true}`)); err != nil {
 		t.Fatalf("write apply result: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -3588,13 +3625,13 @@ func TestServerHTTPHandlerClosesInvalidAgentApplyResult(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err != nil {
 		t.Fatalf("read welcome: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":true}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true}`)); err != nil {
 		t.Fatalf("write invalid apply result: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err == nil {
@@ -3657,13 +3694,13 @@ func TestServerHTTPHandlerProjectsAgentProcessState(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err != nil {
 		t.Fatalf("read welcome: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); err != nil {
 		t.Fatalf("write process state: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -3686,7 +3723,7 @@ func TestServerHTTPHandlerProjectsAgentProcessState(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":false,"error":{"code":"APPLY_FAILED","message":"client configuration failed","revision":0}}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":false,"error":{"code":"APPLY_FAILED","message":"client configuration failed","revision":0}}`)); err != nil {
 		t.Fatalf("write failed apply result: %v", err)
 	}
 	deadline = time.Now().Add(time.Second)
@@ -3711,7 +3748,7 @@ func TestServerHTTPHandlerProjectsAgentProcessState(t *testing.T) {
 	}
 }
 
-func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
+func TestServerHTTPHandlerPersistsOwnedClientRestartsOnlineAndOffline(t *testing.T) {
 	ctx := context.Background()
 	state := openServerDomainState(t)
 	plane := openServerControlPlane(t, state)
@@ -3772,7 +3809,7 @@ func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err != nil {
@@ -3833,11 +3870,11 @@ func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
 	if messageType != websocket.TextMessage {
 		t.Fatalf("restart message type = %d", messageType)
 	}
-	var frame tunnelruntime.RestartFRPC
+	var frame tunnelruntime.DesiredState
 	if err := json.Unmarshal(source, &frame); err != nil {
 		t.Fatalf("decode restart frame: %v", err)
 	}
-	if frame.Type != "restart_frpc" || frame.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion {
+	if frame.Type != "desired_state" || frame.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || frame.DesiredRestartGeneration != 1 {
 		t.Fatalf("restart frame = %#v", frame)
 	}
 	after, err := plane.GetClient(ctx, online.ID)
@@ -3846,6 +3883,18 @@ func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
 	}
 	if after.Remark != before.Remark || after.Token != before.Token || after.DesiredRevision != before.DesiredRevision || after.LastAppliedRevision != before.LastAppliedRevision || after.RevocationPending != before.RevocationPending {
 		t.Fatalf("restart changed durable client state: before=%#v after=%#v", before, after)
+	}
+	if after.DesiredRestartGeneration != 1 || after.CompletedRestartGeneration != 0 {
+		t.Fatalf("online restart generations = %d/%d", after.DesiredRestartGeneration, after.CompletedRestartGeneration)
+	}
+
+	status, body = restart(offline.ID, http.MethodPost, aliceGrant.Token, origin)
+	if status != http.StatusAccepted {
+		t.Fatalf("offline POST /restart status = %d, body = %s", status, body)
+	}
+	offlineAfter, err := plane.GetClient(ctx, offline.ID)
+	if err != nil || offlineAfter.DesiredRestartGeneration != 1 || offlineAfter.CompletedRestartGeneration != 0 {
+		t.Fatalf("offline restart state = (%#v, %v)", offlineAfter, err)
 	}
 
 	for _, test := range []struct {
@@ -3857,7 +3906,6 @@ func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
 		status   int
 		code     string
 	}{
-		{name: "offline", clientID: offline.ID, method: http.MethodPost, token: aliceGrant.Token, origin: origin, status: http.StatusConflict, code: "CLIENT_OFFLINE"},
 		{name: "other owner", clientID: online.ID, method: http.MethodPost, token: bobGrant.Token, origin: origin, status: http.StatusNotFound, code: "NOT_FOUND"},
 		{name: "foreign origin", clientID: online.ID, method: http.MethodPost, token: aliceGrant.Token, origin: "https://other.example.test", status: http.StatusForbidden, code: "ORIGIN_FORBIDDEN"},
 		{name: "unsupported method", clientID: online.ID, method: http.MethodGet, token: aliceGrant.Token, origin: origin, status: http.StatusMethodNotAllowed, code: "METHOD_NOT_ALLOWED"},
@@ -3870,6 +3918,22 @@ func TestServerHTTPHandlerRestartsOnlyOwnedOnlineClients(t *testing.T) {
 			}
 			assertServerHTTPError(t, body, test.code)
 		})
+	}
+}
+
+func TestPresentServerHTTPRestartStateHidesSupersededFailureWhilePending(t *testing.T) {
+	failure := &tunnelruntime.StructuredRuntimeError{Code: "CONFIGURATION_FAILED", Message: "invalid configuration"}
+	failed := presentServerHTTPRestartState(TrustedTunnelClient{
+		DesiredRestartGeneration: 2, CompletedRestartGeneration: 2, RestartError: failure,
+	})
+	if failed.State != "failed" || failed.Error == nil {
+		t.Fatalf("failed restart projection = %#v", failed)
+	}
+	pending := presentServerHTTPRestartState(TrustedTunnelClient{
+		DesiredRestartGeneration: 3, CompletedRestartGeneration: 2, RestartError: failure,
+	})
+	if pending.State != "pending" || pending.Error != nil {
+		t.Fatalf("pending restart projection = %#v", pending)
 	}
 }
 

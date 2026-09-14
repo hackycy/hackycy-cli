@@ -127,6 +127,7 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                         {showOwner && <th>Owner</th>}
                         <th>Connection</th>
                         <th>Revision</th>
+                        <th>Restart</th>
                         <th>Tunnels</th>
                         <th aria-label="Actions" />
                       </tr>
@@ -145,6 +146,7 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                             {' '}
                             {client.desiredRevision}
                           </td>
+                          <td><Status value={client.restart.state} /></td>
                           <td>{client.tunnelCounts.total}</td>
                           <td>
                             <div className="row-actions">
@@ -747,9 +749,12 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
     await apiJson(`/api/tunnels/${encodeURIComponent(tunnel.id)}`, { method: 'DELETE' })
     await load()
   }
-  const restart = async (): Promise<void> => run('restart', 'frpc restart requested', async () => {
-    await apiJson(`/api/clients/${encodeURIComponent(id)}/restart`, { method: 'POST' })
-  })
+  const restart = async (): Promise<void> => {
+    await run('restart', 'frpc restart requested', async () => {
+      await apiJson(`/api/clients/${encodeURIComponent(id)}/restart`, { method: 'POST' })
+    })
+    await load()
+  }
   const toggleDetails = (tunnelId: string): void => setExpanded((values) => {
     const next = new Set(values)
     next.has(tunnelId) ? next.delete(tunnelId) : next.add(tunnelId)
@@ -801,6 +806,7 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                     <Token value={client.token} />
                     <Status value={client.runtime.connectionState} />
                     <Status value={client.runtime.processState} />
+                    <Status value={client.restart.state} />
                     {showOwner && (
                       <span className="mono">
                         Owner
@@ -822,6 +828,7 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                   </section>
                 )}
                 {client?.runtime.lastError && <p className="runtime-error" role="alert">{client.runtime.lastError.message}</p>}
+                {client?.restart.error && <p className="runtime-error" role="alert">{client.restart.error.message}</p>}
                 <section className="table-wrap" aria-busy={refreshing}>
                   <table className="tunnel-table">
                     <thead>

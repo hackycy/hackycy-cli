@@ -25,6 +25,7 @@ const serverHTTPBodyLimit = 128 << 20
 const serverAgentWebSocketPayloadLimit = 1 << 20
 
 var serverAgentWebSocketPingInterval = 30 * time.Second
+var serverAgentWebSocketHelloTimeout = 30 * time.Second
 
 // Agent authentication is exclusively Bearer-token based, so it retains the
 // legacy endpoint's lack of an Origin requirement.
@@ -237,6 +238,11 @@ func (handler *ServerHTTPHandler) serveAgent(writer http.ResponseWriter, request
 		closeServerAgentSocket(socket, protocolError)
 		_ = socket.Close()
 	})
+	outbound := newServerAgentOutbound(socket, func(error) {
+		_ = socket.Close()
+		connection.Close()
+	})
+	defer outbound.Close()
 	if err := connection.AcknowledgeReplacementToken(request.Context()); err != nil {
 		handler.agentGateway.protocolWarning(connection.ClientID(), "control-plane")
 		closeServerAgentSocket(socket, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"})
@@ -244,20 +250,22 @@ func (handler *ServerHTTPHandler) serveAgent(writer http.ResponseWriter, request
 		connection.Close()
 		return
 	}
-	stopLiveness := startServerAgentWebSocketLiveness(socket, func() {
-		handler.agentGateway.protocolWarning(connection.ClientID(), "liveness")
-	})
+	stopLiveness := func() {}
 	defer func() {
 		stopLiveness()
 		_ = socket.Close()
 		connection.Close()
 	}()
 	socket.SetReadLimit(serverAgentWebSocketPayloadLimit)
+	_ = socket.SetReadDeadline(time.Now().Add(serverAgentWebSocketHelloTimeout))
 	welcomePresented := false
 	for {
 		_, reader, err := socket.NextReader()
 		if err != nil {
 			return
+		}
+		if welcomePresented {
+			_ = socket.SetReadDeadline(time.Now().Add(75 * time.Second))
 		}
 		source, err := io.ReadAll(reader)
 		if err != nil {
@@ -269,12 +277,16 @@ func (handler *ServerHTTPHandler) serveAgent(writer http.ResponseWriter, request
 				closeServerAgentSocket(socket, protocolError)
 				return
 			}
-			if protocolError := connection.PresentWelcome(request.Context(), requestHost, socket.WriteJSON); protocolError != nil {
+			if protocolError := connection.PresentWelcome(request.Context(), requestHost, outbound.Write); protocolError != nil {
 				handler.agentGateway.protocolWarning(connection.ClientID(), serverAgentWarningCategory(protocolError))
 				closeServerAgentSocket(socket, protocolError)
 				return
 			}
 			welcomePresented = true
+			_ = socket.SetReadDeadline(time.Now().Add(75 * time.Second))
+			stopLiveness = startServerAgentWebSocketLiveness(socket, func() {
+				handler.agentGateway.protocolWarning(connection.ClientID(), "liveness")
+			})
 			continue
 		}
 		if protocolError := connection.AcceptActiveMessage(request.Context(), source); protocolError != nil {
@@ -292,13 +304,14 @@ func closeServerAgentSocket(socket *websocket.Conn, protocolError *ServerAgentPr
 	_ = socket.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(protocolError.CloseCode, protocolError.Message), time.Now().Add(time.Second))
 }
 
-// startServerAgentWebSocketLiveness retains v3's open-ended hello phase while
-// requiring a pong after every server ping interval.
+// startServerAgentWebSocketLiveness requires a pong after every server ping
+// interval once the bounded hello/welcome exchange has completed.
 func startServerAgentWebSocketLiveness(socket *websocket.Conn, onTimeout ...func()) func() {
 	if socket == nil {
 		return func() {}
 	}
 	done := make(chan struct{})
+	pingInterval := serverAgentWebSocketPingInterval
 	var stopOnce sync.Once
 	var mu sync.Mutex
 	awaitingPong := false
@@ -306,10 +319,10 @@ func startServerAgentWebSocketLiveness(socket *websocket.Conn, onTimeout ...func
 		mu.Lock()
 		awaitingPong = false
 		mu.Unlock()
-		return nil
+		return socket.SetReadDeadline(time.Now().Add(75 * time.Second))
 	})
 	go func() {
-		ticker := time.NewTicker(serverAgentWebSocketPingInterval)
+		ticker := time.NewTicker(pingInterval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -872,18 +885,16 @@ func (handler *ServerHTTPHandler) serveClientRestart(writer http.ResponseWriter,
 		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
 		return
 	}
-	if _, err := workspace.GetClient(request.Context(), clientID); err != nil {
+	client, err := workspace.RequestClientRestart(request.Context(), clientID)
+	if err != nil {
 		writeServerHTTPAuthenticatedDomainError(writer, session, err)
 		return
 	}
-	if handler.agentGateway == nil || !handler.agentGateway.RestartFRPC(clientID) {
-		writeServerHTTPAuthenticatedError(writer, session, http.StatusConflict, "CLIENT_OFFLINE", "Trusted Tunnel Client is not connected")
-		return
-	}
 	writeServerAuthenticatedJSON(writer, session, http.StatusAccepted, struct {
-		Version  int  `json:"version"`
-		Accepted bool `json:"accepted"`
-	}{Version: 1, Accepted: true})
+		Version    int   `json:"version"`
+		Accepted   bool  `json:"accepted"`
+		Generation int64 `json:"generation"`
+	}{Version: 1, Accepted: true, Generation: client.DesiredRestartGeneration})
 }
 
 type serverHTTPClientRemarkInput struct {
@@ -1102,6 +1113,7 @@ func (handler *ServerHTTPHandler) authenticatedWorkspace(writer http.ResponseWri
 		Custom404PageReader: handler.custom404PageReader,
 		Custom404PageWriter: handler.custom404PageWriter,
 		FRPSChanges:         handler.frpsChanges,
+		AgentChanges:        handler.agentGateway,
 	}, session.Token)
 	if err != nil {
 		writeServerHTTPDomainError(writer, err)
@@ -1160,7 +1172,15 @@ type serverHTTPClientView struct {
 	RotatedAt           *string                  `json:"rotatedAt"`
 	Owner               serverHTTPClientOwner    `json:"owner"`
 	Runtime             ServerClientRuntimeState `json:"runtime"`
+	Restart             serverHTTPRestartState   `json:"restart"`
 	TunnelCounts        serverHTTPTunnelCounts   `json:"tunnelCounts"`
+}
+
+type serverHTTPRestartState struct {
+	State               string                                `json:"state"`
+	DesiredGeneration   int64                                 `json:"desiredGeneration"`
+	CompletedGeneration int64                                 `json:"completedGeneration"`
+	Error               *tunnelruntime.StructuredRuntimeError `json:"error,omitempty"`
 }
 
 type serverHTTPClientOwner struct {
@@ -1323,8 +1343,26 @@ func (handler *ServerHTTPHandler) presentClient(ctx context.Context, workspace *
 		RotatedAt:           client.RotatedAt,
 		Owner:               serverHTTPClientOwner{ID: owner.ID, Username: owner.Username},
 		Runtime:             runtime,
+		Restart:             presentServerHTTPRestartState(client),
 		TunnelCounts:        counts,
 	}, nil
+}
+
+func presentServerHTTPRestartState(client TrustedTunnelClient) serverHTTPRestartState {
+	state := "idle"
+	var lastError *tunnelruntime.StructuredRuntimeError
+	if client.DesiredRestartGeneration > client.CompletedRestartGeneration {
+		state = "pending"
+	} else if client.DesiredRestartGeneration == client.CompletedRestartGeneration && client.RestartError != nil {
+		state = "failed"
+		lastError = cloneServerAgentRuntimeError(client.RestartError)
+	}
+	return serverHTTPRestartState{
+		State:               state,
+		DesiredGeneration:   client.DesiredRestartGeneration,
+		CompletedGeneration: client.CompletedRestartGeneration,
+		Error:               lastError,
+	}
 }
 
 func (handler *ServerHTTPHandler) presentTunnels(ctx context.Context, workspace *ServerWorkspace, client TrustedTunnelClient) ([]serverHTTPPublicTunnel, error) {

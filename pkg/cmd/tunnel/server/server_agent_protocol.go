@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"io"
 	"math"
 	"strings"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 	serverAgentMaximumSafeInteger = 9007199254740991
 )
 
-// ServerAgentProtocolError retains the close semantics that a v3 peer sees
+// ServerAgentProtocolError retains the close semantics that a v4 peer sees
 // without coupling the protocol validator to a WebSocket implementation.
 type ServerAgentProtocolError struct {
 	CloseCode int
@@ -31,7 +32,7 @@ type ServerAgentProtocolError struct {
 
 func (err *ServerAgentProtocolError) Error() string { return err.Message }
 
-// AcceptHello validates and records the first v3 message on an accepted
+// AcceptHello validates and records the first v4 message on an accepted
 // connection before any active protocol frame can be handled.
 func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source []byte) *ServerAgentProtocolError {
 	if connection == nil || connection.gateway == nil {
@@ -73,6 +74,11 @@ func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source
 		return &ServerAgentProtocolError{
 			CloseCode: serverAgentCloseIncompatible,
 			Message:   "Client Applied Revision exceeds the control plane Desired Revision; inspect or upgrade the client",
+		}
+	}
+	if hello.LastRestartResult != nil {
+		if err := connection.gateway.controlPlane.RecordRestartResult(ctx, connection.clientID, *hello.LastRestartResult); err != nil {
+			return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid Restart Result"}
 		}
 	}
 	connection.helloAccepted = true
@@ -139,6 +145,15 @@ func (connection *ServerAgentConnection) AcceptActiveMessage(ctx context.Context
 			return protocolError
 		}
 		return connection.recordProcessState(state)
+	case "restart_result":
+		result, protocolError := decodeServerAgentRestartResultValue(value, true)
+		if protocolError != nil {
+			return protocolError
+		}
+		if err := connection.gateway.controlPlane.RecordRestartResult(ctx, connection.clientID, result); err != nil {
+			return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid Restart Result"}
+		}
+		return nil
 	default:
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Unexpected agent message"}
 	}
@@ -160,6 +175,9 @@ func (connection *ServerAgentConnection) recordApplyResult(ctx context.Context, 
 			return &ServerAgentProtocolError{CloseCode: serverAgentCloseRevoked, Message: "Client Token revoked"}
 		}
 		connection.gateway.logApplyResult(result, changed, recovered)
+		if changed {
+			connection.gateway.notifyAgentChange(connection.clientID)
+		}
 		return nil
 	}
 	lastError := result.Error
@@ -177,6 +195,9 @@ func (connection *ServerAgentConnection) recordApplyResult(ctx context.Context, 
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseRevoked, Message: "Client Token revoked"}
 	}
 	connection.gateway.logApplyResult(result, changed, false)
+	if changed {
+		connection.gateway.notifyAgentChange(connection.clientID)
+	}
 	return nil
 }
 
@@ -187,6 +208,7 @@ func (connection *ServerAgentConnection) recordProcessState(state tunnelruntime.
 	}
 	if changed {
 		connection.gateway.logProcessState(state.State)
+		connection.gateway.notifyAgentChange(connection.clientID)
 	}
 	return nil
 }
@@ -227,15 +249,20 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 		}
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
 	}
+	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.clientID)
+	if err != nil {
+		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	}
 	return tunnelruntime.AgentWelcome{
-		Type:                  "welcome",
-		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
-		RequiredFRPVersion:    tunnelruntime.FRPVersion,
-		Artifact:              artifact.Description,
-		AdvertisedFRPHost:     settings.AdvertisedFRPHost,
-		AdvertisedFRPPort:     settings.AdvertisedFRPPort,
-		InternalFRPToken:      settings.InternalFRPToken,
-		Snapshot:              snapshot,
+		Type:                     "welcome",
+		TunnelProtocolVersion:    tunnelruntime.TunnelProtocolVersion,
+		RequiredFRPVersion:       tunnelruntime.FRPVersion,
+		Artifact:                 artifact.Description,
+		AdvertisedFRPHost:        settings.AdvertisedFRPHost,
+		AdvertisedFRPPort:        settings.AdvertisedFRPPort,
+		InternalFRPToken:         settings.InternalFRPToken,
+		Snapshot:                 snapshot,
+		DesiredRestartGeneration: client.DesiredRestartGeneration,
 	}, nil
 }
 
@@ -277,28 +304,16 @@ func (connection *ServerAgentConnection) PresentDesiredState() {
 	if err != nil {
 		return
 	}
+	client, err := connection.gateway.controlPlane.GetClient(context.Background(), connection.clientID)
+	if err != nil {
+		return
+	}
 	_ = connection.writeFrame(tunnelruntime.DesiredState{
-		Type:                  "desired_state",
-		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
-		Snapshot:              snapshot,
+		Type:                     "desired_state",
+		TunnelProtocolVersion:    tunnelruntime.TunnelProtocolVersion,
+		Snapshot:                 snapshot,
+		DesiredRestartGeneration: client.DesiredRestartGeneration,
 	})
-}
-
-// RestartFRPC sends the imperative restart frame without changing durable
-// desired or applied state.
-func (connection *ServerAgentConnection) RestartFRPC() bool {
-	if connection == nil || connection.gateway == nil {
-		return false
-	}
-	connection.presentationMu.Lock()
-	defer connection.presentationMu.Unlock()
-	if connection.closed || !connection.presentationActive || connection.writeFrame == nil {
-		return false
-	}
-	return connection.writeFrame(tunnelruntime.RestartFRPC{
-		Type:                  "restart_frpc",
-		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
-	}) == nil
 }
 
 // Revoke ends the active token's session after delivering its final server
@@ -343,6 +358,18 @@ func decodeServerAgentHello(source []byte) (tunnelruntime.AgentHello, *ServerAge
 	if !validType || messageType != "hello" || !validVersion || !validPlatform || !validArchitecture || !validProtocolVersion || !validRevision || lastAppliedRevision < 0 || protocolVersion != int64(int(protocolVersion)) {
 		return tunnelruntime.AgentHello{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
 	}
+	var lastRestartResult *tunnelruntime.RestartResult
+	if rawResult, found := value["lastRestartResult"]; found && rawResult != nil {
+		object, ok := rawResult.(map[string]any)
+		if !ok {
+			return tunnelruntime.AgentHello{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
+		}
+		result, resultError := decodeServerAgentRestartResultValue(object, false)
+		if resultError != nil {
+			return tunnelruntime.AgentHello{}, resultError
+		}
+		lastRestartResult = &result
+	}
 	return tunnelruntime.AgentHello{
 		Type:                  messageType,
 		TunnelProtocolVersion: int(protocolVersion),
@@ -350,7 +377,42 @@ func decodeServerAgentHello(source []byte) (tunnelruntime.AgentHello, *ServerAge
 		Platform:              platform,
 		Architecture:          architecture,
 		LastAppliedRevision:   lastAppliedRevision,
+		LastRestartResult:     lastRestartResult,
 	}, nil
+}
+
+func decodeServerAgentRestartResultValue(value map[string]any, active bool) (tunnelruntime.RestartResult, *ServerAgentProtocolError) {
+	generation, validGeneration := serverAgentSafeInteger(value["generation"])
+	success, validSuccess := value["success"].(bool)
+	if !validGeneration || generation < 1 || generation > serverAgentMaximumSafeInteger || !validSuccess {
+		return tunnelruntime.RestartResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid restart result is required"}
+	}
+	result := tunnelruntime.RestartResult{Generation: generation, Success: success}
+	if active {
+		messageType, validType := serverAgentHelloString(value, "type")
+		protocolVersion, validVersion := serverAgentSafeInteger(value["tunnelProtocolVersion"])
+		if !validType || messageType != "restart_result" || !validVersion || protocolVersion != tunnelruntime.TunnelProtocolVersion {
+			return tunnelruntime.RestartResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid restart result is required"}
+		}
+		result.Type = messageType
+		result.TunnelProtocolVersion = int(protocolVersion)
+	}
+	if rawError, found := value["error"]; found && rawError != nil {
+		errorValue, ok := rawError.(map[string]any)
+		if !ok {
+			return tunnelruntime.RestartResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid restart result is required"}
+		}
+		code, validCode := serverAgentHelloString(errorValue, "code")
+		message, validMessage := serverAgentHelloString(errorValue, "message")
+		if !validCode || !validMessage {
+			return tunnelruntime.RestartResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid restart result is required"}
+		}
+		result.Error = &tunnelruntime.StructuredRuntimeError{Code: code, Message: message}
+	}
+	if result.Success == (result.Error != nil) {
+		return tunnelruntime.RestartResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid restart result is required"}
+	}
+	return result, nil
 }
 
 func decodeServerAgentApplyResult(source []byte) (tunnelruntime.ApplyResult, *ServerAgentProtocolError) {

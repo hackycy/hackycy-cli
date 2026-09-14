@@ -81,6 +81,49 @@ func TestFRPSupervisorRecoversUnexpectedExitAndSuppressesRecoveryAfterStop(t *te
 	}
 }
 
+func TestFRPSupervisorKeepsRecoveringAcrossRepeatedSpawnFailures(t *testing.T) {
+	root := t.TempDir()
+	counterPath := filepath.Join(root, "starts")
+	binaryPath := filepath.Join(root, "recover-after-missing")
+	writeRecoveringFRPFixture := func(first bool) {
+		body := "#!/bin/sh\nprintf '1\\n' >> \"$FRP_COUNTER\"\nwhile :; do sleep 1; done\n"
+		if first {
+			body = "#!/bin/sh\nprintf '1\\n' >> \"$FRP_COUNTER\"\nrm \"$0\"\nsleep 0.5\nexit 23\n"
+		}
+		if err := os.WriteFile(binaryPath, []byte(body), 0o755); err != nil {
+			t.Fatalf("write recovery fixture: %v", err)
+		}
+	}
+	writeRecoveringFRPFixture(true)
+	t.Setenv("FRP_COUNTER", counterPath)
+	supervisor := newTestFRPSupervisor(t, FRPSupervisorOptions{
+		BinaryPath: binaryPath, Role: FRPRoleClient, ActivationGrace: 20 * time.Millisecond,
+		Backoff: []time.Duration{15 * time.Millisecond, 30 * time.Millisecond, 500 * time.Millisecond}, StableAfter: time.Second,
+	})
+	if err := supervisor.Start(filepath.Join(root, "frpc.toml")); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	waitForFRPSupervisor(t, frpSupervisorFixtureStartupTimeout, func() bool {
+		supervisor.mu.Lock()
+		defer supervisor.mu.Unlock()
+		return supervisor.failureCount >= 2 && supervisor.desiredRunning && supervisor.state.State == FRPProcessRecovering
+	})
+	secondFailureAt := time.Now()
+	waitForFRPSupervisor(t, frpSupervisorFixtureStartupTimeout, func() bool {
+		supervisor.mu.Lock()
+		defer supervisor.mu.Unlock()
+		return supervisor.failureCount >= 3
+	})
+	if elapsed := time.Since(secondFailureAt); elapsed > 250*time.Millisecond {
+		t.Fatalf("second recovery retry delay = %s, skipped the second backoff tier", elapsed)
+	}
+	writeRecoveringFRPFixture(false)
+	waitForFRPSupervisor(t, frpSupervisorFixtureStartupTimeout, func() bool {
+		contents, _ := os.ReadFile(counterPath)
+		return len(strings.Fields(string(contents))) >= 2 && supervisor.State().State == FRPProcessRunning
+	})
+}
+
 func TestFRPSupervisorRejectsAnActivationExitAndKeepsConfigurationFailuresStopped(t *testing.T) {
 	root := t.TempDir()
 	earlyExit := writeFRPSupervisorScript(t, root, "early-exit", "#!/bin/sh\nexit 7\n")
@@ -272,6 +315,12 @@ func (buffer *lockedFRPLogBuffer) Write(contents []byte) (int, error) {
 	buffer.mu.Lock()
 	defer buffer.mu.Unlock()
 	return buffer.Buffer.Write(contents)
+}
+
+func (buffer *lockedFRPLogBuffer) WriteString(contents string) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.Buffer.WriteString(contents)
 }
 
 func (buffer *lockedFRPLogBuffer) String() string {

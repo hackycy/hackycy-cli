@@ -12,20 +12,25 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 // TrustedTunnelClient is the durable server-side record addressed by a
 // recoverable Client Token and owned by one account.
 type TrustedTunnelClient struct {
-	ID                  string
-	OwnerAccountID      string
-	Remark              string
-	Token               string
-	DesiredRevision     int64
-	LastAppliedRevision int64
-	RevocationPending   bool
-	CreatedAt           string
-	RotatedAt           *string
+	ID                         string
+	OwnerAccountID             string
+	Remark                     string
+	Token                      string
+	DesiredRevision            int64
+	LastAppliedRevision        int64
+	DesiredRestartGeneration   int64
+	CompletedRestartGeneration int64
+	RestartError               *tunnelruntime.StructuredRuntimeError
+	RevocationPending          bool
+	CreatedAt                  string
+	RotatedAt                  *string
 }
 
 type ServerControlPlaneEvent struct {
@@ -39,7 +44,12 @@ const (
 	serverClientUpdated = "client_updated"
 	serverClientRotated = "client_rotated"
 	serverClientDeleted = "client_deleted"
+	serverClientRestart = "client_restart"
 )
+
+const serverClientColumns = `internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision,
+	desired_restart_generation, completed_restart_generation, restart_error_generation, restart_error_code, restart_error_message,
+	revocation_pending, created_at, rotated_at`
 
 type ServerControlPlaneOptions struct {
 	Database  *sql.DB
@@ -148,7 +158,7 @@ func (plane *ServerControlPlane) CreateClient(ctx context.Context, ownerAccountI
 }
 
 func (plane *ServerControlPlane) ListClients(ctx context.Context) ([]TrustedTunnelClient, error) {
-	rows, err := plane.database.QueryContext(ctx, `SELECT internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, revocation_pending, created_at, rotated_at FROM clients ORDER BY created_at, internal_id`)
+	rows, err := plane.database.QueryContext(ctx, `SELECT `+serverClientColumns+` FROM clients ORDER BY created_at, internal_id`)
 	if err != nil {
 		return nil, fmt.Errorf("list Trusted Tunnel Clients: %w", err)
 	}
@@ -157,7 +167,7 @@ func (plane *ServerControlPlane) ListClients(ctx context.Context) ([]TrustedTunn
 }
 
 func (plane *ServerControlPlane) ListClientsForOwner(ctx context.Context, ownerAccountID string) ([]TrustedTunnelClient, error) {
-	rows, err := plane.database.QueryContext(ctx, `SELECT internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, revocation_pending, created_at, rotated_at FROM clients WHERE owner_account_id = ? ORDER BY created_at, internal_id`, ownerAccountID)
+	rows, err := plane.database.QueryContext(ctx, `SELECT `+serverClientColumns+` FROM clients WHERE owner_account_id = ? ORDER BY created_at, internal_id`, ownerAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("list owner Trusted Tunnel Clients: %w", err)
 	}
@@ -281,12 +291,87 @@ func (plane *ServerControlPlane) DeleteClient(ctx context.Context, clientID stri
 	return nil
 }
 
+// RequestClientRestart durably coalesces restart requests into a monotonically
+// increasing generation. Delivery to an online agent happens after commit.
+func (plane *ServerControlPlane) RequestClientRestart(ctx context.Context, clientID string) (TrustedTunnelClient, error) {
+	updated, err := withImmediateTransaction(ctx, plane.database, func(connection *sql.Conn) (TrustedTunnelClient, error) {
+		client, err := selectClient(ctx, connection, clientID)
+		if err != nil {
+			return TrustedTunnelClient{}, err
+		}
+		if client.DesiredRestartGeneration >= serverMaximumSafeInteger {
+			return TrustedTunnelClient{}, serverDomainError("RESTART_GENERATION_EXHAUSTED", "Restart generation cannot be advanced")
+		}
+		if _, err := connection.ExecContext(ctx, `UPDATE clients SET desired_restart_generation = desired_restart_generation + 1 WHERE internal_id = ?`, clientID); err != nil {
+			return TrustedTunnelClient{}, fmt.Errorf("request Trusted Tunnel Client restart: %w", err)
+		}
+		return selectClient(ctx, connection, clientID)
+	})
+	if err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	plane.emit(ServerControlPlaneEvent{Type: serverClientRestart, ClientID: updated.ID, OwnerAccountID: updated.OwnerAccountID})
+	return updated, nil
+}
+
+// RecordRestartResult advances completion at most to a desired generation.
+// Already completed generations are accepted so reconnect hello replay is
+// idempotent and can never cause the client to execute a restart twice.
+func (plane *ServerControlPlane) RecordRestartResult(ctx context.Context, clientID string, result tunnelruntime.RestartResult) error {
+	if result.Generation < 1 || result.Generation > serverMaximumSafeInteger {
+		return serverDomainError("INVALID_RESTART_GENERATION", "Restart generation is invalid")
+	}
+	type recordedResult struct {
+		client  TrustedTunnelClient
+		changed bool
+	}
+	recorded, err := withImmediateTransaction(ctx, plane.database, func(connection *sql.Conn) (recordedResult, error) {
+		client, err := selectClient(ctx, connection, clientID)
+		if err != nil {
+			return recordedResult{}, err
+		}
+		if result.Generation > client.DesiredRestartGeneration {
+			return recordedResult{}, serverDomainError("INVALID_RESTART_GENERATION", "Restart generation cannot exceed Desired Restart Generation")
+		}
+		if result.Generation <= client.CompletedRestartGeneration {
+			return recordedResult{client: client}, nil
+		}
+		var errorGeneration any
+		var errorCode any
+		var errorMessage any
+		if !result.Success {
+			runtimeError := result.Error
+			if runtimeError == nil {
+				runtimeError = &tunnelruntime.StructuredRuntimeError{Code: "RESTART_FAILED", Message: "Client could not restart frpc"}
+			}
+			errorGeneration = result.Generation
+			errorCode = strings.TrimSpace(runtimeError.Code)
+			errorMessage = strings.TrimSpace(runtimeError.Message)
+			if errorCode == "" || errorMessage == "" {
+				return recordedResult{}, serverDomainError("INVALID_RESTART_RESULT", "Failed restart result must include an error")
+			}
+		}
+		if _, err := connection.ExecContext(ctx, `UPDATE clients SET completed_restart_generation = ?, restart_error_generation = ?, restart_error_code = ?, restart_error_message = ? WHERE internal_id = ?`, result.Generation, errorGeneration, errorCode, errorMessage, clientID); err != nil {
+			return recordedResult{}, fmt.Errorf("record Trusted Tunnel Client restart result: %w", err)
+		}
+		updated, err := selectClient(ctx, connection, clientID)
+		return recordedResult{client: updated, changed: err == nil}, err
+	})
+	if err != nil {
+		return err
+	}
+	if recorded.changed {
+		plane.emit(ServerControlPlaneEvent{Type: serverClientUpdated, ClientID: recorded.client.ID, OwnerAccountID: recorded.client.OwnerAccountID})
+	}
+	return nil
+}
+
 type clientQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func selectClient(ctx context.Context, queryer clientQueryer, clientID string) (TrustedTunnelClient, error) {
-	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, revocation_pending, created_at, rotated_at FROM clients WHERE internal_id = ?`, clientID))
+	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT `+serverClientColumns+` FROM clients WHERE internal_id = ?`, clientID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return TrustedTunnelClient{}, serverDomainError("NOT_FOUND", "Trusted Tunnel Client was not found")
 	}
@@ -297,7 +382,7 @@ func selectClient(ctx context.Context, queryer clientQueryer, clientID string) (
 }
 
 func selectClientForOwner(ctx context.Context, queryer clientQueryer, clientID, ownerAccountID string) (TrustedTunnelClient, error) {
-	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, revocation_pending, created_at, rotated_at FROM clients WHERE internal_id = ? AND owner_account_id = ?`, clientID, ownerAccountID))
+	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT `+serverClientColumns+` FROM clients WHERE internal_id = ? AND owner_account_id = ?`, clientID, ownerAccountID))
 	if err != nil {
 		return TrustedTunnelClient{}, err
 	}
@@ -305,7 +390,7 @@ func selectClientForOwner(ctx context.Context, queryer clientQueryer, clientID, 
 }
 
 func selectClientByToken(ctx context.Context, queryer clientQueryer, token string) (TrustedTunnelClient, error) {
-	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, revocation_pending, created_at, rotated_at FROM clients WHERE token = ?`, token))
+	client, err := scanClient(queryer.QueryRowContext(ctx, `SELECT `+serverClientColumns+` FROM clients WHERE token = ?`, token))
 	if err != nil {
 		return TrustedTunnelClient{}, err
 	}
@@ -335,8 +420,15 @@ func scanClient(scanner clientScanner) (TrustedTunnelClient, error) {
 	var client TrustedTunnelClient
 	var revocationPending int
 	var rotatedAt sql.NullString
-	if err := scanner.Scan(&client.ID, &client.OwnerAccountID, &client.Remark, &client.Token, &client.DesiredRevision, &client.LastAppliedRevision, &revocationPending, &client.CreatedAt, &rotatedAt); err != nil {
+	var restartErrorGeneration sql.NullInt64
+	var restartErrorCode, restartErrorMessage sql.NullString
+	if err := scanner.Scan(&client.ID, &client.OwnerAccountID, &client.Remark, &client.Token, &client.DesiredRevision, &client.LastAppliedRevision,
+		&client.DesiredRestartGeneration, &client.CompletedRestartGeneration, &restartErrorGeneration, &restartErrorCode, &restartErrorMessage,
+		&revocationPending, &client.CreatedAt, &rotatedAt); err != nil {
 		return TrustedTunnelClient{}, err
+	}
+	if restartErrorGeneration.Valid && restartErrorGeneration.Int64 == client.CompletedRestartGeneration && restartErrorCode.Valid && restartErrorMessage.Valid {
+		client.RestartError = &tunnelruntime.StructuredRuntimeError{Code: restartErrorCode.String, Message: restartErrorMessage.String}
 	}
 	client.RevocationPending = revocationPending == 1
 	if rotatedAt.Valid {

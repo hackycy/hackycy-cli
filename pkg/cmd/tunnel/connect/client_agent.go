@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 var (
@@ -21,7 +21,7 @@ var (
 	ErrClientProtocol       = errors.New("Tunnel client received an invalid control message")
 )
 
-// ClientAgentOptions defines one v3 control-link handshake. Reconciliation,
+// ClientAgentOptions defines one v4 control-link handshake. Reconciliation,
 // supervision, and reconnect ownership are added by later client slices.
 type ClientAgentOptions struct {
 	Config              ClientConfig
@@ -30,16 +30,18 @@ type ClientAgentOptions struct {
 	HTTPClient          *http.Client
 	WebSocketDialer     *websocket.Dialer
 	OnAuthenticated     func() error
+	LastRestartResult   *tunnelruntime.RestartResult
 
 	expectedArtifact *tunnelruntime.FRPArtifact
 	wireTarget       *tunnelruntime.WireTarget
 }
 
-// ClientAgent owns the authentication probe and first v3 WebSocket exchange.
+// ClientAgent owns the authentication probe and first v4 WebSocket exchange.
 type ClientAgent struct {
 	config              ClientConfig
 	ycyVersion          string
 	lastAppliedRevision int64
+	lastRestartResult   *tunnelruntime.RestartResult
 	httpClient          *http.Client
 	dialer              *websocket.Dialer
 	expectedArtifact    tunnelruntime.FRPArtifact
@@ -50,16 +52,33 @@ type ClientAgent struct {
 	authenticationReported bool
 }
 
-// ClientControlConnection is one authenticated v3 socket after its welcome
+// ClientControlConnection is one authenticated v4 socket after its welcome
 // has passed the compiled protocol and FRP-artifact checks.
 type ClientControlConnection struct {
 	Welcome tunnelruntime.AgentWelcome
 
-	socket    *websocket.Conn
-	writeMu   sync.Mutex
-	closeOnce sync.Once
-	closeErr  error
+	socket      *websocket.Conn
+	closeOnce   sync.Once
+	closeErr    error
+	outbound    chan clientControlWrite
+	done        chan struct{}
+	doneOnce    sync.Once
+	writerMu    sync.Mutex
+	writerErr   error
+	readTimeout time.Duration
 }
+
+type clientControlWrite struct {
+	value  any
+	result chan error
+}
+
+var (
+	clientControlAttemptTimeout = 30 * time.Second
+	clientControlPingInterval   = 30 * time.Second
+	clientControlReadTimeout    = 75 * time.Second
+	clientControlWriteTimeout   = 10 * time.Second
+)
 
 // NewClientAgent validates process-local handshake dependencies without
 // connecting to the control plane.
@@ -69,6 +88,9 @@ func NewClientAgent(options ClientAgentOptions) (*ClientAgent, error) {
 	}
 	if options.LastAppliedRevision < 0 || options.LastAppliedRevision > clientMaximumSafeInteger {
 		return nil, fmt.Errorf("Tunnel client applied revision is invalid")
+	}
+	if options.LastRestartResult != nil && !validClientRestartResult(*options.LastRestartResult) {
+		return nil, fmt.Errorf("Tunnel client restart result is invalid")
 	}
 	artifact := tunnelruntime.FRPArtifact{}
 	if options.expectedArtifact != nil {
@@ -108,6 +130,7 @@ func NewClientAgent(options ClientAgentOptions) (*ClientAgent, error) {
 		expectedArtifact:    artifact,
 		wireTarget:          target,
 		onAuthenticated:     options.OnAuthenticated,
+		lastRestartResult:   cloneClientRestartResult(options.LastRestartResult),
 	}, nil
 }
 
@@ -137,12 +160,14 @@ func (agent *ClientAgent) Probe(ctx context.Context) error {
 // Connect probes first, completes one hello/welcome exchange, and exposes the
 // authenticated socket to the later reconciler and lifecycle owner.
 func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnection, result error) {
-	if err := agent.Probe(ctx); err != nil {
+	attemptContext, cancel := context.WithTimeout(ctx, clientControlAttemptTimeout)
+	defer cancel()
+	if err := agent.Probe(attemptContext); err != nil {
 		return nil, err
 	}
 	endpoint := clientAgentEndpoint(agent.config.Server, true)
 	headers := http.Header{"Authorization": []string{"Bearer " + agent.config.Token}}
-	socket, response, err := agent.dialer.DialContext(ctx, endpoint.String(), headers)
+	socket, response, err := agent.dialer.DialContext(attemptContext, endpoint.String(), headers)
 	if response != nil && response.Body != nil {
 		defer response.Body.Close()
 	}
@@ -160,6 +185,7 @@ func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnecti
 
 	agent.mu.Lock()
 	lastAppliedRevision := agent.lastAppliedRevision
+	lastRestartResult := cloneClientRestartResult(agent.lastRestartResult)
 	agent.mu.Unlock()
 	hello := tunnelruntime.AgentHello{
 		Type:                  "hello",
@@ -168,9 +194,16 @@ func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnecti
 		Platform:              string(agent.wireTarget.Platform),
 		Architecture:          string(agent.wireTarget.Architecture),
 		LastAppliedRevision:   lastAppliedRevision,
+		LastRestartResult:     lastRestartResult,
+	}
+	if err := socket.SetWriteDeadline(time.Now().Add(clientControlWriteTimeout)); err != nil {
+		return nil, fmt.Errorf("set Tunnel client hello deadline: %w", err)
 	}
 	if err := socket.WriteJSON(hello); err != nil {
 		return nil, fmt.Errorf("send Tunnel client hello: %w", err)
+	}
+	if deadline, ok := attemptContext.Deadline(); ok {
+		_ = socket.SetReadDeadline(deadline)
 	}
 	_, source, err := socket.ReadMessage()
 	if err != nil {
@@ -189,7 +222,30 @@ func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnecti
 		closeClientControlSocket(socket, 4406, "Client failed to process control message")
 		return nil, err
 	}
-	return &ClientControlConnection{socket: socket, Welcome: welcome}, nil
+	return newClientControlConnection(socket, welcome), nil
+}
+
+func (agent *ClientAgent) RecordRestartResult(result tunnelruntime.RestartResult) {
+	if agent == nil || !validClientRestartResult(result) {
+		return
+	}
+	agent.mu.Lock()
+	if agent.lastRestartResult == nil || result.Generation >= agent.lastRestartResult.Generation {
+		agent.lastRestartResult = cloneClientRestartResult(&result)
+	}
+	agent.mu.Unlock()
+}
+
+func cloneClientRestartResult(result *tunnelruntime.RestartResult) *tunnelruntime.RestartResult {
+	if result == nil {
+		return nil
+	}
+	copy := *result
+	if result.Error != nil {
+		errorCopy := *result.Error
+		copy.Error = &errorCopy
+	}
+	return &copy
 }
 
 func (agent *ClientAgent) reportAuthentication() error {
@@ -265,7 +321,7 @@ func decodeClientWelcome(source []byte, expected tunnelruntime.FRPArtifact) (tun
 	if welcome.RequiredFRPVersion != tunnelruntime.FRPVersion || welcome.Artifact != expected.Description {
 		return tunnelruntime.AgentWelcome{}, fmt.Errorf("%w: Control plane requires an unsupported tunnel protocol or FRP build; upgrade ycy", ErrClientIncompatible)
 	}
-	if strings.TrimSpace(welcome.AdvertisedFRPHost) == "" || welcome.AdvertisedFRPPort < 1 || welcome.AdvertisedFRPPort > 65535 || strings.TrimSpace(welcome.InternalFRPToken) == "" || welcome.Snapshot.Revision < 0 || welcome.Snapshot.Revision > clientMaximumSafeInteger {
+	if strings.TrimSpace(welcome.AdvertisedFRPHost) == "" || welcome.AdvertisedFRPPort < 1 || welcome.AdvertisedFRPPort > 65535 || strings.TrimSpace(welcome.InternalFRPToken) == "" || welcome.Snapshot.Revision < 0 || welcome.Snapshot.Revision > clientMaximumSafeInteger || welcome.DesiredRestartGeneration < 0 || welcome.DesiredRestartGeneration > clientMaximumSafeInteger {
 		return tunnelruntime.AgentWelcome{}, fmt.Errorf("%w: welcome message is incomplete", ErrClientProtocol)
 	}
 	return welcome, nil
@@ -275,6 +331,8 @@ func clientControlReadError(err error) error {
 	var closeError *websocket.CloseError
 	if errors.As(err, &closeError) {
 		switch closeError.Code {
+		case 4400:
+			return fmt.Errorf("%w: %s", ErrClientProtocol, closeError.Text)
 		case 4401, 4403:
 			return fmt.Errorf("%w: %s", ErrClientAuthentication, closeError.Text)
 		case 4406:
@@ -298,9 +356,18 @@ func (connection *ClientControlConnection) WriteJSON(value any) error {
 	if connection == nil || connection.socket == nil {
 		return fmt.Errorf("Tunnel client control connection is unavailable")
 	}
-	connection.writeMu.Lock()
-	defer connection.writeMu.Unlock()
-	return connection.socket.WriteJSON(value)
+	request := clientControlWrite{value: value, result: make(chan error, 1)}
+	select {
+	case connection.outbound <- request:
+	case <-connection.done:
+		return connection.controlError()
+	}
+	select {
+	case err := <-request.result:
+		return err
+	case <-connection.done:
+		return connection.controlError()
+	}
 }
 
 // ReadMessage returns the next server frame after the accepted welcome and
@@ -313,6 +380,7 @@ func (connection *ClientControlConnection) ReadMessage() ([]byte, error) {
 	if err != nil {
 		return nil, clientControlReadError(err)
 	}
+	_ = connection.socket.SetReadDeadline(time.Now().Add(connection.readTimeout))
 	return source, nil
 }
 
@@ -323,6 +391,68 @@ func (connection *ClientControlConnection) Close() error {
 	}
 	connection.closeOnce.Do(func() {
 		connection.closeErr = connection.socket.Close()
+		connection.finish(connection.closeErr)
 	})
 	return connection.closeErr
+}
+
+func newClientControlConnection(socket *websocket.Conn, welcome tunnelruntime.AgentWelcome) *ClientControlConnection {
+	readTimeout := clientControlReadTimeout
+	pingInterval := clientControlPingInterval
+	writeTimeout := clientControlWriteTimeout
+	connection := &ClientControlConnection{socket: socket, Welcome: welcome, outbound: make(chan clientControlWrite, 16), done: make(chan struct{}), readTimeout: readTimeout}
+	_ = socket.SetWriteDeadline(time.Time{})
+	_ = socket.SetReadDeadline(time.Now().Add(readTimeout))
+	socket.SetPongHandler(func(string) error {
+		return socket.SetReadDeadline(time.Now().Add(readTimeout))
+	})
+	go connection.writeLoop(pingInterval, writeTimeout)
+	return connection
+}
+
+func (connection *ClientControlConnection) writeLoop(pingInterval, writeTimeout time.Duration) {
+	ticker := time.NewTicker(pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-connection.done:
+			return
+		case request := <-connection.outbound:
+			err := connection.socket.SetWriteDeadline(time.Now().Add(writeTimeout))
+			if err == nil {
+				err = connection.socket.WriteJSON(request.value)
+			}
+			request.result <- err
+			if err != nil {
+				_ = connection.socket.Close()
+				connection.finish(err)
+				return
+			}
+		case <-ticker.C:
+			err := connection.socket.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second))
+			if err != nil {
+				_ = connection.socket.Close()
+				connection.finish(err)
+				return
+			}
+		}
+	}
+}
+
+func (connection *ClientControlConnection) finish(err error) {
+	connection.writerMu.Lock()
+	if connection.writerErr == nil {
+		connection.writerErr = err
+	}
+	connection.writerMu.Unlock()
+	connection.doneOnce.Do(func() { close(connection.done) })
+}
+
+func (connection *ClientControlConnection) controlError() error {
+	connection.writerMu.Lock()
+	defer connection.writerMu.Unlock()
+	if connection.writerErr != nil {
+		return connection.writerErr
+	}
+	return fmt.Errorf("Tunnel client control connection is closed")
 }

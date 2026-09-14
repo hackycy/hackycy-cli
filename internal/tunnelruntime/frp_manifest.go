@@ -6,7 +6,7 @@ const FRPVersion = "0.70.1"
 
 const frpDownloadBaseURL = "https://github.com/fatedier/frp/releases/download/v" + FRPVersion
 
-// FRPArtifact is one fixed, official FRP input for a protocol-v3 target.
+// FRPArtifact is one fixed, official FRP input for a protocol-v4 target.
 type FRPArtifact struct {
 	Target      WireTarget
 	Description FRPArtifactDescription

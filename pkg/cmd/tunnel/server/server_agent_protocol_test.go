@@ -2,22 +2,23 @@ package server
 
 import (
 	"context"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"testing"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 func TestServerAgentConnectionAcceptsOnlyOneValidInitialHello(t *testing.T) {
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0,"futureField":true}`)
+	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0,"futureField":true}`)
 	for _, test := range []struct {
 		name      string
 		message   []byte
 		closeCode int
 	}{
 		{name: "invalid JSON", message: []byte(`{"type":`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "wrong message type", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "non-integer protocol", message: []byte(`{"type":"hello","tunnelProtocolVersion":3.5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "null required field", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":null,"platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "negative revision", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":-1}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "wrong message type", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "non-integer protocol", message: []byte(`{"type":"hello","tunnelProtocolVersion":4.5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "null required field", message: []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":null,"platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "negative revision", message: []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":-1}`), closeCode: serverAgentCloseInvalidMessage},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			connection, _ := openServerAgentProtocolConnection(t)
@@ -38,16 +39,16 @@ func TestServerAgentConnectionAcceptsOnlyOneValidInitialHello(t *testing.T) {
 }
 
 func TestServerAgentConnectionRejectsIncompatibleHello(t *testing.T) {
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
+	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
 	for _, test := range []struct {
 		name      string
 		message   []byte
 		configure func(*serverAgentTestFRPSAvailability)
 		closeCode int
 	}{
-		{name: "protocol version", message: []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseIncompatible},
-		{name: "unsupported platform", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"freebsd","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseIncompatible},
-		{name: "future applied revision", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":1}`), closeCode: serverAgentCloseIncompatible},
+		{name: "protocol version", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseIncompatible},
+		{name: "unsupported platform", message: []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"freebsd","architecture":"x64","lastAppliedRevision":0}`), closeCode: serverAgentCloseIncompatible},
+		{name: "future applied revision", message: []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":1}`), closeCode: serverAgentCloseIncompatible},
 		{name: "frps stopped after authorization", message: validHello, configure: func(availability *serverAgentTestFRPSAvailability) { availability.set(tunnelruntime.FRPProcessStopped) }, closeCode: serverAgentCloseFRPSUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -70,7 +71,7 @@ func TestServerAgentConnectionBuildsWelcomeAfterHello(t *testing.T) {
 		AdvertisedFRPPort: 7001,
 		InternalFRPToken:  "agent-only-token",
 	}}
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0,"futureField":true}`)
+	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0,"futureField":true}`)
 	if err := connection.AcceptHello(context.Background(), validHello); err != nil {
 		t.Fatalf("AcceptHello(valid) error = %v", err)
 	}
@@ -92,6 +93,57 @@ func TestServerAgentConnectionBuildsWelcomeAfterHello(t *testing.T) {
 	}
 }
 
+func TestServerAgentConnectionRestoresRestartGenerationAndHelloResultAfterGatewayRecreation(t *testing.T) {
+	ctx := context.Background()
+	state := openServerDomainState(t)
+	firstPlane := openServerControlPlane(t, state)
+	client, err := firstPlane.CreateClient(ctx, "environment-admin", "durable restart agent")
+	if err != nil {
+		t.Fatalf("CreateClient() error = %v", err)
+	}
+	for range 2 {
+		if _, err := firstPlane.RequestClientRestart(ctx, client.ID); err != nil {
+			t.Fatalf("RequestClientRestart() error = %v", err)
+		}
+	}
+
+	restoredPlane := openServerControlPlane(t, state)
+	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
+		ControlPlane: restoredPlane,
+		FRPS:         &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		WelcomeSource: serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{
+			AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7001, InternalFRPToken: "agent-only-token",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewServerAgentGateway() error = %v", err)
+	}
+	reservation, err := gateway.Authorize(ctx, "Bearer "+client.Token)
+	if err != nil {
+		t.Fatalf("Authorize() error = %v", err)
+	}
+	connection := reservation.Activate()
+	if connection == nil {
+		t.Fatal("Activate() = nil")
+	}
+	t.Cleanup(connection.Close)
+	hello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0,"lastRestartResult":{"generation":2,"success":true}}`)
+	if protocolError := connection.AcceptHello(ctx, hello); protocolError != nil {
+		t.Fatalf("AcceptHello() error = %v", protocolError)
+	}
+	welcome, protocolError := connection.BuildWelcome(ctx, "request.example.test")
+	if protocolError != nil {
+		t.Fatalf("BuildWelcome() error = %v", protocolError)
+	}
+	if welcome.DesiredRestartGeneration != 2 {
+		t.Fatalf("welcome restart generation = %d, want 2", welcome.DesiredRestartGeneration)
+	}
+	restored, err := restoredPlane.GetClient(ctx, client.ID)
+	if err != nil || restored.DesiredRestartGeneration != 2 || restored.CompletedRestartGeneration != 2 {
+		t.Fatalf("restored restart state = (%#v, %v)", restored, err)
+	}
+}
+
 func TestServerAgentConnectionPresentsDesiredStateOnlyAfterWelcome(t *testing.T) {
 	connection, _ := openServerAgentProtocolConnection(t)
 	connection.gateway.welcomeSource = serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{
@@ -99,7 +151,7 @@ func TestServerAgentConnectionPresentsDesiredStateOnlyAfterWelcome(t *testing.T)
 		AdvertisedFRPPort: 7001,
 		InternalFRPToken:  "agent-only-token",
 	}}
-	if err := connection.AcceptHello(context.Background(), []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := connection.AcceptHello(context.Background(), []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("AcceptHello() error = %v", err)
 	}
 	if _, err := connection.gateway.controlPlane.CreateTunnel(context.Background(), connection.ClientID(), TunnelMutationInput{
@@ -142,7 +194,7 @@ func TestServerAgentConnectionPresentsDesiredStateOnlyAfterWelcome(t *testing.T)
 func TestServerAgentConnectionProjectsApplyResultRuntimeErrors(t *testing.T) {
 	ctx := context.Background()
 	connection, _ := openServerAgentProtocolConnection(t)
-	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("AcceptHello() error = %v", err)
 	}
 	if _, err := connection.gateway.controlPlane.CreateTunnel(ctx, connection.ClientID(), TunnelMutationInput{
@@ -151,20 +203,20 @@ func TestServerAgentConnectionProjectsApplyResultRuntimeErrors(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateTunnel() error = %v", err)
 	}
-	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":true,"futureField":true}`)); err != nil {
+	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true,"futureField":true}`)); err != nil {
 		t.Fatalf("AcceptApplyResult(success) error = %v", err)
 	}
 	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.ClientID())
 	if err != nil || client.DesiredRevision != 1 || client.LastAppliedRevision != 1 {
 		t.Fatalf("client after successful apply result = (%#v, %v)", client, err)
 	}
-	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":false,"error":{"code":"ACTIVATION_FAILED","message":"candidate exited","revision":1}}`)); err != nil {
+	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":false,"error":{"code":"ACTIVATION_FAILED","message":"candidate exited","revision":1}}`)); err != nil {
 		t.Fatalf("AcceptApplyResult(failure) error = %v", err)
 	}
 	if got := connection.gateway.State(connection.ClientID()); got.ProcessState != tunnelruntime.FRPProcessStopped || got.LastError == nil || got.LastError.Code != "ACTIVATION_FAILED" || got.LastError.Message != "candidate exited" || got.LastError.Revision == nil || *got.LastError.Revision != 1 {
 		t.Fatalf("runtime after failed apply result = %#v", got)
 	}
-	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":true}`)); err != nil {
+	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":true}`)); err != nil {
 		t.Fatalf("AcceptApplyResult(stale success) error = %v", err)
 	}
 	client, err = connection.gateway.controlPlane.GetClient(ctx, connection.ClientID())
@@ -179,7 +231,7 @@ func TestServerAgentConnectionProjectsApplyResultRuntimeErrors(t *testing.T) {
 func TestServerAgentConnectionProjectsDefaultApplyFailure(t *testing.T) {
 	ctx := context.Background()
 	connection, _ := openServerAgentProtocolConnection(t)
-	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("AcceptHello() error = %v", err)
 	}
 	if _, err := connection.gateway.controlPlane.CreateTunnel(ctx, connection.ClientID(), TunnelMutationInput{
@@ -188,7 +240,7 @@ func TestServerAgentConnectionProjectsDefaultApplyFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("CreateTunnel() error = %v", err)
 	}
-	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":false}`)); err != nil {
+	if err := connection.AcceptApplyResult(ctx, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":false}`)); err != nil {
 		t.Fatalf("AcceptApplyResult(default failure) error = %v", err)
 	}
 	if got := connection.gateway.State(connection.ClientID()); got.LastError == nil || got.LastError.Code != "APPLY_FAILED" || got.LastError.Message != "Client could not apply Desired Revision" || got.LastError.Revision == nil || *got.LastError.Revision != 1 {
@@ -198,7 +250,7 @@ func TestServerAgentConnectionProjectsDefaultApplyFailure(t *testing.T) {
 	if err != nil || client.LastAppliedRevision != 0 {
 		t.Fatalf("client after failed apply result = (%#v, %v)", client, err)
 	}
-	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`)); err != nil {
+	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); err != nil {
 		t.Fatalf("AcceptProcessState() error = %v", err)
 	}
 	if got := connection.gateway.State(connection.ClientID()); got.ProcessState != tunnelruntime.FRPProcessRunning || got.LastError == nil || got.LastError.Revision == nil || *got.LastError.Revision != 1 {
@@ -207,9 +259,9 @@ func TestServerAgentConnectionProjectsDefaultApplyFailure(t *testing.T) {
 }
 
 func TestServerAgentConnectionRejectsInvalidApplyResults(t *testing.T) {
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
+	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
 	connection, _ := openServerAgentProtocolConnection(t)
-	if err := connection.AcceptApplyResult(context.Background(), []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":true}`)); err == nil || err.CloseCode != serverAgentCloseInvalidMessage {
+	if err := connection.AcceptApplyResult(context.Background(), []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":true}`)); err == nil || err.CloseCode != serverAgentCloseInvalidMessage {
 		t.Fatalf("AcceptApplyResult(before hello) = %v, want invalid-message close", err)
 	}
 
@@ -219,15 +271,15 @@ func TestServerAgentConnectionRejectsInvalidApplyResults(t *testing.T) {
 		closeCode int
 	}{
 		{name: "invalid JSON", message: []byte(`{"type":`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "unsupported protocol", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":true}`), closeCode: serverAgentCloseIncompatible},
-		{name: "non-integer protocol", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3.5,"revision":0,"success":true}`), closeCode: serverAgentCloseIncompatible},
-		{name: "unexpected process state", message: []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "negative revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":-1,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "unsafe revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":9007199254740992,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "missing success", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "invalid error", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":false,"error":{"code":true}}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "negative error revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":false,"error":{"code":"FAIL","message":"failed","revision":-1}}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "revision ahead of desired state", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":1,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "unsupported protocol", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":true}`), closeCode: serverAgentCloseIncompatible},
+		{name: "non-integer protocol", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4.5,"revision":0,"success":true}`), closeCode: serverAgentCloseIncompatible},
+		{name: "unexpected process state", message: []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "negative revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":-1,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "unsafe revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":9007199254740992,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "missing success", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "invalid error", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":false,"error":{"code":true}}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "negative error revision", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":false,"error":{"code":"FAIL","message":"failed","revision":-1}}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "revision ahead of desired state", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			connection, _ := openServerAgentProtocolConnection(t)
@@ -245,20 +297,20 @@ func TestServerAgentConnectionRejectsInvalidApplyResults(t *testing.T) {
 func TestServerAgentConnectionProjectsProcessStateWithoutDurableMutation(t *testing.T) {
 	ctx := context.Background()
 	connection, _ := openServerAgentProtocolConnection(t)
-	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := connection.AcceptHello(ctx, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
 		t.Fatalf("AcceptHello() error = %v", err)
 	}
 	before, err := connection.gateway.controlPlane.GetClient(ctx, connection.ClientID())
 	if err != nil {
 		t.Fatalf("GetClient(before process state) error = %v", err)
 	}
-	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`)); err != nil {
+	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); err != nil {
 		t.Fatalf("AcceptProcessState(running) error = %v", err)
 	}
 	if got := connection.gateway.State(connection.ClientID()); got.ConnectionState != ServerClientConnected || got.ProcessState != tunnelruntime.FRPProcessRunning || got.LastError != nil {
 		t.Fatalf("runtime after running process state = %#v", got)
 	}
-	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"configuration_failed","error":{"code":"ACTIVATION_FAILED","message":"candidate exited","revision":0}}`)); err != nil {
+	if err := connection.AcceptProcessState(ctx, []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"configuration_failed","error":{"code":"ACTIVATION_FAILED","message":"candidate exited","revision":0}}`)); err != nil {
 		t.Fatalf("AcceptProcessState(failure) error = %v", err)
 	}
 	if got := connection.gateway.State(connection.ClientID()); got.ConnectionState != ServerClientConnected || got.ProcessState != tunnelruntime.FRPProcessConfigurationFailed || got.LastError == nil || got.LastError.Code != "ACTIVATION_FAILED" || got.LastError.Message != "candidate exited" || got.LastError.Revision == nil || *got.LastError.Revision != 0 {
@@ -278,9 +330,9 @@ func TestServerAgentConnectionProjectsProcessStateWithoutDurableMutation(t *test
 }
 
 func TestServerAgentConnectionRejectsInvalidProcessStates(t *testing.T) {
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
+	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)
 	connection, _ := openServerAgentProtocolConnection(t)
-	if err := connection.AcceptProcessState(context.Background(), []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`)); err == nil || err.CloseCode != serverAgentCloseInvalidMessage {
+	if err := connection.AcceptProcessState(context.Background(), []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); err == nil || err.CloseCode != serverAgentCloseInvalidMessage {
 		t.Fatalf("AcceptProcessState(before hello) = %v, want invalid-message close", err)
 	}
 
@@ -290,11 +342,11 @@ func TestServerAgentConnectionRejectsInvalidProcessStates(t *testing.T) {
 		closeCode int
 	}{
 		{name: "invalid JSON", message: []byte(`{"type":`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "unsupported protocol", message: []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`), closeCode: serverAgentCloseIncompatible},
-		{name: "unexpected apply result", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":3,"revision":0,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "invalid state", message: []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"starting"}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "invalid error", message: []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running","error":{"code":true}}`), closeCode: serverAgentCloseInvalidMessage},
-		{name: "negative error revision", message: []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running","error":{"code":"FAIL","message":"failed","revision":-1}}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "unsupported protocol", message: []byte(`{"type":"process_state","tunnelProtocolVersion":3,"state":"running"}`), closeCode: serverAgentCloseIncompatible},
+		{name: "unexpected apply result", message: []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":true}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "invalid state", message: []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"starting"}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "invalid error", message: []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running","error":{"code":true}}`), closeCode: serverAgentCloseInvalidMessage},
+		{name: "negative error revision", message: []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running","error":{"code":"FAIL","message":"failed","revision":-1}}`), closeCode: serverAgentCloseInvalidMessage},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			connection, _ := openServerAgentProtocolConnection(t)

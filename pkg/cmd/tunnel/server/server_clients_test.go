@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 func TestServerControlPlanePersistsTrustedClientLifecycle(t *testing.T) {
@@ -82,6 +84,79 @@ func TestServerControlPlaneRestartsWithGoCreatedClientState(t *testing.T) {
 	resumed, err := secondPlane.GetClient(context.Background(), created.ID)
 	if err != nil || resumed.Token != created.Token || resumed.Remark != "restart evidence" {
 		t.Fatalf("restarted GetClient() = (%#v, %v)", resumed, err)
+	}
+}
+
+func TestServerControlPlanePersistsAndMergesRestartGenerations(t *testing.T) {
+	state := openServerDomainState(t)
+	plane := openServerControlPlane(t, state)
+	ctx := context.Background()
+	client, err := plane.CreateClient(ctx, "environment-admin", "offline restart")
+	if err != nil {
+		t.Fatalf("CreateClient() error = %v", err)
+	}
+	first, err := plane.RequestClientRestart(ctx, client.ID)
+	if err != nil || first.DesiredRestartGeneration != 1 || first.CompletedRestartGeneration != 0 {
+		t.Fatalf("first RequestClientRestart() = (%#v, %v)", first, err)
+	}
+	second, err := plane.RequestClientRestart(ctx, client.ID)
+	if err != nil || second.DesiredRestartGeneration != 2 || second.CompletedRestartGeneration != 0 {
+		t.Fatalf("second RequestClientRestart() = (%#v, %v)", second, err)
+	}
+	failure := tunnelruntime.RestartResult{Generation: 2, Success: false, Error: &tunnelruntime.StructuredRuntimeError{Code: "CONFIGURATION_FAILED", Message: "invalid local configuration"}}
+	if err := plane.RecordRestartResult(ctx, client.ID, failure); err != nil {
+		t.Fatalf("RecordRestartResult(failure) error = %v", err)
+	}
+	failed, err := plane.GetClient(ctx, client.ID)
+	if err != nil || failed.CompletedRestartGeneration != 2 || failed.RestartError == nil || failed.RestartError.Code != "CONFIGURATION_FAILED" {
+		t.Fatalf("failed restart state = (%#v, %v)", failed, err)
+	}
+	if err := plane.RecordRestartResult(ctx, client.ID, failure); err != nil {
+		t.Fatalf("idempotent RecordRestartResult() error = %v", err)
+	}
+	third, err := plane.RequestClientRestart(ctx, client.ID)
+	if err != nil || third.DesiredRestartGeneration != 3 || third.CompletedRestartGeneration != 2 {
+		t.Fatalf("third RequestClientRestart() = (%#v, %v)", third, err)
+	}
+	if err := plane.RecordRestartResult(ctx, client.ID, tunnelruntime.RestartResult{Generation: 4, Success: true}); err == nil {
+		t.Fatal("future RecordRestartResult() error = nil")
+	}
+	if err := plane.RecordRestartResult(ctx, client.ID, tunnelruntime.RestartResult{Generation: 3, Success: true}); err != nil {
+		t.Fatalf("RecordRestartResult(success) error = %v", err)
+	}
+	completed, err := plane.GetClient(ctx, client.ID)
+	if err != nil || completed.CompletedRestartGeneration != 3 || completed.RestartError != nil {
+		t.Fatalf("completed restart state = (%#v, %v)", completed, err)
+	}
+}
+
+func TestServerControlPlaneSerializesConcurrentRestartGenerations(t *testing.T) {
+	state := openServerDomainState(t)
+	plane := openServerControlPlane(t, state)
+	ctx := context.Background()
+	client, err := plane.CreateClient(ctx, "environment-admin", "concurrent restart")
+	if err != nil {
+		t.Fatalf("CreateClient() error = %v", err)
+	}
+	const requests = 16
+	start := make(chan struct{})
+	results := make(chan error, requests)
+	for range requests {
+		go func() {
+			<-start
+			_, err := plane.RequestClientRestart(ctx, client.ID)
+			results <- err
+		}()
+	}
+	close(start)
+	for range requests {
+		if err := <-results; err != nil {
+			t.Fatalf("RequestClientRestart() error = %v", err)
+		}
+	}
+	updated, err := plane.GetClient(ctx, client.ID)
+	if err != nil || updated.DesiredRestartGeneration != requests || updated.CompletedRestartGeneration != 0 {
+		t.Fatalf("concurrent restart state = (%#v, %v)", updated, err)
 	}
 }
 

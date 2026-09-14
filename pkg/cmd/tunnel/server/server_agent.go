@@ -58,6 +58,10 @@ type ServerAgentGateway struct {
 	slots    map[string]serverAgentSlot
 	runtime  map[string]serverAgentRuntime
 	nextSlot uint64
+
+	observersMu    sync.Mutex
+	observers      map[uint64]func(string)
+	nextObserverID uint64
 }
 
 type serverAgentSlot struct {
@@ -95,9 +99,43 @@ func NewServerAgentGateway(options ServerAgentGatewayOptions) (*ServerAgentGatew
 		slots:         make(map[string]serverAgentSlot),
 		runtime:       make(map[string]serverAgentRuntime),
 		warnings:      make(map[string]bool),
+		observers:     make(map[uint64]func(string)),
 	}
 	gateway.controlPlane.Subscribe(gateway.handleControlPlaneEvent)
 	return gateway, nil
+}
+
+// ObserveAgentChanges reports process-local connection and runtime changes.
+// Durable desired/restart changes continue to flow through the control plane.
+func (gateway *ServerAgentGateway) ObserveAgentChanges(listener func(string)) func() {
+	if gateway == nil || listener == nil {
+		return func() {}
+	}
+	gateway.observersMu.Lock()
+	id := gateway.nextObserverID
+	gateway.nextObserverID++
+	gateway.observers[id] = listener
+	gateway.observersMu.Unlock()
+	return func() {
+		gateway.observersMu.Lock()
+		delete(gateway.observers, id)
+		gateway.observersMu.Unlock()
+	}
+}
+
+func (gateway *ServerAgentGateway) notifyAgentChange(clientID string) {
+	if gateway == nil {
+		return
+	}
+	gateway.observersMu.Lock()
+	listeners := make([]func(string), 0, len(gateway.observers))
+	for _, listener := range gateway.observers {
+		listeners = append(listeners, listener)
+	}
+	gateway.observersMu.Unlock()
+	for _, listener := range listeners {
+		listener(clientID)
+	}
 }
 
 func (gateway *ServerAgentGateway) lifecycleEvent(level logging.Level, id, message string, fields map[string]any) {
@@ -142,6 +180,7 @@ func (gateway *ServerAgentGateway) clearWarning(category, clientID string) bool 
 }
 
 func (gateway *ServerAgentGateway) agentConnected(clientID string) {
+	defer gateway.notifyAgentChange(clientID)
 	gateway.clearWarning("authentication", clientID)
 	if gateway.clearWarning("connection", clientID) {
 		gateway.lifecycleEvent(logging.Info, serverEventAgentRestored, "Tunnel agent restored", map[string]any{"clientRef": serverClientRef(clientID)})
@@ -163,6 +202,7 @@ func (gateway *ServerAgentGateway) agentDisconnected(clientID string) {
 	gateway.warnings[key] = true
 	gateway.warningMu.Unlock()
 	gateway.lifecycleEvent(logging.Warn, serverEventAgentDisconnected, "Tunnel agent disconnected", map[string]any{"failureClass": "transport", "clientRef": serverClientRef(clientID)})
+	gateway.notifyAgentChange(clientID)
 }
 
 func (gateway *ServerAgentGateway) agentRevoked(reason string) {
@@ -193,6 +233,8 @@ func (gateway *ServerAgentGateway) controlChange(event ServerControlPlaneEvent) 
 		action, object = "deleted", "client"
 	case serverDesiredState:
 		action, object = "applied", "desired-state"
+	case serverClientRestart:
+		action, object = "requested", "client-restart"
 	default:
 		return
 	}
@@ -402,21 +444,6 @@ func cloneServerAgentRuntimeError(value *tunnelruntime.StructuredRuntimeError) *
 	return &copy
 }
 
-// RestartFRPC sends the explicit restart request only to a currently active
-// agent that has completed its server-frame presentation.
-func (gateway *ServerAgentGateway) RestartFRPC(clientID string) bool {
-	if gateway == nil {
-		return false
-	}
-	gateway.mu.RLock()
-	slot, found := gateway.slots[clientID]
-	gateway.mu.RUnlock()
-	if !found || !slot.active || slot.revoking || slot.connection == nil {
-		return false
-	}
-	return slot.connection.RestartFRPC()
-}
-
 // ServerAgentReservation holds the one pending connection slot for a Client
 // Token until the HTTP upgrade either takes ownership or is rejected.
 type ServerAgentReservation struct {
@@ -611,7 +638,7 @@ func (gateway *ServerAgentGateway) release(clientID string, slot uint64) {
 func (gateway *ServerAgentGateway) handleControlPlaneEvent(event ServerControlPlaneEvent) {
 	gateway.controlChange(event)
 	switch event.Type {
-	case serverDesiredState:
+	case serverDesiredState, serverClientRestart:
 		gateway.mu.RLock()
 		slot, found := gateway.slots[event.ClientID]
 		gateway.mu.RUnlock()
@@ -619,9 +646,9 @@ func (gateway *ServerAgentGateway) handleControlPlaneEvent(event ServerControlPl
 			slot.connection.PresentDesiredState()
 		}
 	case serverClientRotated:
-		gateway.revoke(event.ClientID, "rotated", false)
+		go gateway.revoke(event.ClientID, "rotated", false)
 	case serverClientDeleted:
-		gateway.revoke(event.ClientID, "deleted", true)
+		go gateway.revoke(event.ClientID, "deleted", true)
 	}
 }
 

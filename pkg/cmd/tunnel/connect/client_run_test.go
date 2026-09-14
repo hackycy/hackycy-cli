@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,18 +15,23 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hackycy/hackycy-cli/internal/logging"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 type clientRunRuntimeStub struct {
-	mu         sync.Mutex
-	state      tunnelruntime.FRPSupervisorState
-	verified   int
-	started    int
-	stopped    int
-	restarted  int
-	restartErr error
-	listeners  map[uint64]func(tunnelruntime.FRPSupervisorState)
-	next       uint64
+	mu             sync.Mutex
+	state          tunnelruntime.FRPSupervisorState
+	verified       int
+	started        int
+	stopped        int
+	restarted      int
+	restartErr     error
+	restartStarted chan struct{}
+	restartRelease chan struct{}
+	restartOnce    sync.Once
+	releaseOnce    sync.Once
+	listeners      map[uint64]func(tunnelruntime.FRPSupervisorState)
+	next           uint64
 }
 
 func init() {
@@ -75,7 +79,15 @@ func (runtime *clientRunRuntimeStub) Restart() error {
 	runtime.mu.Lock()
 	err := runtime.restartErr
 	runtime.restarted++
+	started := runtime.restartStarted
+	release := runtime.restartRelease
 	runtime.mu.Unlock()
+	if started != nil {
+		runtime.restartOnce.Do(func() { close(started) })
+	}
+	if release != nil {
+		<-release
+	}
 	if err == nil {
 		// Mirror the supervisor's observable stop/start transition so callers
 		// can distinguish this restart from the initial apply state report.
@@ -128,6 +140,12 @@ func (runtime *clientRunRuntimeStub) counts() (verified, started, stopped, resta
 	return runtime.verified, runtime.started, runtime.stopped, runtime.restarted
 }
 
+func (runtime *clientRunRuntimeStub) releaseRestart() {
+	if runtime.restartRelease != nil {
+		runtime.releaseOnce.Do(func() { close(runtime.restartRelease) })
+	}
+}
+
 func TestRunClientReconnectsWithoutRestartingAnAppliedFRPC(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
@@ -160,6 +178,85 @@ func TestRunClientReconnectsWithoutRestartingAnAppliedFRPC(t *testing.T) {
 	verified, started, _, restarted := runtime.counts()
 	if verified != 1 || started != 1 || restarted != 0 || authenticated != 1 {
 		t.Fatalf("runtime/authenticated = verify:%d start:%d restart:%d auth:%d", verified, started, restarted, authenticated)
+	}
+}
+
+func TestRunClientRecoversFromHalfOpenControlSocket(t *testing.T) {
+	previousPing := clientControlPingInterval
+	previousRead := clientControlReadTimeout
+	clientControlPingInterval = 20 * time.Millisecond
+	clientControlReadTimeout = 80 * time.Millisecond
+	t.Cleanup(func() {
+		clientControlPingInterval = previousPing
+		clientControlReadTimeout = previousRead
+	})
+	desired := clientDesiredState(1, true)
+	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
+		if index == 1 {
+			socket.SetPingHandler(func(string) error { return nil })
+		}
+		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		if index == 1 {
+			for {
+				if _, _, err := socket.ReadMessage(); err != nil {
+					return
+				}
+			}
+		}
+		if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
+			t.Errorf("write revoke: %v", err)
+		}
+	})
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runtime := newClientRunRuntimeStub()
+	if err := runClientAgainstTestServer(t, ctx, server, runtime, nil); err != nil {
+		t.Fatalf("RunClient() error = %v", err)
+	}
+	if got := len(hellos()); got != 2 {
+		t.Fatalf("control connections = %d, want 2", got)
+	}
+	if _, started, _, restarted := runtime.counts(); started != 1 || restarted != 0 {
+		t.Fatalf("runtime starts/restarts = %d/%d, want 1/0", started, restarted)
+	}
+}
+
+func TestRunClientResetsReconnectBackoffOnlyAfterStableWindow(t *testing.T) {
+	previousStableAfter := clientControlStableAfter
+	clientControlStableAfter = 40 * time.Millisecond
+	t.Cleanup(func() { clientControlStableAfter = previousStableAfter })
+	desired := clientDesiredState(1, true)
+	stableClosedAt := make(chan time.Time, 1)
+	thirdConnectedAt := make(chan time.Time, 1)
+	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
+		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		switch index {
+		case 1:
+			_ = socket.Close()
+		case 2:
+			time.Sleep(70 * time.Millisecond)
+			stableClosedAt <- time.Now()
+			_ = socket.Close()
+		case 3:
+			thirdConnectedAt <- time.Now()
+			if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
+				t.Errorf("write revoke: %v", err)
+			}
+		}
+	})
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runtime := newClientRunRuntimeStub()
+	if err := runClientAgainstTestServerWithBackoff(t, ctx, server, runtime, []time.Duration{20 * time.Millisecond, 200 * time.Millisecond}); err != nil {
+		t.Fatalf("RunClient() error = %v", err)
+	}
+	if got := len(hellos()); got != 3 {
+		t.Fatalf("control connections = %d, want 3", got)
+	}
+	if elapsed := (<-thirdConnectedAt).Sub(<-stableClosedAt); elapsed < 10*time.Millisecond || elapsed > 80*time.Millisecond {
+		t.Fatalf("post-stable reconnect delay = %s, want first backoff tier", elapsed)
 	}
 }
 
@@ -229,15 +326,15 @@ func TestRunClientStopsAndReleasesItsInstanceOnContextCancellation(t *testing.T)
 	}
 }
 
-func TestRunClientDispatchesRestartFRPC(t *testing.T) {
+func TestRunClientDispatchesDurableRestartGeneration(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
 		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
-		if err := socket.WriteJSON(tunnelruntime.RestartFRPC{Type: "restart_frpc", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion}); err != nil {
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write restart: %v", err)
 			return
 		}
-		awaitClientRestartTransition(t, socket)
+		awaitClientRestartResult(t, socket, true)
 		if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
 			t.Errorf("write revoke: %v", err)
 		}
@@ -253,22 +350,118 @@ func TestRunClientDispatchesRestartFRPC(t *testing.T) {
 	}
 }
 
-func TestRunClientStopsAfterRestartFailure(t *testing.T) {
+func TestRunClientCoalescesGenerationObservedDuringRestart(t *testing.T) {
+	desired := clientDesiredState(1, true)
+	runtime := newClientRunRuntimeStub()
+	runtime.restartStarted = make(chan struct{})
+	runtime.restartRelease = make(chan struct{})
+	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
+		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+			t.Errorf("write first restart generation: %v", err)
+			return
+		}
+		select {
+		case <-runtime.restartStarted:
+		case <-time.After(3 * time.Second):
+			t.Error("client did not start restart")
+			return
+		}
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 2}); err != nil {
+			t.Errorf("write coalesced restart generation: %v", err)
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+		runtime.releaseRestart()
+		awaitClientRestartResultGeneration(t, socket, 2, true)
+		if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
+			t.Errorf("write revoke: %v", err)
+		}
+	})
+	defer server.Close()
+	if err := runClientAgainstTestServer(t, context.Background(), server, runtime, nil); err != nil {
+		t.Fatalf("RunClient() error = %v", err)
+	}
+	if _, _, _, restarted := runtime.counts(); restarted != 1 {
+		t.Fatalf("runtime restarts = %d, want 1", restarted)
+	}
+}
+
+func TestRunClientReplaysPersistedRestartResultWithoutRepeatingRestart(t *testing.T) {
+	desired := clientDesiredState(1, true)
+	runtime := newClientRunRuntimeStub()
+	runtime.restartStarted = make(chan struct{})
+	runtime.restartRelease = make(chan struct{})
+	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
+		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		if index == 1 {
+			if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+				t.Errorf("write restart generation: %v", err)
+				return
+			}
+			select {
+			case <-runtime.restartStarted:
+			case <-time.After(3 * time.Second):
+				t.Error("client did not start restart")
+				return
+			}
+			_ = socket.Close()
+			runtime.releaseRestart()
+			return
+		}
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+			t.Errorf("write replayed restart generation: %v", err)
+			return
+		}
+		if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
+			t.Errorf("write revoke: %v", err)
+		}
+	})
+	defer server.Close()
+	if err := runClientAgainstTestServer(t, context.Background(), server, runtime, nil); err != nil {
+		t.Fatalf("RunClient() error = %v", err)
+	}
+	values := hellos()
+	if len(values) != 2 || values[1].LastRestartResult == nil || values[1].LastRestartResult.Generation != 1 || !values[1].LastRestartResult.Success {
+		t.Fatalf("reconnect hellos = %#v", values)
+	}
+	if _, _, _, restarted := runtime.counts(); restarted != 1 {
+		t.Fatalf("runtime restarts = %d, want 1", restarted)
+	}
+}
+
+func TestClientEqualJitterStaysInUpperHalf(t *testing.T) {
+	base := 30 * time.Second
+	for range 1000 {
+		delay := clientEqualJitter(base)
+		if delay < base/2 || delay > base {
+			t.Fatalf("clientEqualJitter(%s) = %s", base, delay)
+		}
+	}
+	if got := clientEqualJitter(0); got != 0 {
+		t.Fatalf("clientEqualJitter(0) = %s", got)
+	}
+}
+
+func TestRunClientReportsDeterministicRestartFailureWithoutStoppingControlSession(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
 		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
-		if err := socket.WriteJSON(tunnelruntime.RestartFRPC{Type: "restart_frpc", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion}); err != nil {
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write restart: %v", err)
 			return
 		}
-		_, _, _ = socket.ReadMessage()
+		awaitClientRestartResult(t, socket, false)
+		if err := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); err != nil {
+			t.Errorf("write revoke: %v", err)
+		}
 	})
 	defer server.Close()
 	runtime := newClientRunRuntimeStub()
-	runtime.restartErr = errors.New("restart fixture failed")
+	runtime.restartErr = &ClientReconciliationError{Code: "CONFIGURATION_FAILED", Cause: errors.New("restart fixture failed")}
 	err := runClientAgainstTestServer(t, context.Background(), server, runtime, nil)
-	if !errors.Is(err, errClientControlFatal) {
-		t.Fatalf("RunClient() error = %v, want fatal restart failure", err)
+	if err != nil {
+		t.Fatalf("RunClient() error = %v", err)
 	}
 	_, _, stopped, restarted := runtime.counts()
 	if restarted != 1 || stopped < 2 {
@@ -583,9 +776,55 @@ func awaitClientRestartTransition(t *testing.T, socket *websocket.Conn) {
 	awaitClientProcessState(t, socket, tunnelruntime.FRPProcessRunning)
 }
 
+func awaitClientRestartResult(t *testing.T, socket *websocket.Conn, wantSuccess bool) {
+	awaitClientRestartResultGeneration(t, socket, 1, wantSuccess)
+}
+
+func awaitClientRestartResultGeneration(t *testing.T, socket *websocket.Conn, generation int64, wantSuccess bool) {
+	t.Helper()
+	if err := socket.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	defer socket.SetReadDeadline(time.Time{})
+	for {
+		_, source, err := socket.ReadMessage()
+		if err != nil {
+			t.Fatalf("read client frame: %v", err)
+		}
+		var result tunnelruntime.RestartResult
+		if err := json.Unmarshal(source, &result); err != nil {
+			t.Fatalf("decode client frame: %v", err)
+		}
+		if result.Type != "restart_result" {
+			continue
+		}
+		if result.Generation != generation || result.Success != wantSuccess {
+			t.Fatalf("restart result = %#v", result)
+		}
+		return
+	}
+}
+
 func runClientAgainstTestServer(t *testing.T, ctx context.Context, server *httptest.Server, runtime *clientRunRuntimeStub, onAuthenticated func() error) error {
 	t.Helper()
 	return runClientAgainstTestServerAtRoot(ctx, server, runtime, t.TempDir(), onAuthenticated)
+}
+
+func runClientAgainstTestServerWithBackoff(t *testing.T, ctx context.Context, server *httptest.Server, runtime *clientRunRuntimeStub, backoff []time.Duration) error {
+	t.Helper()
+	controlServer, err := normalizeControlPlaneURL(server.URL)
+	if err != nil {
+		return err
+	}
+	return RunClient(ctx, ClientConfig{Server: controlServer, Token: "client-token"}, ClientRunOptions{
+		InstanceIdentity: clientInstanceIdentityStub{id: clientTestInstanceID('b')},
+		StateRoot:        t.TempDir(),
+		Logger:           logging.Logger{},
+		Backoff:          backoff,
+		newRuntime: func(context.Context, logging.Logger) (ClientFRPRuntime, error) {
+			return runtime, nil
+		},
+	})
 }
 
 func runClientAgainstTestServerAtRoot(ctx context.Context, server *httptest.Server, runtime *clientRunRuntimeStub, root string, onAuthenticated func() error) error {

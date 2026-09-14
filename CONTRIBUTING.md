@@ -4,7 +4,7 @@
 
 - Go toolchain `go1.26.7`
 - Node.js 24 or newer
-- pnpm `11.13.0`
+- pnpm `>=11.13.0 <12` (`11.24.0` recommended)
 - Git and GNU Make
 
 On Windows, use Git for Windows and GNU Make. The hook and build commands are repository-local and do not require PowerShell, WSL, or a global JavaScript hook manager.

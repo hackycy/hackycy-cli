@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
+	"math/rand/v2"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/hackycy/hackycy-cli/internal/logging"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 const (
@@ -26,6 +27,7 @@ var (
 	ErrFRPCConfigurationVerificationTimeout = errors.New("FRPC configuration verification timed out")
 	errClientControlRevoked                 = errors.New("Tunnel client was revoked")
 	errClientControlFatal                   = errors.New("Tunnel client could not process a control message")
+	clientControlStableAfter                = 60 * time.Second
 )
 
 // ClientRunOptions supplies the private dependencies for an unregistered
@@ -176,7 +178,7 @@ func verifyFRPCConfiguration(ctx context.Context, binaryPath, configurationPath 
 	return fmt.Errorf("frpc rejected the generated configuration: %w", err)
 }
 
-// RunClient owns one resolved client instance through authentication, v3
+// RunClient owns one resolved client instance through authentication, v4
 // reconciliation, frpc supervision, reconnect, and final ordered shutdown.
 func RunClient(ctx context.Context, config ClientConfig, options ClientRunOptions) (result error) {
 	if ctx == nil {
@@ -245,10 +247,19 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 	if applied, found := ReadClientAppliedState(instance.StateDirectory); found {
 		lastAppliedRevision = applied.Revision
 	}
+	lastRestartResult, hasRestartResult, err := ReadClientRestartResult(instance.StateDirectory)
+	if err != nil {
+		return err
+	}
+	var restartResult *tunnelruntime.RestartResult
+	if hasRestartResult {
+		restartResult = &lastRestartResult
+	}
 	agent, err := NewClientAgent(ClientAgentOptions{
 		Config:              config,
 		YCYVersion:          clientRunYCYVersion(options.YCYVersion),
 		LastAppliedRevision: lastAppliedRevision,
+		LastRestartResult:   restartResult,
 		HTTPClient:          options.HTTPClient,
 		WebSocketDialer:     options.WebSocketDialer,
 		OnAuthenticated: func() error {
@@ -292,8 +303,8 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 			continue
 		}
 		lifecycle.authenticated()
-		failures = 0
 		connections.Set(connection)
+		connectedAt := time.Now()
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -333,6 +344,9 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 		if clientControlFailureIsFatal(connectionErr) {
 			return connectionErr
 		}
+		if time.Since(connectedAt) >= clientControlStableAfter {
+			failures = 0
+		}
 		lifecycle.connectionFailure(connectionErr)
 		if !clientReconnectContext(ctx, options.Logger, failures, backoff) {
 			return nil
@@ -371,9 +385,11 @@ func clientReconnectContext(ctx context.Context, logger logging.Logger, failures
 	if index >= len(backoff) {
 		index = len(backoff) - 1
 	}
-	delay := backoff[index]
+	baseDelay := backoff[index]
+	delay := clientEqualJitter(baseDelay)
 	logger.Event(logging.Debug, clientEventReconnect, "Tunnel control reconnect scheduled", map[string]any{
 		"delayMs":       delay.Milliseconds(),
+		"baseDelayMs":   baseDelay.Milliseconds(),
 		"attempt":       failures + 1,
 		"backoffCapped": failures >= len(backoff),
 	})
@@ -387,6 +403,14 @@ func clientReconnectContext(ctx context.Context, logger logging.Logger, failures
 	}
 }
 
+func clientEqualJitter(delay time.Duration) time.Duration {
+	if delay <= 1 {
+		return delay
+	}
+	half := delay / 2
+	return half + time.Duration(rand.Int64N(int64(delay-half)+1))
+}
+
 func clientControlFailureIsFatal(err error) bool {
 	return errors.Is(err, ErrClientAuthentication) || errors.Is(err, ErrClientIncompatible) || errors.Is(err, ErrClientProtocol) || errors.Is(err, errClientControlFatal)
 }
@@ -395,11 +419,25 @@ func runClientControlConnection(ctx context.Context, agent *ClientAgent, connect
 	return runClientControlConnectionWithLifecycle(ctx, agent, connection, reconciler, reporter, nil)
 }
 
-func runClientControlConnectionWithLifecycle(ctx context.Context, agent *ClientAgent, connection *ClientControlConnection, reconciler *ClientReconciler, reporter *clientProcessStateReporter, lifecycle *clientLifecycle) error {
+func runClientControlConnectionWithLifecycle(ctx context.Context, agent *ClientAgent, connection *ClientControlConnection, reconciler *ClientReconciler, reporter *clientProcessStateReporter, lifecycle *clientLifecycle) (result error) {
 	configuration := clientDesiredConfigurationFromWelcome(connection.Welcome)
-	if err := reportClientApplyWithLifecycle(ctx, agent, connection, reconciler, reporter, configuration, lifecycle); err != nil {
-		return err
-	}
+	workerContext, cancelWorker := context.WithCancel(ctx)
+	worker := newClientDesiredWorker(agent, connection, reconciler, reporter, lifecycle)
+	worker.Update(configuration, connection.Welcome.DesiredRestartGeneration)
+	workerDone := make(chan error, 1)
+	go func() {
+		err := worker.Run(workerContext)
+		if err != nil {
+			_ = connection.Close()
+		}
+		workerDone <- err
+	}()
+	defer func() {
+		cancelWorker()
+		if workerErr := <-workerDone; result == nil && workerErr != nil {
+			result = workerErr
+		}
+	}()
 	for {
 		source, err := connection.ReadMessage()
 		if err != nil {
@@ -417,23 +455,7 @@ func runClientControlConnectionWithLifecycle(ctx context.Context, agent *ClientA
 		switch message.kind {
 		case "desired_state":
 			configuration.Snapshot = message.desired.Snapshot
-			if err := reportClientApplyWithLifecycle(ctx, agent, connection, reconciler, reporter, configuration, lifecycle); err != nil {
-				return err
-			}
-		case "restart_frpc":
-			if lifecycle != nil {
-				lifecycle.event(logging.Debug, "frp.restart_requested", "FRP restart requested", nil)
-			}
-			if err := reconciler.Restart(); err != nil {
-				closeClientControlSocket(connection.socket, 4406, "Client failed to process control message")
-				return fmt.Errorf("%w: restart frpc: %v", errClientControlFatal, err)
-			}
-			if err := reporter.Publish(); err != nil {
-				return fmt.Errorf("report Tunnel client process state: %w", err)
-			}
-			if lifecycle != nil {
-				lifecycle.event(logging.Info, "frp.restarted", "FRP client restarted", nil)
-			}
+			worker.Update(configuration, message.desired.DesiredRestartGeneration)
 		case "revoke":
 			if lifecycle != nil {
 				lifecycle.revoked(message.revokeReason)
@@ -443,6 +465,145 @@ func runClientControlConnectionWithLifecycle(ctx context.Context, agent *ClientA
 			return fmt.Errorf("%w: unexpected control message", ErrClientProtocol)
 		}
 	}
+}
+
+type clientDesiredWorker struct {
+	agent      *ClientAgent
+	connection *ClientControlConnection
+	reconciler *ClientReconciler
+	reporter   *clientProcessStateReporter
+	lifecycle  *clientLifecycle
+
+	mu                sync.Mutex
+	desired           ClientDesiredConfiguration
+	restartGeneration int64
+	hasDesired        bool
+	wake              chan struct{}
+	completedRestart  int64
+	restartFailures   int
+}
+
+func newClientDesiredWorker(agent *ClientAgent, connection *ClientControlConnection, reconciler *ClientReconciler, reporter *clientProcessStateReporter, lifecycle *clientLifecycle) *clientDesiredWorker {
+	completed := int64(0)
+	if agent != nil {
+		agent.mu.Lock()
+		if agent.lastRestartResult != nil {
+			completed = agent.lastRestartResult.Generation
+		}
+		agent.mu.Unlock()
+	}
+	return &clientDesiredWorker{
+		agent: agent, connection: connection, reconciler: reconciler, reporter: reporter, lifecycle: lifecycle,
+		wake: make(chan struct{}, 1), completedRestart: completed,
+	}
+}
+
+func (worker *clientDesiredWorker) Update(desired ClientDesiredConfiguration, restartGeneration int64) {
+	worker.mu.Lock()
+	worker.desired = desired
+	if restartGeneration > worker.restartGeneration {
+		worker.restartGeneration = restartGeneration
+	}
+	worker.hasDesired = true
+	worker.mu.Unlock()
+	select {
+	case worker.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (worker *clientDesiredWorker) current() (ClientDesiredConfiguration, int64, bool) {
+	worker.mu.Lock()
+	defer worker.mu.Unlock()
+	return worker.desired, worker.restartGeneration, worker.hasDesired
+}
+
+func (worker *clientDesiredWorker) Run(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-worker.wake:
+		}
+		desired, generation, found := worker.current()
+		if !found {
+			continue
+		}
+		if err := reportClientApplyWithLifecycle(ctx, worker.agent, worker.connection, worker.reconciler, worker.reporter, desired, worker.lifecycle); err != nil {
+			return err
+		}
+		latestDesired, latestGeneration, _ := worker.current()
+		if latestDesired.Snapshot.Revision > desired.Snapshot.Revision {
+			select {
+			case worker.wake <- struct{}{}:
+			default:
+			}
+			continue
+		}
+		generation = latestGeneration
+		if generation <= worker.completedRestart {
+			continue
+		}
+		if worker.lifecycle != nil {
+			worker.lifecycle.event(logging.Debug, "frp.restart_requested", "FRP restart requested", map[string]any{"generation": generation})
+		}
+		started := time.Now()
+		err := worker.reconciler.Restart()
+		if err != nil && clientRestartFailureIsTransient(err) {
+			if ctx.Err() != nil {
+				return nil
+			}
+			worker.restartFailures++
+			delay := tunnelruntime.DefaultFRPRecoveryBackoff()[min(worker.restartFailures-1, len(tunnelruntime.DefaultFRPRecoveryBackoff())-1)]
+			if worker.lifecycle != nil {
+				worker.lifecycle.event(logging.Warn, "frp.restart_recovering", "FRP restart is recovering", map[string]any{"generation": generation, "failureClass": "process", "delayMs": delay.Milliseconds()})
+			}
+			time.AfterFunc(delay, func() {
+				select {
+				case worker.wake <- struct{}{}:
+				default:
+				}
+			})
+			continue
+		}
+		worker.restartFailures = 0
+		_, completedGeneration, _ := worker.current()
+		result := tunnelruntime.RestartResult{Generation: completedGeneration, Success: err == nil}
+		if err != nil {
+			code := clientReconciliationErrorCode(err)
+			if code == "" {
+				code = "RESTART_FAILED"
+			}
+			result.Error = &tunnelruntime.StructuredRuntimeError{Code: code, Message: err.Error()}
+		}
+		if writeErr := WriteClientRestartResult(worker.reconciler.stateDirectory, result); writeErr != nil {
+			return fmt.Errorf("persist Tunnel client restart result: %w", writeErr)
+		}
+		worker.agent.RecordRestartResult(result)
+		result.Type = "restart_result"
+		result.TunnelProtocolVersion = tunnelruntime.TunnelProtocolVersion
+		if writeErr := worker.connection.WriteJSON(result); writeErr != nil {
+			return fmt.Errorf("acknowledge Tunnel client restart: %w", writeErr)
+		}
+		worker.completedRestart = completedGeneration
+		if publishErr := worker.reporter.Publish(); publishErr != nil {
+			return fmt.Errorf("report Tunnel client process state: %w", publishErr)
+		}
+		if worker.lifecycle != nil {
+			fields := map[string]any{"generation": completedGeneration, "durationMs": time.Since(started).Milliseconds()}
+			if err == nil {
+				worker.lifecycle.event(logging.Info, "frp.restarted", "FRP client restarted", fields)
+			} else {
+				fields["failureClass"] = "configuration"
+				worker.lifecycle.event(logging.Warn, "frp.restart_failed", "FRP client restart failed", fields)
+			}
+		}
+	}
+}
+
+func clientRestartFailureIsTransient(err error) bool {
+	code := clientReconciliationErrorCode(err)
+	return code != "CONFIGURATION_FAILED" && code != "STATE_CORRUPT"
 }
 
 func clientDesiredConfigurationFromWelcome(welcome tunnelruntime.AgentWelcome) ClientDesiredConfiguration {
@@ -532,12 +693,10 @@ func decodeClientControlMessage(source []byte) (clientControlMessage, error) {
 	switch envelope.Type {
 	case "desired_state":
 		var desired tunnelruntime.DesiredState
-		if err := json.Unmarshal(source, &desired); err != nil || desired.Snapshot.Revision < 0 || desired.Snapshot.Revision > clientMaximumSafeInteger {
+		if err := json.Unmarshal(source, &desired); err != nil || desired.Snapshot.Revision < 0 || desired.Snapshot.Revision > clientMaximumSafeInteger || desired.DesiredRestartGeneration < 0 || desired.DesiredRestartGeneration > clientMaximumSafeInteger {
 			return clientControlMessage{}, fmt.Errorf("%w: invalid desired-state message", ErrClientProtocol)
 		}
 		return clientControlMessage{kind: envelope.Type, desired: desired}, nil
-	case "restart_frpc":
-		return clientControlMessage{kind: envelope.Type}, nil
 	case "revoke":
 		var revoke tunnelruntime.Revoke
 		if err := json.Unmarshal(source, &revoke); err != nil || (revoke.Reason != "rotated" && revoke.Reason != "deleted") {

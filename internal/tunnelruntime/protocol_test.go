@@ -45,7 +45,7 @@ func TestWireTargetRejectsUnsupportedValues(t *testing.T) {
 	}
 }
 
-func TestProtocolV3MessagesRetainExactWireFields(t *testing.T) {
+func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
 	httpDefinition := TunnelDefinition{
 		ID: "tunnel-id", Label: "HTTP", Protocol: TunnelProtocolHTTP,
 		CustomDomains: []string{"example.test"}, LocalHost: "127.0.0.1", LocalPort: 3000,
@@ -55,6 +55,7 @@ func TestProtocolV3MessagesRetainExactWireFields(t *testing.T) {
 		Type: "welcome", TunnelProtocolVersion: TunnelProtocolVersion, RequiredFRPVersion: "0.70.1",
 		Artifact:          FRPArtifactDescription{Version: "0.70.1", Archive: "frp.tar.gz", URL: "https://example.test/frp.tar.gz", SHA256: strings.Repeat("a", 64), FRPCSHA256: strings.Repeat("b", 64)},
 		AdvertisedFRPHost: "tunnel.example", AdvertisedFRPPort: 7000, InternalFRPToken: "secret", Snapshot: TunnelSnapshot{ClientKey: "client-id", Revision: 2, Tunnels: []TunnelDefinition{httpDefinition}},
+		DesiredRestartGeneration: 7,
 	}
 	encoded, err := json.Marshal(welcome)
 	if err != nil {
@@ -64,7 +65,7 @@ func TestProtocolV3MessagesRetainExactWireFields(t *testing.T) {
 	if err := json.Unmarshal(encoded, &message); err != nil {
 		t.Fatalf("unmarshal welcome map: %v", err)
 	}
-	for _, field := range []string{"type", "tunnelProtocolVersion", "requiredFrpVersion", "artifact", "advertisedFrpHost", "advertisedFrpPort", "internalFrpToken", "snapshot"} {
+	for _, field := range []string{"type", "tunnelProtocolVersion", "requiredFrpVersion", "artifact", "advertisedFrpHost", "advertisedFrpPort", "internalFrpToken", "snapshot", "desiredRestartGeneration"} {
 		if _, found := message[field]; !found {
 			t.Fatalf("welcome omitted %q: %s", field, encoded)
 		}
@@ -83,9 +84,28 @@ func TestProtocolV3MessagesRetainExactWireFields(t *testing.T) {
 	}
 }
 
-func TestProtocolV3ToleratesUnknownFieldsAndOmitsAbsentPortFields(t *testing.T) {
+func TestProtocolV4HelloCarriesLastRestartResult(t *testing.T) {
+	hello := AgentHello{
+		Type: "hello", TunnelProtocolVersion: TunnelProtocolVersion, YCYVersion: "0.0.0-dev",
+		Platform: "linux", Architecture: "x64", LastAppliedRevision: 3,
+		LastRestartResult: &RestartResult{Generation: 9, Success: false, Error: &StructuredRuntimeError{Code: "CONFIGURATION_FAILED", Message: "invalid local configuration"}},
+	}
+	encoded, err := json.Marshal(hello)
+	if err != nil {
+		t.Fatalf("marshal hello: %v", err)
+	}
+	var decoded AgentHello
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal hello: %v", err)
+	}
+	if decoded.LastRestartResult == nil || decoded.LastRestartResult.Generation != 9 || decoded.LastRestartResult.Success || decoded.LastRestartResult.Error == nil || decoded.LastRestartResult.Error.Code != "CONFIGURATION_FAILED" {
+		t.Fatalf("hello restart result = %#v", decoded.LastRestartResult)
+	}
+}
+
+func TestProtocolV4ToleratesUnknownFieldsAndOmitsAbsentPortFields(t *testing.T) {
 	var hello AgentHello
-	if err := json.Unmarshal([]byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"win32","architecture":"x64","lastAppliedRevision":0,"futureField":true}`), &hello); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"win32","architecture":"x64","lastAppliedRevision":0,"futureField":true}`), &hello); err != nil {
 		t.Fatalf("unmarshal hello with future field: %v", err)
 	}
 	if hello.Platform != "win32" || hello.Architecture != "x64" || hello.TunnelProtocolVersion != TunnelProtocolVersion {

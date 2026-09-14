@@ -9,9 +9,9 @@ import (
 
 import _ "github.com/ncruces/go-sqlite3/driver"
 
-const schemaVersion = "1"
+const schemaVersion = "2"
 
-const tunnelSchema = `
+const tunnelSchemaV1 = `
 CREATE TABLE meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -85,6 +85,23 @@ CREATE INDEX clients_by_owner
 ON clients(owner_account_id, created_at, internal_id);
 `
 
+const tunnelSchema = tunnelSchemaV1 + `
+ALTER TABLE clients ADD COLUMN desired_restart_generation INTEGER NOT NULL DEFAULT 0 CHECK (desired_restart_generation >= 0);
+ALTER TABLE clients ADD COLUMN completed_restart_generation INTEGER NOT NULL DEFAULT 0 CHECK (completed_restart_generation >= 0);
+ALTER TABLE clients ADD COLUMN restart_error_generation INTEGER CHECK (restart_error_generation IS NULL OR restart_error_generation >= 0);
+ALTER TABLE clients ADD COLUMN restart_error_code TEXT;
+ALTER TABLE clients ADD COLUMN restart_error_message TEXT;
+`
+
+const migrateTunnelSchemaV1ToV2 = `
+ALTER TABLE clients ADD COLUMN desired_restart_generation INTEGER NOT NULL DEFAULT 0 CHECK (desired_restart_generation >= 0);
+ALTER TABLE clients ADD COLUMN completed_restart_generation INTEGER NOT NULL DEFAULT 0 CHECK (completed_restart_generation >= 0);
+ALTER TABLE clients ADD COLUMN restart_error_generation INTEGER CHECK (restart_error_generation IS NULL OR restart_error_generation >= 0);
+ALTER TABLE clients ADD COLUMN restart_error_code TEXT;
+ALTER TABLE clients ADD COLUMN restart_error_message TEXT;
+UPDATE meta SET value = '2' WHERE key = 'schema_version';
+`
+
 func openDatabase(path string) (*sql.DB, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -126,9 +143,23 @@ func initializeDatabase(ctx context.Context, database *sql.DB) error {
 		if _, err := transaction.ExecContext(ctx, tunnelSchema); err != nil {
 			return fmt.Errorf("create Tunnel database schema: %w", err)
 		}
-	}
-	if _, err := transaction.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, schemaVersion); err != nil {
-		return fmt.Errorf("record Tunnel database schema version: %w", err)
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO meta(key, value) VALUES('schema_version', ?)`, schemaVersion); err != nil {
+			return fmt.Errorf("record Tunnel database schema version: %w", err)
+		}
+	} else {
+		var version string
+		if err := transaction.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil {
+			return fmt.Errorf("read Tunnel database schema version: %w", err)
+		}
+		switch version {
+		case "1":
+			if _, err := transaction.ExecContext(ctx, migrateTunnelSchemaV1ToV2); err != nil {
+				return fmt.Errorf("migrate Tunnel database schema from v1 to v2: %w", err)
+			}
+		case schemaVersion:
+		default:
+			return fmt.Errorf("unsupported Tunnel database schema version %q", version)
+		}
 	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("commit Tunnel database initialization: %w", err)

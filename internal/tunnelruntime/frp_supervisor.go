@@ -391,10 +391,27 @@ func (supervisor *FRPSupervisor) scheduleRecoveryLocked(delay time.Duration) {
 		supervisor.retryTimer = nil
 		supervisor.mu.Unlock()
 		if _, err := supervisor.spawn(); err != nil {
-			supervisor.stopAfterStartFailure(err)
+			supervisor.recoverySpawnFailed(err)
 		}
 	})
 	supervisor.retryTimer = timer
+}
+
+func (supervisor *FRPSupervisor) recoverySpawnFailed(startErr error) {
+	supervisor.mu.Lock()
+	if !supervisor.desiredRunning || supervisor.child != nil {
+		supervisor.mu.Unlock()
+		return
+	}
+	delay := supervisor.options.Backoff[min(supervisor.failureCount, len(supervisor.options.Backoff)-1)]
+	supervisor.failureCount++
+	publish := supervisor.setStateLocked(FRPSupervisorState{
+		State: FRPProcessRecovering,
+		Error: &StructuredRuntimeError{Code: "FRP_START_FAILED", Message: startErr.Error()},
+	})
+	supervisor.scheduleRecoveryLocked(delay)
+	supervisor.mu.Unlock()
+	publish()
 }
 
 func (supervisor *FRPSupervisor) stopChild() error {

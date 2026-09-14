@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"io"
 	"net/url"
 	"os"
@@ -13,13 +12,16 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 const (
-	clientInstanceExpiry       = 90 * 24 * time.Hour
-	clientMaximumSafeInteger   = int64(9007199254740991)
-	clientAppliedStateFilename = "last-applied.json"
-	clientFRPCConfigFilename   = "frpc.toml"
+	clientInstanceExpiry        = 90 * 24 * time.Hour
+	clientMaximumSafeInteger    = int64(9007199254740991)
+	clientAppliedStateFilename  = "last-applied.json"
+	clientRestartResultFilename = "last-restart-result.json"
+	clientFRPCConfigFilename    = "frpc.toml"
 )
 
 var clientInstanceDirectoryPattern = regexp.MustCompile(`^v1_[A-Za-z0-9_-]{43}$`)
@@ -46,7 +48,7 @@ type ClientInstance struct {
 }
 
 // ClientDesiredConfiguration is the complete FRPC configuration received from
-// an authenticated protocol-v3 welcome or desired-state frame.
+// an authenticated protocol-v4 welcome or desired-state frame.
 type ClientDesiredConfiguration struct {
 	AdvertisedFRPHost string                       `json:"advertisedFrpHost"`
 	AdvertisedFRPPort int64                        `json:"advertisedFrpPort"`
@@ -190,6 +192,50 @@ func clientAppliedStatePath(stateDirectory string) string {
 
 func clientActiveFRPCConfigPath(stateDirectory string) string {
 	return filepath.Join(stateDirectory, clientFRPCConfigFilename)
+}
+
+func clientRestartResultPath(stateDirectory string) string {
+	return filepath.Join(stateDirectory, clientRestartResultFilename)
+}
+
+func ReadClientRestartResult(stateDirectory string) (tunnelruntime.RestartResult, bool, error) {
+	contents, err := os.ReadFile(clientRestartResultPath(stateDirectory))
+	if errors.Is(err, os.ErrNotExist) {
+		return tunnelruntime.RestartResult{}, false, nil
+	}
+	if err != nil {
+		return tunnelruntime.RestartResult{}, false, fmt.Errorf("read Tunnel client restart result: %w", err)
+	}
+	var result tunnelruntime.RestartResult
+	if err := json.Unmarshal(contents, &result); err != nil || !validClientRestartResult(result) {
+		return tunnelruntime.RestartResult{}, false, fmt.Errorf("Tunnel client restart result is invalid")
+	}
+	result.Type = ""
+	result.TunnelProtocolVersion = 0
+	return result, true, nil
+}
+
+func WriteClientRestartResult(stateDirectory string, result tunnelruntime.RestartResult) error {
+	result.Type = ""
+	result.TunnelProtocolVersion = 0
+	if !validClientRestartResult(result) {
+		return fmt.Errorf("Tunnel client restart result is invalid")
+	}
+	contents, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Tunnel client restart result: %w", err)
+	}
+	return writeClientFileAtomically(clientRestartResultPath(stateDirectory), append(contents, '\n'))
+}
+
+func validClientRestartResult(result tunnelruntime.RestartResult) bool {
+	if result.Generation < 1 || result.Generation > clientMaximumSafeInteger {
+		return false
+	}
+	if result.Success {
+		return result.Error == nil
+	}
+	return result.Error != nil && strings.TrimSpace(result.Error.Code) != "" && strings.TrimSpace(result.Error.Message) != ""
 }
 
 // ReadClientAppliedState treats missing, interrupted, malformed, and stale

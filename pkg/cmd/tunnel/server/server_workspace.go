@@ -3,8 +3,9 @@ package server
 import (
 	"context"
 	"errors"
-	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"sync"
+
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 type ServerWorkspaceDependencies struct {
@@ -15,6 +16,7 @@ type ServerWorkspaceDependencies struct {
 	Custom404PageReader ServerFRPSCustom404PageReader
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
+	AgentChanges        ServerAgentChangeObserver
 }
 
 // ServerFRPSAction is the closed control set exposed to an administrator.
@@ -52,6 +54,10 @@ type ServerFRPSChangeObserver interface {
 	ObserveFRPSChanges(func()) func()
 }
 
+type ServerAgentChangeObserver interface {
+	ObserveAgentChanges(func(clientID string)) func()
+}
+
 // ServerWorkspace applies a fresh session check at every domain operation.
 // It is the sole owner of account-role and resource-owner authorization.
 type ServerWorkspace struct {
@@ -62,6 +68,7 @@ type ServerWorkspace struct {
 	custom404PageReader ServerFRPSCustom404PageReader
 	custom404PageWriter ServerFRPSCustom404PageWriter
 	frpsChanges         ServerFRPSChangeObserver
+	agentChanges        ServerAgentChangeObserver
 	token               string
 }
 
@@ -84,6 +91,7 @@ func OpenServerWorkspace(ctx context.Context, dependencies ServerWorkspaceDepend
 		custom404PageReader: dependencies.Custom404PageReader,
 		custom404PageWriter: dependencies.Custom404PageWriter,
 		frpsChanges:         dependencies.FRPSChanges,
+		agentChanges:        dependencies.AgentChanges,
 		token:               token,
 	}
 	if _, err := workspace.currentAccount(ctx); err != nil {
@@ -136,9 +144,23 @@ func (workspace *ServerWorkspace) Observe(ctx context.Context, listener func(Ser
 			listener(ServerWorkspaceChanged)
 		})
 	}
+	stopAgentChanges := func() {}
+	if workspace.agentChanges != nil {
+		stopAgentChanges = workspace.agentChanges.ObserveAgentChanges(func(clientID string) {
+			if account.Role == AccountRoleAdmin {
+				listener(ServerWorkspaceChanged)
+				return
+			}
+			client, err := workspace.controlPlane.GetClient(context.Background(), clientID)
+			if err == nil && client.OwnerAccountID == account.ID {
+				listener(ServerWorkspaceChanged)
+			}
+		})
+	}
 	var stopOnce sync.Once
 	return func() {
 		stopOnce.Do(func() {
+			stopAgentChanges()
 			stopFRPSChanges()
 			stopControlPlane()
 			stopAccountChanges()
@@ -189,6 +211,13 @@ func (workspace *ServerWorkspace) RotateClientToken(ctx context.Context, clientI
 		return TrustedTunnelClient{}, err
 	}
 	return workspace.controlPlane.RotateClientToken(ctx, clientID)
+}
+
+func (workspace *ServerWorkspace) RequestClientRestart(ctx context.Context, clientID string) (TrustedTunnelClient, error) {
+	if _, err := workspace.GetClient(ctx, clientID); err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	return workspace.controlPlane.RequestClientRestart(ctx, clientID)
 }
 
 func (workspace *ServerWorkspace) DeleteClient(ctx context.Context, clientID string) error {
