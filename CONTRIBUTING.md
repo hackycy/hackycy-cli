@@ -40,9 +40,11 @@ Use `make fmt` only when you intend to apply Go formatting and ESLint fixes your
 
 The release version is an annotated `vX.Y.Z` Git tag; do not edit
 `cmd/ycy/main.go` or add a version file. The tag workflow is the only formal
-release entry point and keeps the existing six binary names and `SHA256SUMS`
-contract. Read [docs/releasing.md](docs/releasing.md) for the pre-tag checklist,
-failure recovery, attestations, and Docker publication details.
+release publication entry point and keeps the existing six binary names and
+`SHA256SUMS` contract. Use `make release VERSION=vX.Y.Z` to run the local gate,
+create the annotated tag, and push only that tag. Read
+[docs/releasing.md](docs/releasing.md) for the pre-tag checklist, failure
+recovery, attestations, and Docker publication details.
 
 ## Hook Recovery And Bypass
 

@@ -121,7 +121,7 @@ with `t.TempDir()`.
 | `mock/` | Independent mock applications and their tests. |
 | `legacy/bun/` | Frozen, read-only behavior reference with no active imports. |
 | `tools/<name>/` | Independent build/check/harness tools; `tools/lefthook` remains a separate Go module. `tools/prepare-frp-runtime` prepares Docker's pinned Linux FRP payloads. |
-| `scripts/` | User-facing install scripts. The plural directory name is a contract. |
+| `scripts/` | User-facing install scripts and the maintainer-only `release` tag/push entry point. The plural directory name is a contract. |
 | `build/` | Ignored native/cross-build output only; no business code. |
 | `public/` | Versioned static source assets. |
 
@@ -136,8 +136,9 @@ root is added.
 The frozen command-surface files under
 `acceptance/testdata/command-surface/` are comparison-only after their initial
 creation. They must never be regenerated to absorb a structural or behavioral
-difference. The release and Docker workflows are the only supported formal
-publication entry points.
+difference. `make release` and the release/Docker workflows are the only
+supported formal publication entry points; the script creates and pushes the
+annotated tag that starts the release workflow.
 
 See the [README](../README.md) for a short orientation and the
 [development guide](../DEVELOPMENT.md) for day-to-day commands and debugging.

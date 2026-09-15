@@ -7,10 +7,10 @@ RELEASE_DIR := release/$(RELEASE_VERSION)
 
 GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
 
-.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-no-bun check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
+.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-no-bun check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
 
 help:
-	@printf '%s\n' 'Targets: bootstrap, hooks-install, hooks-doctor, hooks-uninstall, fmt, check, check-terminal, acceptance, acceptance-web, acceptance-terminal, command-surface, command-surface-update, build, cross-build, release-candidate, web-browser-harness, prototype-terminal'
+	@printf '%s\n' 'Targets: bootstrap, hooks-install, hooks-doctor, hooks-uninstall, fmt, check, check-terminal, acceptance, acceptance-web, acceptance-terminal, command-surface, command-surface-update, build, cross-build, release, release-candidate, web-browser-harness, prototype-terminal'
 
 prototype-terminal:
 	@cd internal/terminal/prototype-vivid && GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run . $(PROTOTYPE_ARGS)
@@ -101,6 +101,10 @@ cross-build: check-web prepare-7zip-all
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-linux-arm64 ./cmd/ycy
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-windows-x64.exe ./cmd/ycy
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-windows-arm64.exe ./cmd/ycy
+
+release:
+	@test "$(VERSION)" != "0.0.0-dev" || { printf '%s\n' 'release requires VERSION=vX.Y.Z'; exit 1; }
+	@DRY_RUN="$(DRY_RUN)" ./scripts/release "$(VERSION)"
 
 release-clean:
 	@test -n "$(RELEASE_VERSION)" || { printf '%s\n' 'release-candidate requires RELEASE_VERSION=X.Y.Z'; exit 1; }

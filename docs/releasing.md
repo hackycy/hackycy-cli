@@ -19,20 +19,31 @@ notes; this repository intentionally does not maintain a `CHANGELOG` file.
 
 ## Before Tagging
 
-Run the complete local gate from a clean `main` checkout:
+Run the release target from the repository root on a clean `main` checkout:
 
 ```sh
-git switch main
-git pull --ff-only origin main
-make check
-actionlint .github/workflows/release.yml .github/workflows/docker.yml
-git tag -a v0.1.0 -m "chore: release v0.1.0"
-git push origin v0.1.0
+make release VERSION=v0.1.0
 ```
 
-The tag push starts `.github/workflows/release.yml`. A manual dispatch with the
-same `tag` input is available for a failed run while the Release is still a
-draft.
+The command requires the `main` branch, fast-forwards it from `origin`, checks
+that the working tree and target tag are unused, runs `make check` and
+`actionlint`, creates an annotated tag, and pushes only
+`refs/tags/v0.1.0`. The tag push starts `.github/workflows/release.yml`; that
+workflow remains responsible for building, verifying, attesting, publishing
+the Release, and starting Docker publication.
+
+To run the same preflight without creating or pushing a tag:
+
+```sh
+make release VERSION=v0.1.0 DRY_RUN=1
+```
+
+`actionlint` must be installed locally. The script rejects prereleases,
+build metadata, leading zeroes, existing local or remote tags, dirty trees,
+non-`main` branches, and non-fast-forward updates. It never force-pushes or
+pushes the branch. If the final tag push fails, the annotated local tag is
+intentionally kept so the failure can be diagnosed and the exact tag push
+retried; do not delete or replace a published Release.
 
 ## Pipeline Contract
 
