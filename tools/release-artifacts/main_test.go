@@ -107,3 +107,25 @@ func TestVerifyChecksumManifestRejectsChangedArtifact(t *testing.T) {
 		t.Fatalf("verifyChecksumManifest error = %v, want checksum mismatch", err)
 	}
 }
+
+func TestValidateReleaseVersionRequiresStableSemVer(t *testing.T) {
+	for _, version := range []string{"0.1.0", "12.34.56"} {
+		if err := validateReleaseVersion(version); err != nil {
+			t.Errorf("validateReleaseVersion(%q) = %v", version, err)
+		}
+	}
+	for _, version := range []string{"", "v0.1.0", "0.1", "0.1.0-rc.1", "0.1.0+build", "01.2.3"} {
+		if err := validateReleaseVersion(version); err == nil {
+			t.Errorf("validateReleaseVersion(%q) unexpectedly succeeded", version)
+		}
+	}
+}
+
+func TestVerifyReleaseIdentityRejectsVersionMismatch(t *testing.T) {
+	if err := verifyReleaseIdentity([]byte("ycy 1.2.3"), "ycy-linux-x64", "1.2.3"); err != nil {
+		t.Fatalf("verifyReleaseIdentity() error = %v", err)
+	}
+	if err := verifyReleaseIdentity([]byte("ycy 1.2.3"), "ycy-linux-x64", "1.2.4"); err == nil || !strings.Contains(err.Error(), "release identity 1.2.4") {
+		t.Fatalf("version mismatch error = %v", err)
+	}
+}

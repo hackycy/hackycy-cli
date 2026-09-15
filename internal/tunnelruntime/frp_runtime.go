@@ -47,6 +47,19 @@ func EnsureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtif
 	return ensureFRPRuntimeAt(ctx, directory, artifact, http.DefaultClient, verifyFRPReportedVersion)
 }
 
+// PrepareFRPRuntimeAt downloads and materializes a manifest-pinned runtime
+// without executing it. This is used when assembling a cross-platform image;
+// a builder must be able to prepare an arm64 payload on an amd64 host.
+func PrepareFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtifact) (FRPRuntimePaths, error) {
+	return PrepareFRPRuntimeAtWithClient(ctx, directory, artifact, http.DefaultClient)
+}
+
+// PrepareFRPRuntimeAtWithClient is the injectable form used by packaging
+// tools and tests. The client is only used for the pinned archive URL.
+func PrepareFRPRuntimeAtWithClient(ctx context.Context, directory string, artifact FRPArtifact, client *http.Client) (FRPRuntimePaths, error) {
+	return ensureFRPRuntimeAt(ctx, directory, artifact, client, func(context.Context, string) error { return nil })
+}
+
 func ensureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtifact, client *http.Client, verify frpVersionVerifier) (paths FRPRuntimePaths, err error) {
 	paths = FRPRuntimePathsFor(directory, artifact.Target)
 	if strings.TrimSpace(directory) == "" {

@@ -1,0 +1,12 @@
+.git
+.github
+.cache
+.tmp/*
+!.tmp/docker
+!.tmp/docker/**
+build
+release
+web/node_modules
+web/dist
+node_modules
+legacy

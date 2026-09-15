@@ -77,18 +77,13 @@ func run(root string, output io.Writer) error {
 
 func rejectObsoleteRootEntries(root string) error {
 	for _, name := range []string{
-		"package.json", legacyRuntime + ".lock", legacyRuntime + ".lockb", legacyRuntime + "fig.toml", "eslint.config.js", "tsconfig.json", "types.d.ts", "Dockerfile", ".dockerignore", "deploy", "src", "node_modules",
+		"package.json", legacyRuntime + ".lock", legacyRuntime + ".lockb", legacyRuntime + "fig.toml", "eslint.config.js", "tsconfig.json", "types.d.ts", "deploy", "src", "node_modules",
 	} {
 		if _, err := os.Lstat(filepath.Join(root, name)); err == nil {
 			return fmt.Errorf("active obsolete root entry %s is present", name)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-	}
-	if info, err := os.Stat(filepath.Join(root, ".github", "workflows")); err == nil && info.IsDir() {
-		return errors.New("active obsolete workflow directory is present")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
 	}
 	return nil
 }

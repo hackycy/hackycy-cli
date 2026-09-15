@@ -30,6 +30,10 @@ go test ./...    # 只执行 Go 测试；需要已有 web/dist
 make fmt         # 有意应用 Go 格式化与 ESLint 自动修复时使用
 ```
 
+正式版本只来自 annotated Git tag。首个 Go 正式版为 `v0.1.0`；发布入口、
+六平台裸二进制、`SHA256SUMS`、Artifact Attestation 和 Docker 镜像流程见
+[发布 runbook](docs/releasing.md)。`legacy/bun/` 保留为只读参考。
+
 ## 使用与调试
 
 完整的本地使用、前后端联调、VS Code/Delve 断点调试和代码导航说明见[开发指南](DEVELOPMENT.md)。质量门、Git hook 和跨平台构建细节见[贡献指南](CONTRIBUTING.md)。

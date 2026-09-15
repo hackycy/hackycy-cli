@@ -2,10 +2,10 @@ GO_TOOLCHAIN ?= go1.26.7
 GO ?= go
 PNPM ?= pnpm
 VERSION ?= 0.0.0-dev
-RELEASE_VERSION ?= 0.1.0
+RELEASE_VERSION ?=
 RELEASE_DIR := release/$(RELEASE_VERSION)
 
-GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release-artifacts tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
+GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
 
 .PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-no-bun check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
 
@@ -103,7 +103,8 @@ cross-build: check-web prepare-7zip-all
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-windows-arm64.exe ./cmd/ycy
 
 release-clean:
-	@test "$(RELEASE_VERSION)" = "0.1.0" || { printf '%s\n' 'release-candidate requires RELEASE_VERSION=0.1.0'; exit 1; }
+	@test -n "$(RELEASE_VERSION)" || { printf '%s\n' 'release-candidate requires RELEASE_VERSION=X.Y.Z'; exit 1; }
+	@printf '%s\n' "$(RELEASE_VERSION)" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { printf '%s\n' 'release-candidate requires a stable X.Y.Z RELEASE_VERSION'; exit 1; }
 	@for candidate in web/dist web/node_modules build .cache .tmp release internal/sevenzipruntime/payload tools/lefthook/bin; do \
 		test ! -e "$$candidate" || { printf '%s\n' "release-candidate requires a clean checkout; found $$candidate"; exit 1; }; \
 	done
@@ -120,7 +121,7 @@ release-candidate: release-clean
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-windows-x64.exe ./cmd/ycy
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-windows-arm64.exe ./cmd/ycy
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --directory $(RELEASE_DIR)
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --verify --directory $(RELEASE_DIR)
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --verify --version $(RELEASE_VERSION) --directory $(RELEASE_DIR)
 	@$(MAKE) release-untracked
 
 release-untracked:

@@ -24,13 +24,14 @@ var artifactTargets = [][2]string{
 func main() {
 	directory := flag.String("directory", "", "directory containing the six release artifacts")
 	verify := flag.Bool("verify", false, "verify an existing release artifact set")
+	version := flag.String("version", "", "stable release version (X.Y.Z), required with --verify")
 	sourceRoot := flag.String("source-root", ".", "repository root containing the release inputs")
 	flag.Parse()
 	if *directory == "" || flag.NArg() != 0 {
 		fail(fmt.Errorf("pass only --directory <release-directory>"))
 	}
 	if *verify {
-		if err := verifyReleaseCandidate(*directory, *sourceRoot); err != nil {
+		if err := verifyReleaseCandidate(*directory, *sourceRoot, *version); err != nil {
 			fail(err)
 		}
 		return

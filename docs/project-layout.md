@@ -120,7 +120,7 @@ with `t.TempDir()`.
 | `web/` | Vite sources, embedded assets, static routes, and Web implementation tests. |
 | `mock/` | Independent mock applications and their tests. |
 | `legacy/bun/` | Frozen, read-only behavior reference with no active imports. |
-| `tools/<name>/` | Independent build/check/harness tools; `tools/lefthook` remains a separate Go module. |
+| `tools/<name>/` | Independent build/check/harness tools; `tools/lefthook` remains a separate Go module. `tools/prepare-frp-runtime` prepares Docker's pinned Linux FRP payloads. |
 | `scripts/` | User-facing install scripts. The plural directory name is a contract. |
 | `build/` | Ignored native/cross-build output only; no business code. |
 | `public/` | Versioned static source assets. |
@@ -129,12 +129,15 @@ The following remain generated or ignored: `web/node_modules`, `web/dist`,
 `build`, `release`, `.cache`, `.tmp`, `internal/sevenzipruntime/payload`, and
 `tools/lefthook/bin`. The Makefile remains the single task entry point for
 building, checking, acceptance, payload preparation, and release-artifact
-verification. No parallel `output`, `artifacts`, or `vendor` root is added.
+verification. The root `Dockerfile` and `.github/workflows/` contain the formal
+image and release entry points. No parallel `output`, `artifacts`, or `vendor`
+root is added.
 
 The frozen command-surface files under
 `acceptance/testdata/command-surface/` are comparison-only after their initial
 creation. They must never be regenerated to absorb a structural or behavioral
-difference. No `.github/workflows` entry is part of this layout contract.
+difference. The release and Docker workflows are the only supported formal
+publication entry points.
 
 See the [README](../README.md) for a short orientation and the
 [development guide](../DEVELOPMENT.md) for day-to-day commands and debugging.

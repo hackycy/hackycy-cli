@@ -10,15 +10,26 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"github.com/hackycy/hackycy-cli/internal/updater"
 )
 
-const releaseVersion = "0.1.0"
+var stableVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
-func verifyReleaseCandidate(directory, sourceRoot string) error {
+func validateReleaseVersion(version string) error {
+	if !stableVersionPattern.MatchString(version) {
+		return fmt.Errorf("--verify requires a stable X.Y.Z version, got %q", version)
+	}
+	return nil
+}
+
+func verifyReleaseCandidate(directory, sourceRoot, version string) error {
+	if err := validateReleaseVersion(version); err != nil {
+		return err
+	}
 	artifacts, err := releaseArtifacts(directory, true)
 	if err != nil {
 		return err
@@ -43,8 +54,8 @@ func verifyReleaseCandidate(directory, sourceRoot string) error {
 		if err := verifyBuildMetadata(artifact); err != nil {
 			return err
 		}
-		if !bytes.Contains(binary, []byte(releaseVersion)) {
-			return fmt.Errorf("artifact does not contain release identity %s: %s", releaseVersion, artifact.name)
+		if err := verifyReleaseIdentity(binary, artifact.name, version); err != nil {
+			return err
 		}
 		if err := verifyEmbeddedWeb(binary, sourceRoot, artifact.name); err != nil {
 			return err
@@ -55,6 +66,13 @@ func verifyReleaseCandidate(directory, sourceRoot string) error {
 		if err := verifyFRPManifest(binary, artifact.name); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func verifyReleaseIdentity(binary []byte, artifactName, version string) error {
+	if !bytes.Contains(binary, []byte(version)) {
+		return fmt.Errorf("artifact does not contain release identity %s: %s", version, artifactName)
 	}
 	return nil
 }

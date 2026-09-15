@@ -1,0 +1,108 @@
+name: Docker
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Published stable release tag to package
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable release tag to package
+        required: true
+        type: string
+
+concurrency:
+  group: docker-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+env:
+  GHCR_IMAGE: ghcr.io/hackycy/hackycy-cli
+  TENCENT_IMAGE: sgccr.ccs.tencentyun.com/sooosin-sg/hackycy-cli
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: release
+        env:
+          TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || exit 1
+          draft="$(gh release view "$TAG" --json isDraft --jq .isDraft)"
+          [[ "$draft" == false ]] || { echo "Release must be public before Docker publishing" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - name: Checkout Docker sources
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+      - name: Download and verify Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p docker-assets
+          gh release download "$TAG" --pattern 'ycy-linux-x64' --pattern 'ycy-linux-arm64' --pattern 'SHA256SUMS' --dir docker-assets
+          (cd docker-assets && sha256sum -c SHA256SUMS)
+          chmod +x docker-assets/ycy-linux-x64 docker-assets/ycy-linux-arm64
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        with:
+          go-version: '1.26.7'
+          cache: true
+      - name: Prepare manifest-pinned FRP runtimes
+        run: go run ./tools/prepare-frp-runtime --output .tmp/docker
+      - name: Login to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Login to Tencent Container Registry
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: sgccr.ccs.tencentyun.com
+          username: ${{ secrets.TENCENT_USERNAME }}
+          password: ${{ secrets.TENCENT_PASSWORD }}
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2
+      - name: Build and push multi-platform images
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: true
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ steps.release.outputs.tag }}
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.TENCENT_IMAGE }}:${{ steps.release.outputs.tag }}
+            ${{ env.TENCENT_IMAGE }}:latest
+      - name: Verify published image
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image in "${GHCR_IMAGE}:${TAG}" "${TENCENT_IMAGE}:${TAG}"; do
+            platforms="$(docker buildx imagetools inspect "$image" | grep -E 'linux/(amd64|arm64)' | sort -u)"
+            grep -q 'linux/amd64' <<<"$platforms"
+            grep -q 'linux/arm64' <<<"$platforms"
+          done
+          version="$(docker run --rm --platform linux/amd64 "${GHCR_IMAGE}:${TAG}" --version)"
+          [[ "$version" == "${TAG#v}" || "$version" == ycy/${TAG#v}* ]]
+          docker run --rm --platform linux/amd64 --entrypoint sh "${GHCR_IMAGE}:${TAG}" -c 'test -x /opt/ycy/frp/0.70.1/frpc && test -x /opt/ycy/frp/0.70.1/frps'

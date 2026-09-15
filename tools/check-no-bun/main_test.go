@@ -37,3 +37,19 @@ func TestRunRejectsActiveReference(t *testing.T) {
 		t.Fatal("run accepted an active legacy runtime reference")
 	}
 }
+
+func TestRunAllowsGoReleaseEntrypoints(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"Dockerfile", ".dockerignore", filepath.Join(".github", "workflows", "release.yml")} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(fullPath, []byte("release entrypoint"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := run(root, &bytes.Buffer{}); err != nil {
+		t.Fatalf("run rejected Go release entrypoints: %v", err)
+	}
+}

@@ -70,6 +70,7 @@ var approvedPackageInventory = []string{
 	"pkg/cmdutil",
 	"tools/check-no-bun",
 	"tools/hookctl",
+	"tools/prepare-frp-runtime",
 	"tools/prepare-sevenzip",
 	"tools/release-artifacts",
 	"tools/web-browser-harness",
