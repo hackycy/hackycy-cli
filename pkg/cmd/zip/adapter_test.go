@@ -262,7 +262,7 @@ func TestHostZipRevealerUsesPlatformCommands(t *testing.T) {
 		name string
 		args []string
 	}{
-		{goos: "darwin", name: "open", args: []string{"/tmp/archive.zip"}},
+		{goos: "darwin", name: "open", args: []string{"-R", "/tmp/archive.zip"}},
 		{goos: "linux", name: "xdg-open", args: []string{"/tmp/archive.zip"}},
 		{goos: "windows", name: "cmd", args: []string{"/c", "start", "", "/tmp/archive.zip"}},
 	}

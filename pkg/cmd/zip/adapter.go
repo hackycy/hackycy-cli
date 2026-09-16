@@ -320,7 +320,7 @@ func (revealer hostZipRevealer) Reveal(path string) error {
 func zipRevealCommand(goos, path string) (string, []string, error) {
 	switch goos {
 	case "darwin":
-		return "open", []string{path}, nil
+		return "open", []string{"-R", path}, nil
 	case "linux":
 		return "xdg-open", []string{path}, nil
 	case "windows":
