@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -113,9 +114,10 @@ func TestWriteReleaseErrorFormatsDirtyWorkingTree(t *testing.T) {
 	}
 }
 
-func TestPrepareReleaseFormatsPreflightProgress(t *testing.T) {
+func TestPrepareReleaseReportsProgressForEveryPreflightStep(t *testing.T) {
 	root := writeReleaseVersion(t)
 	var diagnostics bytes.Buffer
+	work := &fakeReleaseWork{}
 	if _, err := prepareRelease(context.Background(), normalizeReleaseOptions(releaseOptions{
 		Root:        root,
 		Git:         newReleaseGit(root, "docs: update\x1f\x1e"),
@@ -123,16 +125,28 @@ func TestPrepareReleaseFormatsPreflightProgress(t *testing.T) {
 		Prompt:      &fakePrompt{},
 		Diagnostics: &diagnostics,
 		Output:      io.Discard,
-	})); err != nil {
+	}), work); err != nil {
 		t.Fatal(err)
 	}
-	want := "Release preflight\n  Fast-forwarding main from origin...\n  Conventional suggestion unavailable: no releasable feat, fix, or perf commit found.\n"
-	if got := diagnostics.String(); got != want {
-		t.Fatalf("preflight progress = %q, want %q", got, want)
+	want := []terminal.OperationPhase{
+		{ID: releaseInspectWorkspacePhaseID, State: terminal.PhaseActive, Detail: "Checking branch and working tree"},
+		{ID: releaseInspectWorkspacePhaseID, State: terminal.PhaseCompleted, Detail: "main branch and working tree are ready"},
+		{ID: releaseSyncMainPhaseID, State: terminal.PhaseActive, Detail: "Fetching origin/main"},
+		{ID: releaseSyncMainPhaseID, State: terminal.PhaseCompleted, Detail: "main is up to date"},
+		{ID: releaseValidateBaselinePhaseID, State: terminal.PhaseActive, Detail: "Reading VERSION and release tags"},
+		{ID: releaseValidateBaselinePhaseID, State: terminal.PhaseCompleted, Detail: "v0.0.69 is the release baseline"},
+		{ID: releaseSuggestVersionPhaseID, State: terminal.PhaseActive, Detail: "Scanning commits since v0.0.69"},
+		{ID: releaseSuggestVersionPhaseID, State: terminal.PhaseCompleted, Detail: "No conventional release suggestion"},
+	}
+	if got := work.updates; !reflect.DeepEqual(got, want) {
+		t.Fatalf("preflight updates = %#v, want %#v", got, want)
+	}
+	if got := diagnostics.String(); got != "" {
+		t.Fatalf("preflight diagnostics = %q, want no duplicate plain output", got)
 	}
 }
 
-func TestLazyPrompterDoesNotOpenBeforeTheFirstPrompt(t *testing.T) {
+func TestLazyPrompterStartsTheTerminalForPreflight(t *testing.T) {
 	factoryCalls := 0
 	inner := &fakePrompt{selection: "next", confirmed: true}
 	prompt := &lazyPrompter{new: func() (releasePrompter, error) {
@@ -145,9 +159,9 @@ func TestLazyPrompterDoesNotOpenBeforeTheFirstPrompt(t *testing.T) {
 	if factoryCalls != 0 || inner.closed {
 		t.Fatalf("preflight close initialized prompt: factory=%d closed=%t", factoryCalls, inner.closed)
 	}
-	selection, err := prompt.Select(context.Background(), "Select", "", nil)
-	if err != nil || selection != "next" || factoryCalls != 1 {
-		t.Fatalf("Select() = %q, %v; factory=%d", selection, err, factoryCalls)
+	work, err := prompt.StartPreflight(releasePreflightWorkCatalog())
+	if err != nil || work == nil || factoryCalls != 1 || !inner.preflightStarted {
+		t.Fatalf("StartPreflight() = (%T, %v); factory=%d, started=%t", work, err, factoryCalls, inner.preflightStarted)
 	}
 	if err := prompt.Close(); err != nil || !inner.closed {
 		t.Fatalf("Close() = %v, closed=%t", err, inner.closed)
@@ -169,6 +183,15 @@ func TestRunReleaseClosesBeforeReturningPreflightFailure(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "working tree is not clean") {
 		t.Fatalf("runRelease() error = %v", err)
+	}
+	if !prompt.preflight.closed {
+		t.Fatal("runRelease did not close the release preflight before returning")
+	}
+	if got, want := prompt.preflight.updates, []terminal.OperationPhase{
+		{ID: releaseInspectWorkspacePhaseID, State: terminal.PhaseActive, Detail: "Checking branch and working tree"},
+		{ID: releaseInspectWorkspacePhaseID, State: terminal.PhaseFailed, Detail: "Preflight stopped"},
+	}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("failed preflight updates = %#v, want %#v", got, want)
 	}
 	if !prompt.closed {
 		t.Fatal("runRelease did not close the terminal prompt before returning")
@@ -200,6 +223,8 @@ func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
 		close(readDone)
 	}()
 	respondToReleaseTerminalQueries(t, process, output)
+	waitForReleasePTYText(t, output, "Fast-forward main")
+	waitForReleasePTYText(t, output, "Validate release baseline")
 	waitForReleasePTYText(t, output, "Select release version")
 	writeReleasePTYInput(t, process, "\r")
 	waitForReleasePTYText(t, output, "Create release?")
@@ -218,6 +243,11 @@ func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
 	}
 
 	text := output.String()
+	for _, marker := range []string{"Fast-forward main", "Validate release baseline"} {
+		if at := strings.Index(text, marker); at < 0 || at > strings.Index(text, "Select release version") {
+			t.Fatalf("preflight phase %q did not render before release selection: %q", marker, text)
+		}
+	}
 	exit := releaseAlternateScreenExit(text)
 	for _, marker := range []string{
 		"Release checks",
@@ -278,10 +308,10 @@ func TestRunReleaseClosesPromptBeforeStartingChecks(t *testing.T) {
 	}
 }
 
-func TestRunReleaseDoesNotRunGitWhilePromptOwnsTerminal(t *testing.T) {
+func TestRunReleaseStartsPreflightBeforeGit(t *testing.T) {
 	root := writeReleaseVersion(t)
 	prompt := &fakePrompt{selection: "next", confirmed: true}
-	git := &promptAwareGit{fakeGit: newReleaseGit(root, "fix: repair\x1f\x1e"), prompt: prompt}
+	git := &preflightAwareGit{fakeGit: newReleaseGit(root, "fix: repair\x1f\x1e"), prompt: prompt}
 	if err := runRelease(context.Background(), releaseOptions{
 		Root:        root,
 		Git:         git,
@@ -293,6 +323,9 @@ func TestRunReleaseDoesNotRunGitWhilePromptOwnsTerminal(t *testing.T) {
 		DryRun:      true,
 	}); err != nil {
 		t.Fatal(err)
+	}
+	if got, want := prompt.preflightCatalog, releasePreflightWorkCatalog(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("preflight catalog = %#v, want %#v", got, want)
 	}
 }
 
@@ -460,24 +493,40 @@ func (commands *promptAwareCommands) Run(_ context.Context, _ string, name strin
 	return nil
 }
 
-type promptAwareGit struct {
+type preflightAwareGit struct {
 	*fakeGit
 	prompt *fakePrompt
 }
 
-func (git *promptAwareGit) Run(ctx context.Context, arguments []string) (gitprocess.Output, error) {
-	if git.prompt.opened && !git.prompt.closed {
-		return gitprocess.Output{}, errors.New("git command started before interactive prompt closed")
+func (git *preflightAwareGit) Run(ctx context.Context, arguments []string) (gitprocess.Output, error) {
+	if !git.prompt.preflightStarted {
+		return gitprocess.Output{}, errors.New("git command started before release preflight")
 	}
 	return git.fakeGit.Run(ctx, arguments)
 }
 
 type fakePrompt struct {
-	selection string
-	confirmed bool
-	opened    bool
-	closed    bool
-	closeErr  error
+	selection        string
+	confirmed        bool
+	opened           bool
+	preflightStarted bool
+	preflightCatalog terminal.WorkCatalog
+	preflight        *fakeReleaseWork
+	preflightErr     error
+	closed           bool
+	closeErr         error
+}
+
+func (prompt *fakePrompt) StartPreflight(catalog terminal.WorkCatalog) (terminal.WorkSession, error) {
+	prompt.preflightStarted = true
+	prompt.preflightCatalog = catalog
+	if prompt.preflightErr != nil {
+		return nil, prompt.preflightErr
+	}
+	if prompt.preflight == nil {
+		prompt.preflight = &fakeReleaseWork{}
+	}
+	return prompt.preflight, nil
 }
 
 func (prompt *fakePrompt) Select(context.Context, string, string, []promptOption) (string, error) {
@@ -492,6 +541,23 @@ func (prompt *fakePrompt) Confirm(context.Context, string, string) (bool, error)
 func (prompt *fakePrompt) Close() error {
 	prompt.closed = true
 	return prompt.closeErr
+}
+
+type fakeReleaseWork struct {
+	updates   []terminal.OperationPhase
+	updateErr error
+	closed    bool
+	closeErr  error
+}
+
+func (work *fakeReleaseWork) Update(phase terminal.OperationPhase) error {
+	work.updates = append(work.updates, phase)
+	return work.updateErr
+}
+
+func (work *fakeReleaseWork) Close() error {
+	work.closed = true
+	return work.closeErr
 }
 
 func newReleaseGit(root, logOutput string) *fakeGit {
@@ -537,7 +603,7 @@ func runReleaseRichHandoffHelper(t *testing.T) {
 	}
 	if err := runRelease(context.Background(), releaseOptions{
 		Root:        root,
-		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Git:         delayedReleaseGit{fakeGit: newReleaseGit(root, "fix: repair\x1f\x1e")},
 		Commands:    releasePTYCommands{},
 		Prompt:      prompt,
 		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
@@ -546,6 +612,17 @@ func runReleaseRichHandoffHelper(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type delayedReleaseGit struct {
+	*fakeGit
+}
+
+func (git delayedReleaseGit) Run(ctx context.Context, arguments []string) (gitprocess.Output, error) {
+	if strings.HasSuffix(strings.Join(arguments, " "), " pull --ff-only origin main") {
+		time.Sleep(150 * time.Millisecond)
+	}
+	return git.fakeGit.Run(ctx, arguments)
 }
 
 type releasePTYBuffer struct {

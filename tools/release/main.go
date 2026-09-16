@@ -17,6 +17,20 @@ import (
 
 const versionFile = "cmd/ycy/VERSION"
 
+const (
+	releaseInspectWorkspacePhaseID = "inspect-workspace"
+	releaseSyncMainPhaseID         = "sync-main"
+	releaseValidateBaselinePhaseID = "validate-baseline"
+	releaseSuggestVersionPhaseID   = "suggest-version"
+)
+
+var releasePreflightPhases = []terminal.PhaseDefinition{
+	{ID: releaseInspectWorkspacePhaseID, Name: "Inspect repository"},
+	{ID: releaseSyncMainPhaseID, Name: "Fast-forward main"},
+	{ID: releaseValidateBaselinePhaseID, Name: "Validate release baseline"},
+	{ID: releaseSuggestVersionPhaseID, Name: "Calculate release options"},
+}
+
 type commandRunner interface {
 	Run(context.Context, string, string, []string, io.Writer, io.Writer) error
 }
@@ -36,6 +50,7 @@ type gitRunner interface {
 }
 
 type releasePrompter interface {
+	StartPreflight(terminal.WorkCatalog) (terminal.WorkSession, error)
 	Select(context.Context, string, string, []promptOption) (string, error)
 	Confirm(context.Context, string, string) (bool, error)
 	Close() error
@@ -54,6 +69,14 @@ type terminalPrompter struct {
 type lazyPrompter struct {
 	new   func() (releasePrompter, error)
 	inner releasePrompter
+}
+
+func (prompter *lazyPrompter) StartPreflight(catalog terminal.WorkCatalog) (terminal.WorkSession, error) {
+	inner, err := prompter.ensure()
+	if err != nil {
+		return nil, err
+	}
+	return inner.StartPreflight(catalog)
 }
 
 func (prompter *lazyPrompter) Select(ctx context.Context, message, description string, options []promptOption) (string, error) {
@@ -124,6 +147,18 @@ func releaseConsoleDescriptor() terminal.ConsoleDescriptor {
 			{ID: "release-confirm", Name: "Release confirmation", Detail: "Confirm checks, commit, and tag push"},
 		},
 	}
+}
+
+func releasePreflightWorkCatalog() terminal.WorkCatalog {
+	return terminal.WorkCatalog{
+		ID:     "release-preflight",
+		Label:  "Release preflight",
+		Phases: append([]terminal.PhaseDefinition(nil), releasePreflightPhases...),
+	}
+}
+
+func (prompter *terminalPrompter) StartPreflight(catalog terminal.WorkCatalog) (terminal.WorkSession, error) {
+	return terminal.StartWork(prompter.run, catalog)
 }
 
 func (prompter *terminalPrompter) Select(ctx context.Context, message, description string, options []promptOption) (string, error) {
@@ -228,21 +263,28 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 	return 0
 }
 
-// runRelease owns the terminal handoff: it closes the interactive view before
-// any post-confirmation Git or check command can inherit the terminal.
+// runRelease keeps captured Git preflight work in the interactive Live View,
+// then closes that view before commands that write directly to the terminal.
 func runRelease(ctx context.Context, options releaseOptions) error {
 	if options.Prompt == nil {
 		return errors.New("release dependencies are incomplete")
 	}
 	options = normalizeReleaseOptions(options)
 
-	plan, err := prepareRelease(ctx, options)
+	preflight, err := options.Prompt.StartPreflight(releasePreflightWorkCatalog())
 	if err != nil {
-		return errors.Join(err, options.Prompt.Close())
+		return errors.Join(fmt.Errorf("start release preflight: %w", err), options.Prompt.Close())
+	}
+	plan, err := prepareRelease(ctx, options, preflight)
+	if err != nil {
+		return errors.Join(err, preflight.Close(), options.Prompt.Close())
 	}
 	confirmed, err := confirmRelease(ctx, options, plan)
 	if err != nil {
-		return errors.Join(err, options.Prompt.Close())
+		return errors.Join(err, preflight.Close(), options.Prompt.Close())
+	}
+	if err := preflight.Close(); err != nil {
+		return errors.Join(fmt.Errorf("finish release preflight before release checks: %w", err), options.Prompt.Close())
 	}
 	if err := options.Prompt.Close(); err != nil {
 		return fmt.Errorf("restore interactive terminal before release checks: %w", err)
@@ -313,55 +355,81 @@ func normalizeReleaseOptions(options releaseOptions) releaseOptions {
 	return options
 }
 
-func prepareRelease(ctx context.Context, options releaseOptions) (releasePlan, error) {
-	if options.Git == nil || options.Commands == nil || options.Prompt == nil {
+func prepareRelease(ctx context.Context, options releaseOptions, preflight terminal.WorkSession) (releasePlan, error) {
+	if options.Git == nil || options.Commands == nil || options.Prompt == nil || preflight == nil {
 		return releasePlan{}, errors.New("release dependencies are incomplete")
 	}
 	root := options.Root
-	if root == "" {
-		output, err := options.Git.Run(ctx, []string{"rev-parse", "--show-toplevel"})
-		if err != nil || output.ExitCode != 0 {
-			return releasePlan{}, gitFailure("resolve repository root", output, err)
+	if err := releasePreflightStep(preflight, releaseInspectWorkspacePhaseID, "Checking branch and working tree", func() (string, error) {
+		if root == "" {
+			output, err := options.Git.Run(ctx, []string{"rev-parse", "--show-toplevel"})
+			if err != nil || output.ExitCode != 0 {
+				return "", gitFailure("resolve repository root", output, err)
+			}
+			root = strings.TrimSpace(string(output.Stdout))
 		}
-		root = strings.TrimSpace(string(output.Stdout))
-	}
-	if root == "" {
-		return releasePlan{}, errors.New("repository root is empty")
-	}
-	options.Root = root
-	if err := requireGitValue(ctx, options, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, "main", "release must start from the main branch"); err != nil {
+		if root == "" {
+			return "", errors.New("repository root is empty")
+		}
+		options.Root = root
+		if err := requireGitValue(ctx, options, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, "main", "release must start from the main branch"); err != nil {
+			return "", err
+		}
+		if err := ensureClean(ctx, options); err != nil {
+			return "", err
+		}
+		return "main branch and working tree are ready", nil
+	}); err != nil {
 		return releasePlan{}, err
 	}
-	if err := ensureClean(ctx, options); err != nil {
+	if err := releasePreflightStep(preflight, releaseSyncMainPhaseID, "Fetching origin/main", func() (string, error) {
+		if err := runGitCommand(ctx, options, []string{"pull", "--ff-only", "origin", "main"}); err != nil {
+			return "", err
+		}
+		if err := ensureClean(ctx, options); err != nil {
+			return "", err
+		}
+		return "main is up to date", nil
+	}); err != nil {
 		return releasePlan{}, err
 	}
-	fmt.Fprintln(options.Diagnostics, "Release preflight")
-	fmt.Fprintln(options.Diagnostics, "  Fast-forwarding main from origin...")
-	if err := runGitCommand(ctx, options, []string{"pull", "--ff-only", "origin", "main"}); err != nil {
+	var current stableVersion
+	var currentTag string
+	if err := releasePreflightStep(preflight, releaseValidateBaselinePhaseID, "Reading VERSION and release tags", func() (string, error) {
+		currentText, err := os.ReadFile(filepath.Join(root, versionFile))
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", versionFile, err)
+		}
+		currentValue := strings.TrimSpace(string(currentText))
+		current, err = parseStableVersion(currentValue)
+		if err != nil {
+			return "", fmt.Errorf("%s: %w", versionFile, err)
+		}
+		currentTag = "v" + current.String()
+		if err := validateCurrentTag(ctx, options, currentTag, current); err != nil {
+			return "", err
+		}
+		return currentTag + " is the release baseline", nil
+	}); err != nil {
 		return releasePlan{}, err
 	}
-	if err := ensureClean(ctx, options); err != nil {
-		return releasePlan{}, err
-	}
-	currentText, err := os.ReadFile(filepath.Join(root, versionFile))
-	if err != nil {
-		return releasePlan{}, fmt.Errorf("read %s: %w", versionFile, err)
-	}
-	currentValue := strings.TrimSpace(string(currentText))
-	current, err := parseStableVersion(currentValue)
-	if err != nil {
-		return releasePlan{}, fmt.Errorf("%s: %w", versionFile, err)
-	}
-	currentTag := "v" + current.String()
-	if err := validateCurrentTag(ctx, options, currentTag, current); err != nil {
-		return releasePlan{}, err
-	}
-	conventional, err := resolveConventionalBump(ctx, options, currentTag)
-	if err != nil {
-		return releasePlan{}, err
-	}
-	baseHead, err := gitValue(ctx, options, []string{"rev-parse", "HEAD"})
-	if err != nil {
+	var conventional *bumpKind
+	var baseHead string
+	if err := releasePreflightStep(preflight, releaseSuggestVersionPhaseID, "Scanning commits since "+currentTag, func() (string, error) {
+		var err error
+		conventional, err = resolveConventionalBump(ctx, options, currentTag)
+		if err != nil {
+			return "", err
+		}
+		baseHead, err = gitValue(ctx, options, []string{"rev-parse", "HEAD"})
+		if err != nil {
+			return "", err
+		}
+		if conventional == nil {
+			return "No conventional release suggestion", nil
+		}
+		return "Suggested " + string(*conventional) + " release", nil
+	}); err != nil {
 		return releasePlan{}, err
 	}
 	return releasePlan{
@@ -370,6 +438,20 @@ func prepareRelease(ctx context.Context, options releaseOptions) (releasePlan, e
 		candidates: candidates(current, conventional),
 		baseHead:   baseHead,
 	}, nil
+}
+
+func releasePreflightStep(work terminal.WorkSession, id, activeDetail string, operation func() (string, error)) error {
+	if err := work.Update(terminal.OperationPhase{ID: id, State: terminal.PhaseActive, Detail: activeDetail}); err != nil {
+		return fmt.Errorf("show release preflight progress: %w", err)
+	}
+	detail, err := operation()
+	if err != nil {
+		return errors.Join(err, work.Update(terminal.OperationPhase{ID: id, State: terminal.PhaseFailed, Detail: "Preflight stopped"}))
+	}
+	if err := work.Update(terminal.OperationPhase{ID: id, State: terminal.PhaseCompleted, Detail: detail}); err != nil {
+		return fmt.Errorf("show release preflight progress: %w", err)
+	}
+	return nil
 }
 
 func confirmRelease(ctx context.Context, options releaseOptions, plan releasePlan) (confirmedRelease, error) {
@@ -477,7 +559,6 @@ func resolveConventionalBump(ctx context.Context, options releaseOptions, curren
 	}
 	kind, found := conventionalBump(string(output.Stdout))
 	if !found {
-		fmt.Fprintln(options.Diagnostics, "  Conventional suggestion unavailable: no releasable feat, fix, or perf commit found.")
 		return nil, nil
 	}
 	return &kind, nil
