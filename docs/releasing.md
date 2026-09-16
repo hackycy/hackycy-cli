@@ -5,7 +5,7 @@ annotated Git tag with a `v` prefix. The initial migrated value is `0.0.69`;
 historical `v0.0.x` Bun releases remain unchanged. Maintainers do not edit
 `cmd/ycy/main.go` for a release.
 This release line does not use macOS or Windows code signing; integrity is
-provided by SHA-256 manifests and GitHub Artifact Attestations.
+provided by the SHA-256 manifest published with the binaries.
 
 ## Version Policy
 
@@ -32,9 +32,9 @@ patch, next, and Conventional Commit-derived candidates. `next` is the
 default patch candidate. After a summary confirmation it runs `make check`,
 updates VERSION, creates and pushes a `chore(release): vX.Y.Z`
 commit to `main`, then creates and pushes the annotated tag. The tag push starts
-`.github/workflows/release.yml`; that workflow remains responsible for
-building, verifying, attesting, publishing the Release, and starting Docker
-publication.
+`.github/workflows/release.yml`, which builds the release assets and publishes
+the GitHub Release. Run the Docker workflow manually from that release tag after
+the Release is public.
 
 To run the same preflight without creating or pushing a tag:
 
@@ -52,41 +52,31 @@ exact retry; do not delete or replace a published Release.
 
 ## Pipeline Contract
 
-The workflow validates the tag and release state, runs `make bootstrap && make
-check`, then uses a fresh checkout to run:
+The release workflow has two jobs. The first checks that the selected ref is an
+annotated stable tag matching `cmd/ycy/VERSION`, then uses a fresh checkout to
+run:
 
 ```sh
 make release-candidate
 ```
 
 The candidate reads the version from `cmd/ycy/VERSION` and contains the six
-long-standing bare binary names and
-`SHA256SUMS`. The verifier receives the version explicitly and checks target
+long-standing bare binary names and `SHA256SUMS`. The verifier checks target
 format, CGO-free builds, Go build metadata, Web and 7-Zip embedding, FRP
-manifest values, and checksums. `actions/attest` creates GitHub Artifact
-Attestations for the six binaries from that manifest.
+manifest values, and checksums. The second job downloads those assets and
+creates the public GitHub Release with generated notes.
 
-Publish creates a draft Release with generated notes, downloads the remote
-assets again, requires exactly the seven-file asset set, reruns
-`sha256sum -c SHA256SUMS`, and runs the Linux amd64 `--version` check. Only then
-is the draft made public. A failed check deliberately leaves the draft for
-diagnosis. A rerun deletes and recreates an unpublished draft; an existing
-published Release always fails validation and is never overwritten.
-
-Docker runs only after publication. It downloads and verifies the two Linux
-assets, runs `tools/prepare-frp-runtime` to materialize the manifest-pinned FRP
-0.70.1 pair for both architectures, and builds BuildKit-provenanced
-`linux/amd64,linux/arm64` images.
+Docker is a separate manual workflow. Select the release tag when starting it;
+it downloads and verifies the two Linux assets, runs
+`tools/prepare-frp-runtime` to materialize the manifest-pinned FRP 0.70.1 pair,
+and builds `linux/amd64,linux/arm64` images.
 
 ## Recovery
 
-- **Quality or build failure:** rerun the Release workflow for the same tag.
-- **Attestation failure:** rerun after fixing repository Actions permissions;
-  the draft has not been published.
-- **Remote checksum or self-check failure:** inspect the draft and rerun. Do
-  not publish or replace assets manually.
+- **Build failure:** rerun the Release workflow for the same tag after fixing
+  the build issue.
 - **Docker failure after publication:** run the Docker workflow manually with
-  `tag=vX.Y.Z`. It verifies that the Release is public before pushing images.
+  the release tag selected in GitHub Actions.
 
 There is no supported replacement flow for a published Release because GitHub
 Immutable Releases are enabled.
@@ -97,7 +87,6 @@ Verify a downloaded binary against the release manifest:
 
 ```sh
 sha256sum -c SHA256SUMS
-gh attestation verify ycy-linux-x64 --repo hackycy/hackycy-cli
 ./ycy-linux-x64 --version
 ```
 
@@ -119,17 +108,15 @@ Maintainers must configure:
   workflow;
 - GitHub Immutable Releases;
 - Actions permissions that allow read-only checkout, release contents write,
-  package write, and artifact attestation (`id-token: write` and
-  `attestations: write` only in the attestation job);
+  and package write;
 - repository secrets `TENCENT_USERNAME` and `TENCENT_PASSWORD`.
 
-Third-party Actions are pinned to full commit SHAs and `.github/dependabot.yml`
+Third-party Actions track their stable major-version tags. `.github/dependabot.yml`
 checks for weekly updates.
 
 ## References
 
 - [GitHub CLI release commands](https://cli.github.com/manual/gh_release)
-- [GitHub Artifact Attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations)
 - [GitHub Immutable Releases](https://docs.github.com/en/repositories/releasing-projects-on-github/immutable-releases)
 - [GitHub Actions workflow syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions)
 - [Go build command](https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies)

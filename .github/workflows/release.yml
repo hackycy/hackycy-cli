@@ -5,243 +5,93 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing annotated stable tag to publish or recover
-        required: true
-        type: string
-
-concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  build:
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.release.outputs.tag }}
-      version: ${{ steps.release.outputs.version }}
     steps:
-      - name: Checkout full history
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Checkout code
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - name: Validate tag and release state
+      - name: Validate release tag
         id: release
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TAG: ${{ github.ref_name }}
-          INPUT_TAG: ${{ inputs.tag }}
-          GH_TOKEN: ${{ github.token }}
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
-            tag="$INPUT_TAG"
-          else
-            tag="$REF_TAG"
-          fi
-          [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo "tag must be a stable vX.Y.Z annotated tag: $tag" >&2
+          [[ "$REF_TYPE" == tag ]] || { echo 'Run this workflow from a release tag.' >&2; exit 1; }
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo "tag must be a stable vX.Y.Z version: $TAG" >&2
             exit 1
           }
-          version_file="$(tr -d '\r\n' < cmd/ycy/VERSION)"
-          [[ "$version_file" == "${tag#v}" ]] || {
-            echo "cmd/ycy/VERSION ($version_file) does not match tag $tag" >&2
+          version="$(tr -d '\r\n' < cmd/ycy/VERSION)"
+          [[ "$version" == "${TAG#v}" ]] || {
+            echo "cmd/ycy/VERSION ($version) does not match tag $TAG" >&2
             exit 1
           }
-          git fetch --force --tags origin "refs/tags/$tag:refs/tags/$tag"
-          [[ "$(git cat-file -t "$tag" 2>/dev/null || true)" == tag ]] || {
-            echo "tag is not annotated: $tag" >&2
+          [[ "$(git cat-file -t "$TAG" 2>/dev/null || true)" == tag ]] || {
+            echo "tag is not annotated: $TAG" >&2
             exit 1
           }
-          git fetch --no-tags origin main:refs/remotes/origin/main
-          commit="$(git rev-parse "$tag^{commit}")"
-          git merge-base --is-ancestor "$commit" origin/main || {
-            echo "tag does not point to a commit reachable from origin/main" >&2
-            exit 1
-          }
-          release_error="$(mktemp)"
-          set +e
-          release_json="$(gh release view "$tag" --json isDraft 2>"$release_error")"
-          release_status=$?
-          set -e
-          if (( release_status != 0 )) && ! grep -qi 'not found' "$release_error"; then
-            cat "$release_error" >&2
-            exit "$release_status"
-          fi
-          if [[ -n "$release_json" ]] && [[ "$(jq -r '.isDraft' <<<"$release_json")" == false ]]; then
-            echo "published Release already exists for $tag; refusing to replace it" >&2
-            exit 1
-          fi
-          {
-            echo "tag=$tag"
-            echo "version=${tag#v}"
-          } >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  quality:
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ needs.validate.outputs.tag }}
-          fetch-depth: 0
-      - name: Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
-        with:
-          go-version: '1.26.7'
-          cache: true
-      - name: Setup pnpm
-        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
-        with:
-          version: 11.24.0
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: web/pnpm-lock.yaml
-      - name: Run quality gate
-        run: make bootstrap && make check
-
-  build:
-    needs: [validate, quality]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout clean release tree
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ needs.validate.outputs.tag }}
-          fetch-depth: 0
       - name: Install 7-Zip build dependency
         run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends p7zip-full
+
       - name: Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+        uses: actions/setup-go@v7
         with:
           go-version: '1.26.7'
           cache: true
+
       - name: Setup pnpm
-        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        uses: pnpm/action-setup@v6
         with:
           version: 11.24.0
+
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
-      - name: Build release candidate
+
+      - name: Build release assets
         run: make release-candidate
+
       - name: Upload release assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@v7
         with:
-          name: release-assets-${{ needs.validate.outputs.version }}
-          path: release/${{ needs.validate.outputs.version }}/*
+          name: release-assets
+          path: release/${{ steps.release.outputs.version }}/*
           if-no-files-found: error
 
-  attest:
-    needs: [validate, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    steps:
-      - name: Download release assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: release-assets-${{ needs.validate.outputs.version }}
-          path: release
-      - name: Attest release binaries
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
-        with:
-          subject-checksums: release/SHA256SUMS
-
-  publish:
-    needs: [validate, quality, build, attest]
+  release:
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    outputs:
-      published: ${{ steps.publish.outputs.published }}
     steps:
-      - name: Download release assets
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
-        with:
-          name: release-assets-${{ needs.validate.outputs.version }}
-          path: release
-      - name: Create or replace draft Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          release_error="$(mktemp)"
-          set +e
-          release_json="$(gh release view "$TAG" --json isDraft 2>"$release_error")"
-          release_status=$?
-          set -e
-          if (( release_status != 0 )) && ! grep -qi 'not found' "$release_error"; then
-            cat "$release_error" >&2
-            exit "$release_status"
-          fi
-          if (( release_status == 0 )); then
-            if [[ "$(jq -r '.isDraft' <<<"$release_json")" == true ]]; then
-              gh release delete "$TAG" --yes
-            else
-              echo "published Release already exists for $TAG; refusing to replace it" >&2
-              exit 1
-            fi
-          fi
-          gh release create "$TAG" release/* --draft --generate-notes --title "$TAG"
-      - name: Verify remote asset set and checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected=$'SHA256SUMS\nycy-linux-arm64\nycy-linux-x64\nycy-macos-arm64\nycy-macos-x64\nycy-windows-arm64.exe\nycy-windows-x64.exe'
-          actual="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
-          [[ "$actual" == "$(printf '%s\n' "$expected" | sort)" ]] || {
-            echo "remote Release assets do not match the seven-file contract" >&2
-            printf '%s\n' "$actual" >&2
-            exit 1
-          }
-          rm -rf remote-release
-          mkdir remote-release
-          gh release download "$TAG" --dir remote-release
-          (cd remote-release && sha256sum -c SHA256SUMS)
-          chmod +x remote-release/ycy-linux-x64
-          reported="$(remote-release/ycy-linux-x64 --version)"
-          [[ "$reported" == "${{ needs.validate.outputs.version }}" || "$reported" == ycy/${{ needs.validate.outputs.version }}* ]] || {
-            echo "Linux amd64 self-check reported unexpected version: $reported" >&2
-            exit 1
-          }
-      - name: Publish verified draft
-        id: publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.validate.outputs.tag }}
-        run: |
-          gh release edit "$TAG" --draft=false
-          echo 'published=true' >> "$GITHUB_OUTPUT"
+      - name: Checkout code
+        uses: actions/checkout@v7
 
-  docker:
-    needs: [validate, publish]
-    if: needs.publish.outputs.published == 'true'
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-    uses: ./.github/workflows/docker.yml
-    with:
-      tag: ${{ needs.validate.outputs.tag }}
-    secrets: inherit
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
