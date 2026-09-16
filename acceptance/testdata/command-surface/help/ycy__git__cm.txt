@@ -9,6 +9,7 @@ Flags:
   -l, --lang	Commit message language: en or zh
   --profile	CM provider profile to use
   -p, --push	Push to remote after creating the commit, defaults to origin
+  -o, --scope	Infer and include a commit scope
   -s, --stage	Select files to stage before generating
   -a, --stage-all	Stage all changes before generating
   -c, --stage-push	Select files to stage, commit, then push, defaults to origin

@@ -2,6 +2,7 @@ package cm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -19,7 +20,7 @@ func TestModuleRunGeneratesFromTheResolvedScopeAndSafeProfileProjection(t *testi
 	resolver := &recordingCMResolver{profile: commitMessageProfile()}
 	transport := &recordingProviderTransport{response: &http.Response{
 		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"feat(cm): generate a message"}}],"usage":{"prompt_tokens":3}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"feat: generate a message"}}],"usage":{"prompt_tokens":3}}`)),
 	}}
 	module := newModule(t, runner, resolver, transport)
 	timeout := 1234.0
@@ -28,7 +29,7 @@ func TestModuleRunGeneratesFromTheResolvedScopeAndSafeProfileProjection(t *testi
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if result.RepositoryRoot != root || result.Scope != ScopeAllUncommitted || result.Cancelled || result.NoChanges || result.Generated == nil || result.Generated.Message != "feat(cm): generate a message" {
+	if result.RepositoryRoot != root || result.Scope != ScopeAllUncommitted || result.Cancelled || result.NoChanges || result.Generated == nil || result.Generated.Message != "feat: generate a message" {
 		t.Fatalf("result = %#v", result)
 	}
 	if result.Profile != (ProfileDiagnostic{Name: "work", BaseURL: "https://provider.test/v1", Model: "provider-model"}) {
@@ -39,6 +40,28 @@ func TestModuleRunGeneratesFromTheResolvedScopeAndSafeProfileProjection(t *testi
 	}
 	if transport.calls != 1 {
 		t.Fatalf("provider calls = %d", transport.calls)
+	}
+}
+
+func TestModuleRunPassesCommitScopeModeToTheProvider(t *testing.T) {
+	root := t.TempDir()
+	writeStageFile(t, root, "src/value.go")
+	transport := &recordingProviderTransport{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"feat(cm): generate a message"}}]}`)),
+	}}
+	module := newModule(t, newModuleRunner(root, "?? src/value.go\x00"), &recordingCMResolver{profile: commitMessageProfile()}, transport)
+
+	result, err := module.Run(context.Background(), Input{IncludeScope: true})
+	if err != nil || result.Generated == nil || result.Generated.Message != "feat(cm): generate a message" {
+		t.Fatalf("Run() = (%#v, %v)", result, err)
+	}
+	var request chatCompletionRequest
+	if err := json.NewDecoder(transport.request.Body).Decode(&request); err != nil {
+		t.Fatalf("decode provider request: %v", err)
+	}
+	if len(request.Messages) != 2 || !strings.Contains(request.Messages[0].Content, "format feat(scope): subject") || !strings.Contains(request.Messages[0].Content, "Infer scope from DIRECTORY_CONTEXT") {
+		t.Fatalf("provider request = %#v", request)
 	}
 }
 
@@ -417,7 +440,7 @@ func newModuleRunner(root, status string) *snapshotRunner {
 
 func successfulProviderTransport() ProviderTransport {
 	return providerTransportFunc(func(*http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"feat(cm): generate a message"}}]}`))}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"choices":[{"message":{"content":"feat: generate a message"}}]}`))}, nil
 	})
 }
 

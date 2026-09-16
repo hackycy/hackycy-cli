@@ -44,6 +44,7 @@ func NewCmdCM(factory *cmdutil.Factory, runF func(*Options) error) *cobra.Comman
 	var stagePush string
 	var dryRun bool
 	var body bool
+	var includeScope bool
 	command := &cobra.Command{
 		Use:   "cm",
 		Short: "Generate an Angular-style commit message from uncommitted changes",
@@ -53,13 +54,14 @@ func NewCmdCM(factory *cmdutil.Factory, runF func(*Options) error) *cobra.Comman
 				return errors.New("git cm Factory is incomplete")
 			}
 			input := Input{
-				Profile:  profile,
-				Language: language,
-				Staged:   staged,
-				Stage:    stage,
-				StageAll: stageAll,
-				DryRun:   dryRun,
-				Body:     body,
+				Profile:      profile,
+				Language:     language,
+				Staged:       staged,
+				Stage:        stage,
+				StageAll:     stageAll,
+				DryRun:       dryRun,
+				Body:         body,
+				IncludeScope: includeScope,
 			}
 			if command.Flags().Changed("timeout-ms") {
 				parsed, err := parseTimeoutMS(timeout)
@@ -102,6 +104,7 @@ func NewCmdCM(factory *cmdutil.Factory, runF func(*Options) error) *cobra.Comman
 	command.Flags().Lookup("stage-push").NoOptDefVal = "origin"
 	command.Flags().BoolVarP(&dryRun, "dry-run", "d", false, "Generate and print only")
 	command.Flags().BoolVarP(&body, "body", "b", false, "Allow a short commit body")
+	command.Flags().BoolVarP(&includeScope, "scope", "o", false, "Infer and include a commit scope")
 	return command
 }
 

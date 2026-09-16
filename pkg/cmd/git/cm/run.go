@@ -256,9 +256,10 @@ func (module *Module) generate(ctx context.Context, input Input, mode executionM
 	report(Phase{Kind: PhaseGenerate, State: PhaseActive, FileCount: len(snapshot.Files)})
 	reportCMPhase(observer, cmGenerateMessagePhaseID, PhaseActive, fmt.Sprintf("Generating from %d files", len(snapshot.Files)))
 	generated, err := GenerateCommitMessage(ctx, model, GenerationInput{
-		Snapshot:    snapshot,
-		Language:    language,
-		IncludeBody: input.Body,
+		Snapshot:     snapshot,
+		Language:     language,
+		IncludeBody:  input.Body,
+		IncludeScope: input.IncludeScope,
 	})
 	if err != nil {
 		reportCMPhase(observer, cmGenerateMessagePhaseID, phaseStateForCMError(ctx, err), "Commit message generation failed")

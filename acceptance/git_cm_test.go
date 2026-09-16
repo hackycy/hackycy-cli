@@ -41,7 +41,7 @@ func TestGitCMStandaloneBinaryExposesThePublicLeaf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("git cm --help: %v\n%s", err, output)
 	}
-	for _, expected := range []string{"Generate an Angular-style commit message", "--stage-all", "--stage-push", "--dry-run"} {
+	for _, expected := range []string{"Generate an Angular-style commit message", "--stage-all", "--stage-push", "--dry-run", "-o, --scope"} {
 		if !strings.Contains(string(output), expected) {
 			t.Fatalf("git cm --help omitted %q:\n%s", expected, output)
 		}
@@ -72,11 +72,11 @@ func TestGitCMStandaloneBinaryGeneratesDryRunFromAllUncommittedChanges(t *testin
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatalf("decode provider request: %v", err)
 		}
-		if body.Model != "fixture-model" || body.MaxTokens != 4096 || len(body.Messages) != 2 || !strings.Contains(body.Messages[1].Content, "README.md") {
+		if body.Model != "fixture-model" || body.MaxTokens != 4096 || len(body.Messages) != 2 || !strings.Contains(body.Messages[0].Content, "format feat: subject") || strings.Contains(body.Messages[0].Content, "Infer scope from DIRECTORY_CONTEXT") || !strings.Contains(body.Messages[1].Content, "README.md") {
 			t.Fatalf("provider body = %#v", body)
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat(cm): generate local message"}}],"usage":{"prompt_tokens":21,"completion_tokens":7,"total_tokens":28}}`)
+		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat: generate local message"}}],"usage":{"prompt_tokens":21,"completion_tokens":7,"total_tokens":28}}`)
 	}))
 	defer server.Close()
 
@@ -88,7 +88,7 @@ func TestGitCMStandaloneBinaryGeneratesDryRunFromAllUncommittedChanges(t *testin
 		t.Fatalf("provider calls = %d, want 1", providerCalls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): generate local message", "Profile: env (fixture-model)", "Provider tokens: 21 prompt / 7 completion / 28 total"} {
+	for _, expected := range []string{"feat: generate local message", "Profile: env (fixture-model)", "Provider tokens: 21 prompt / 7 completion / 28 total"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -104,6 +104,29 @@ func TestGitCMStandaloneBinaryGeneratesDryRunFromAllUncommittedChanges(t *testin
 	}
 	if status := gitCMOutput(t, repository, "status", "--short"); status != "?? README.md\n" {
 		t.Fatalf("dry run status = %q", status)
+	}
+}
+
+func TestGitCMStandaloneBinaryGeneratesAnInferredCommitScopeWhenRequested(t *testing.T) {
+	binary := buildGitCMStandaloneBinary(t)
+	repository := newGitCMRepository(t)
+	writeGitCMFile(t, filepath.Join(repository, "README.md"), "scoped local change\n")
+	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
+	server, provider := newGitCMMessageProvider(t, "feat(cm): generate scoped message")
+	defer server.Close()
+
+	output, err := runGitCMStandalone(binary, repository, gitCMProviderEnvironment(t, server.URL), "", "git", "cm", "-o", "--dry-run")
+	if err != nil {
+		t.Fatalf("git cm -o --dry-run: %v\n%s", err, output)
+	}
+	if provider.calls != 1 || len(provider.bodies) != 1 || !strings.Contains(provider.bodies[0], "format feat(scope): subject") || !strings.Contains(provider.bodies[0], "Infer scope from DIRECTORY_CONTEXT") {
+		t.Fatalf("provider = %#v, want one scope-aware request", provider)
+	}
+	if !strings.Contains(string(output), "feat(cm): generate scoped message") {
+		t.Fatalf("scoped generation output = %q", output)
+	}
+	if afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD"); afterHead != beforeHead {
+		t.Fatalf("scoped dry run changed HEAD from %q to %q", beforeHead, afterHead)
 	}
 }
 
@@ -163,7 +186,7 @@ func TestGitCMStandaloneBinaryCreatesAStagedCommitThroughTheNormalHook(t *testin
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "staged change\n")
 	runGitCM(t, repository, "add", "README.md")
 	writeGitCMHook(t, repository, "pre-commit", "#!/bin/sh\nprintf hook-ran > hook-ran\nexit 0\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): commit through hook")
+	server, provider := newGitCMMessageProvider(t, "feat: commit through hook")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "\n", "git", "cm", "--staged")
@@ -174,7 +197,7 @@ func TestGitCMStandaloneBinaryCreatesAStagedCommitThroughTheNormalHook(t *testin
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): commit through hook", "Create this commit? [Y/n]:", "Commit created"} {
+	for _, expected := range []string{"feat: commit through hook", "Create this commit? [Y/n]:", "Commit created"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -182,7 +205,7 @@ func TestGitCMStandaloneBinaryCreatesAStagedCommitThroughTheNormalHook(t *testin
 	if _, err := os.Stat(filepath.Join(repository, "hook-ran")); err != nil {
 		t.Fatalf("successful pre-commit hook did not run: %v", err)
 	}
-	if got := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); got != "feat(cm): commit through hook" {
+	if got := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); got != "feat: commit through hook" {
 		t.Fatalf("HEAD subject = %q", got)
 	}
 	if output := gitCMCommand(t, repository, "diff", "--cached", "--quiet"); output != "" {
@@ -243,7 +266,7 @@ func TestGitCMStandaloneBinaryStagesOnlyTheSelectedTrackedChange(t *testing.T) {
 	runGitCM(t, repository, "commit", "-m", "chore: add selection fixtures")
 	writeGitCMFile(t, filepath.Join(repository, "a.txt"), "after a\n")
 	writeGitCMFile(t, filepath.Join(repository, "b.txt"), "after b\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): commit selected change")
+	server, provider := newGitCMMessageProvider(t, "feat: commit selected change")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "2\n\n", "git", "cm", "--stage")
@@ -254,7 +277,7 @@ func TestGitCMStandaloneBinaryStagesOnlyTheSelectedTrackedChange(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"1) M a.txt", "2) M b.txt", "feat(cm): commit selected change", "Commit created"} {
+	for _, expected := range []string{"1) M a.txt", "2) M b.txt", "feat: commit selected change", "Commit created"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -275,7 +298,7 @@ func TestGitCMStandaloneBinaryStagesAllChangesBeforeCommitting(t *testing.T) {
 	repository := newGitCMRepository(t)
 	writeGitCMFile(t, filepath.Join(repository, "package.json"), "{\"name\":\"after\"}\n")
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "untracked addition\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): commit every change")
+	server, provider := newGitCMMessageProvider(t, "feat: commit every change")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "\n", "git", "cm", "--stage-all")
@@ -286,7 +309,7 @@ func TestGitCMStandaloneBinaryStagesAllChangesBeforeCommitting(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): commit every change", "Create this commit? [Y/n]:", "Commit created"} {
+	for _, expected := range []string{"feat: commit every change", "Create this commit? [Y/n]:", "Commit created"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -316,7 +339,7 @@ func TestGitCMStandaloneBinaryStageAllDryRunUsesAllUncommittedWithoutStaging(t *
 	runGitCM(t, repository, "add", "package.json")
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "unstaged readme\n")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): preview all changes")
+	server, provider := newGitCMMessageProvider(t, "feat: preview all changes")
 	defer server.Close()
 
 	output, err := runGitCMStandalone(binary, repository, gitCMProviderEnvironment(t, server.URL), "", "git", "cm", "--stage-all", "--dry-run")
@@ -330,7 +353,7 @@ func TestGitCMStandaloneBinaryStageAllDryRunUsesAllUncommittedWithoutStaging(t *
 		t.Fatalf("provider evidence omitted all-uncommitted paths: %s", provider.bodies[0])
 	}
 	text := string(output)
-	if !strings.Contains(text, "feat(cm): preview all changes") || strings.Contains(text, "Create this commit?") {
+	if !strings.Contains(text, "feat: preview all changes") || strings.Contains(text, "Create this commit?") {
 		t.Fatalf("dry-run output = %q", text)
 	}
 	if afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD"); afterHead != beforeHead {
@@ -350,7 +373,7 @@ func TestGitCMStandaloneBinaryKeepsTheIndexWhenCommitConfirmationIsDeclined(t *t
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "staged but not committed\n")
 	runGitCM(t, repository, "add", "README.md")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): decline commit")
+	server, provider := newGitCMMessageProvider(t, "feat: decline commit")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "no\n", "git", "cm", "--staged")
@@ -361,7 +384,7 @@ func TestGitCMStandaloneBinaryKeepsTheIndexWhenCommitConfirmationIsDeclined(t *t
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): decline commit", "Create this commit? [Y/n]:", "Cancelled"} {
+	for _, expected := range []string{"feat: decline commit", "Create this commit? [Y/n]:", "Cancelled"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -384,7 +407,7 @@ func TestGitCMStandaloneBinaryPropagatesAFailingPreCommitHook(t *testing.T) {
 	runGitCM(t, repository, "add", "README.md")
 	writeGitCMHook(t, repository, "pre-commit", "#!/bin/sh\nprintf hook-ran > hook-ran\necho hook rejected >&2\nexit 1\n")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): reject hook")
+	server, provider := newGitCMMessageProvider(t, "feat: reject hook")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "\n", "git", "cm", "--staged")
@@ -395,7 +418,7 @@ func TestGitCMStandaloneBinaryPropagatesAFailingPreCommitHook(t *testing.T) {
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): reject hook", "Create this commit? [Y/n]:", "hook rejected"} {
+	for _, expected := range []string{"feat: reject hook", "Create this commit? [Y/n]:", "hook rejected"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -431,7 +454,7 @@ func TestGitCMStandaloneBinaryRejectsAStaleSnapshotBeforeCommit(t *testing.T) {
 		}
 		mutated <- nil
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat(cm): stale snapshot"}}]}`)
+		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat: stale snapshot"}}]}`)
 	}))
 	defer server.Close()
 
@@ -448,7 +471,7 @@ func TestGitCMStandaloneBinaryRejectsAStaleSnapshotBeforeCommit(t *testing.T) {
 		t.Fatal("local provider did not mutate the staged fixture")
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): stale snapshot", "Create this commit? [Y/n]:", "Git changes changed after the commit message was generated"} {
+	for _, expected := range []string{"feat: stale snapshot", "Create this commit? [Y/n]:", "Git changes changed after the commit message was generated"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -472,7 +495,7 @@ func TestGitCMStandaloneBinaryPushesAStagedCommitToTheDefaultLocalRemote(t *test
 	runGitCM(t, repository, "remote", "add", "origin", remote)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "push this change\n")
 	runGitCM(t, repository, "add", "README.md")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): push local commit")
+	server, provider := newGitCMMessageProvider(t, "feat: push local commit")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "\n", "git", "cm", "--staged", "--push")
@@ -483,7 +506,7 @@ func TestGitCMStandaloneBinaryPushesAStagedCommitToTheDefaultLocalRemote(t *test
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"feat(cm): push local commit", "Commit created and pushed"} {
+	for _, expected := range []string{"feat: push local commit", "Commit created and pushed"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}
@@ -509,7 +532,7 @@ func TestGitCMStandaloneBinaryReturnsAPartialResultWhenTheLocalPushFails(t *test
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "commit before failed push\n")
 	runGitCM(t, repository, "add", "README.md")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): retain commit on push failure")
+	server, provider := newGitCMMessageProvider(t, "feat: retain commit on push failure")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "\n", "git", "cm", "--staged", "--push")
@@ -520,14 +543,14 @@ func TestGitCMStandaloneBinaryReturnsAPartialResultWhenTheLocalPushFails(t *test
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	if !strings.Contains(text, "feat(cm): retain commit on push failure") || !strings.Contains(text, "error:") || strings.Contains(text, "Commit created and pushed") {
+	if !strings.Contains(text, "feat: retain commit on push failure") || !strings.Contains(text, "error:") || strings.Contains(text, "Commit created and pushed") {
 		t.Fatalf("push failure output = %q", text)
 	}
 	afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
 	if afterHead == beforeHead {
 		t.Fatalf("push failure did not retain the local commit: HEAD = %q", afterHead)
 	}
-	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat(cm): retain commit on push failure" {
+	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat: retain commit on push failure" {
 		t.Fatalf("partial-result subject = %q", subject)
 	}
 	if output := gitCMCommand(t, repository, "diff", "--cached", "--quiet"); output != "" {
@@ -540,7 +563,7 @@ func TestGitCMStandaloneBinaryGeneratesFromTheDefaultAllUncommittedScope(t *test
 	repository := newGitCMRepository(t)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "default generation change\n")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): use default scope")
+	server, provider := newGitCMMessageProvider(t, "feat: use default scope")
 	defer server.Close()
 
 	output, err := runGitCMStandalone(binary, repository, gitCMProviderEnvironment(t, server.URL), "", "git", "cm")
@@ -551,7 +574,7 @@ func TestGitCMStandaloneBinaryGeneratesFromTheDefaultAllUncommittedScope(t *test
 		t.Fatalf("provider = %#v, want one all-uncommitted request", provider)
 	}
 	text := string(output)
-	if !strings.Contains(text, "feat(cm): use default scope") || strings.Contains(text, "Create this commit?") {
+	if !strings.Contains(text, "feat: use default scope") || strings.Contains(text, "Create this commit?") {
 		t.Fatalf("default generation output = %q", text)
 	}
 	if afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD"); afterHead != beforeHead {
@@ -576,7 +599,7 @@ func TestGitCMStandaloneBinaryStagePushSelectsCommitsAndPushesToTheDefaultLocalR
 	runGitCM(t, repository, "commit", "-m", "chore: add stage-push fixtures")
 	writeGitCMFile(t, filepath.Join(repository, "a.txt"), "after a\n")
 	writeGitCMFile(t, filepath.Join(repository, "b.txt"), "after b\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): stage and push selected change")
+	server, provider := newGitCMMessageProvider(t, "feat: stage and push selected change")
 	defer server.Close()
 
 	output, err := runGitCMPlainStandalone(t, binary, repository, gitCMProviderEnvironment(t, server.URL), "2\n\n", "git", "cm", "--stage-push")
@@ -587,7 +610,7 @@ func TestGitCMStandaloneBinaryStagePushSelectsCommitsAndPushesToTheDefaultLocalR
 		t.Fatalf("provider calls = %d, want 1", provider.calls)
 	}
 	text := string(output)
-	for _, expected := range []string{"1) M a.txt", "2) M b.txt", "feat(cm): stage and push selected change", "Commit created and pushed"} {
+	for _, expected := range []string{"1) M a.txt", "2) M b.txt", "feat: stage and push selected change", "Commit created and pushed"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("output omitted %q:\n%s", expected, text)
 		}

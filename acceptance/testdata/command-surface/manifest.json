@@ -1232,6 +1232,14 @@
           "scope": "inherited"
         },
         {
+          "name": "scope",
+          "shorthand": "o",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
           "name": "stage",
           "shorthand": "s",
           "type": "bool",

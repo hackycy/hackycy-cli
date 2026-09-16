@@ -53,7 +53,7 @@ func TestRootConfiguresDiagnosticsBeforeGitCM(t *testing.T) {
 			t.Errorf("provider request = %s %s, authorization = %q", request.Method, request.URL.Path, request.Header.Get("Authorization"))
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat(cm): prove root diagnostics"}}]}`)
+		_, _ = io.WriteString(response, `{"choices":[{"message":{"content":"feat: prove root diagnostics"}}]}`)
 	}))
 	defer server.Close()
 	t.Setenv("YCY_CM_PROFILE", "")
@@ -76,7 +76,7 @@ func TestRootConfiguresDiagnosticsBeforeGitCM(t *testing.T) {
 	}
 
 	outcome := app.Execute(context.Background(), []string{"--log-level", "warn", "git", "cm", "--dry-run"})
-	if outcome.Code != 0 || outcome.Err != nil || runtime.Level() != logging.Warn || providerCalls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "feat(cm): prove root diagnostics") {
+	if outcome.Code != 0 || outcome.Err != nil || runtime.Level() != logging.Warn || providerCalls != 1 || stderr.Len() != 0 || !strings.Contains(stdout.String(), "feat: prove root diagnostics") {
 		t.Fatalf("outcome = %#v, level = %v, calls = %d, streams = (%q, %q)", outcome, runtime.Level(), providerCalls, stdout.String(), stderr.String())
 	}
 	if status := gitCMRootOutcome(t, repository, "status", "--short"); status != "?? README.md\n" {

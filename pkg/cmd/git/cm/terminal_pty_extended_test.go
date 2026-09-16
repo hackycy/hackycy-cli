@@ -115,7 +115,7 @@ func runGitCMPushPTYHelper(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, request.Body)
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat(cm): rich push")
+		_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat: rich push")
 		if providerDone != "" {
 			_ = os.WriteFile(providerDone, []byte("done"), 0o600)
 		}
@@ -203,7 +203,7 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 	if wide && !strings.Contains(live, "Push commit") {
 		t.Fatalf("wide git cm push live Console omitted push phase: %q", output)
 	}
-	for _, expected := range []string{"feat(cm): rich push", "GIT_CM_PUSH_OK", "Commit created and pushed"} {
+	for _, expected := range []string{"feat: rich push", "GIT_CM_PUSH_OK", "Commit created and pushed"} {
 		if !strings.Contains(visible, expected) {
 			t.Fatalf("git cm push output missing %q: %q", expected, output)
 		}
@@ -316,7 +316,7 @@ func runGitCMFailurePTYHelper(t *testing.T) {
 			_, _ = response.Write([]byte("provider-secret /private/provider/path"))
 		} else {
 			response.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat(cm): rich failure")
+			_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat: rich failure")
 		}
 		if providerDone != "" {
 			_ = os.WriteFile(providerDone, []byte("done"), 0o600)
@@ -409,7 +409,7 @@ func runGitCMScenarioPTYProcess(t *testing.T, command *exec.Cmd, width, height u
 	waitForGitCMPTYFile(t, providerDone)
 	if input != "" {
 		if input == "\r" || input == "\x1b" {
-			waitForGitCMPTYText(t, &output, "feat(cm): rich failure")
+			waitForGitCMPTYText(t, &output, "feat: rich failure")
 		}
 		time.Sleep(150 * time.Millisecond)
 		if _, err := process.Terminal().Write([]byte(input)); err != nil {
@@ -532,7 +532,7 @@ func runGitCMStageCommitPTYHelper(t *testing.T) {
 		}
 		_, _ = io.Copy(io.Discard, request.Body)
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat(cm): rich stage and commit")
+		_, _ = fmt.Fprintf(response, `{"choices":[{"message":{"content":%q}}]}`, "feat: rich stage and commit")
 		if providerDone != "" {
 			_ = os.WriteFile(providerDone, []byte("done"), 0o600)
 		}
@@ -557,7 +557,7 @@ func runGitCMStageCommitPTYHelper(t *testing.T) {
 	if status := gitCMOutput(t, repository, "status", "--short"); status != "" {
 		t.Fatalf("working tree after commit = %q", status)
 	}
-	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat(cm): rich stage and commit" {
+	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat: rich stage and commit" {
 		t.Fatalf("commit subject = %q", subject)
 	}
 	_, _ = fmt.Fprintln(os.Stderr, "GIT_CM_STAGE_COMMIT_OK")
@@ -586,7 +586,7 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 	} else if !strings.Contains(live, "selection") && !strings.Contains(live, "commit") {
 		t.Fatalf("compact git cm live Console omitted bounded active context: %q", output)
 	}
-	for _, expected := range []string{"Select files to stage", "feat(cm): rich stage and commit", "GIT_CM_STAGE_COMMIT_OK", "Commit created"} {
+	for _, expected := range []string{"Select files to stage", "feat: rich stage and commit", "GIT_CM_STAGE_COMMIT_OK", "Commit created"} {
 		if !strings.Contains(visible, expected) {
 			t.Fatalf("git cm PTY output missing %q: %q", expected, output)
 		}

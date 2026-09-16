@@ -5,16 +5,17 @@ import "github.com/hackycy/hackycy-cli/internal/appconfig"
 
 // Input is the typed CLI request for git cm.
 type Input struct {
-	Profile   string
-	TimeoutMS *float64
-	Language  string
-	Staged    bool
-	Stage     bool
-	StageAll  bool
-	Push      *string
-	StagePush *string
-	DryRun    bool
-	Body      bool
+	Profile      string
+	TimeoutMS    *float64
+	Language     string
+	Staged       bool
+	Stage        bool
+	StageAll     bool
+	Push         *string
+	StagePush    *string
+	DryRun       bool
+	Body         bool
+	IncludeScope bool
 }
 
 // ProfileDiagnostic is the profile projection safe for command presentation.

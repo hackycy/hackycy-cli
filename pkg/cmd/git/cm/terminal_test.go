@@ -35,7 +35,7 @@ func TestTerminalGitCMAdapterTranslatesFormsPhasesAndPresentation(t *testing.T) 
 	}
 	commitPrompt := CommitPrompt{
 		Message:   "Create this commit?",
-		Generated: GeneratedMessage{Message: "feat(cm): present output", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 456, RepresentedClusters: 1, TotalClusters: 1, IncludedFacts: 4}},
+		Generated: GeneratedMessage{Message: "feat: present output", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 456, RepresentedClusters: 1, TotalClusters: 1, IncludedFacts: 4}},
 		Profile:   ProfileDiagnostic{Name: "work", Model: "model"},
 	}
 	confirmed, cancelled, err := adapter.ConfirmCommit(commitPrompt)
@@ -71,7 +71,7 @@ func TestTerminalGitCMAdapterTranslatesFormsPhasesAndPresentation(t *testing.T) 
 		t.Fatalf("stage request = %#v", stageRequest)
 	}
 	preview := operations[1].Value.(terminalexperience.PresentationDocument)
-	if preview.Blocks[0].Role != terminalexperience.VisualRoleSuccess || !strings.Contains(preview.Blocks[0].Text, "feat(cm): present output") || !strings.Contains(terminalexperience.RenderPlain(preview), "Profile: work (model)") {
+	if preview.Blocks[0].Role != terminalexperience.VisualRoleSuccess || !strings.Contains(preview.Blocks[0].Text, "feat: present output") || !strings.Contains(terminalexperience.RenderPlain(preview), "Profile: work (model)") {
 		t.Fatalf("preview document = %#v", preview)
 	}
 	commitRequest := operations[2].Value.(terminalexperience.InteractionRequest)
@@ -83,7 +83,7 @@ func TestTerminalGitCMAdapterTranslatesFormsPhasesAndPresentation(t *testing.T) 
 		t.Fatalf("tracked operation = %#v", operation)
 	}
 	generated := operations[4].Value.(terminalexperience.PresentationDocument)
-	if generated.Blocks[0].Role != terminalexperience.VisualRoleSuccess || !strings.Contains(generated.Blocks[0].Text, "feat(cm): present output") {
+	if generated.Blocks[0].Role != terminalexperience.VisualRoleSuccess || !strings.Contains(generated.Blocks[0].Text, "feat: present output") {
 		t.Fatalf("generated document = %#v", generated)
 	}
 	outcome := operations[5].Value.(terminalexperience.PresentationDocument)
@@ -202,7 +202,7 @@ func TestTerminalGitCMRichAdapterUsesOneCompleteControlledWorkCatalog(t *testing
 }
 
 func TestTerminalGitCMFinishRequestUsesSafeOutcomeSummaries(t *testing.T) {
-	generated := &GeneratedMessage{Message: "feat(cm): generated-secret", FileCount: 2}
+	generated := &GeneratedMessage{Message: "feat: generated-secret", FileCount: 2}
 	unsafe := Result{
 		Generated: generated,
 		Profile: ProfileDiagnostic{
@@ -329,7 +329,7 @@ func TestTerminalGitCMFinishSubmitsRequestAndSeparateResult(t *testing.T) {
 	adapter.enableDetailed()
 	adapter.reportCMPhase(cmPushCommitPhaseID, PhaseActive, "Remote: origin")
 	result := Result{
-		Generated:      &GeneratedMessage{Message: "feat(cm): durable-result-only"},
+		Generated:      &GeneratedMessage{Message: "feat: durable-result-only"},
 		PromptedCommit: true,
 		Committed:      true,
 	}
@@ -401,7 +401,7 @@ func TestGitCMPlainJourneyKeepsFormsAndPhasesOnStderr(t *testing.T) {
 	repository := newGitCMRepository(t)
 	withGitCMWorkingDirectory(t, repository)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "plain journey\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): plain tracked journey")
+	server, provider := newGitCMMessageProvider(t, "feat: plain tracked journey")
 	defer server.Close()
 	configureGitCMProvider(t, server.URL)
 	stdout := &bytes.Buffer{}
@@ -422,7 +422,7 @@ func TestGitCMPlainJourneyKeepsFormsAndPhasesOnStderr(t *testing.T) {
 			t.Fatalf("stdout omitted %q: %q", expected, stdout.String())
 		}
 	}
-	for _, expected := range []string{"Select files to stage", "1) A README.md", "Staging selected files", "Collecting changes", "Generating commit message", "feat(cm): plain tracked journey", "Profile: env (fixture-model)", "Create this commit? [Y/n]:", "Creating commit"} {
+	for _, expected := range []string{"Select files to stage", "1) A README.md", "Staging selected files", "Collecting changes", "Generating commit message", "feat: plain tracked journey", "Profile: env (fixture-model)", "Create this commit? [Y/n]:", "Creating commit"} {
 		if !strings.Contains(stderr.String(), expected) {
 			t.Fatalf("stderr omitted %q: %q", expected, stderr.String())
 		}
@@ -430,7 +430,7 @@ func TestGitCMPlainJourneyKeepsFormsAndPhasesOnStderr(t *testing.T) {
 	if terminaltest.ContainsTerminalControl(append(stdout.Bytes(), stderr.Bytes()...)) {
 		t.Fatalf("Plain streams contain terminal control: (%q, %q)", stdout.String(), stderr.String())
 	}
-	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat(cm): plain tracked journey" {
+	if subject := strings.TrimSpace(gitCMOutput(t, repository, "log", "-1", "--format=%s")); subject != "feat: plain tracked journey" {
 		t.Fatalf("HEAD subject = %q", subject)
 	}
 }
@@ -467,7 +467,7 @@ func TestGitCMPlainStageAllCompletesCatalogBeforeMutation(t *testing.T) {
 	repository := newGitCMRepository(t)
 	withGitCMWorkingDirectory(t, repository)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "stage all\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): stage all catalog")
+	server, provider := newGitCMMessageProvider(t, "feat: stage all catalog")
 	defer server.Close()
 	configureGitCMProvider(t, server.URL)
 	stdout := &bytes.Buffer{}
@@ -567,7 +567,7 @@ func TestGitCMGenerationOnlyAutomationRetainsTheDurableResult(t *testing.T) {
 	repository := newGitCMRepository(t)
 	withGitCMWorkingDirectory(t, repository)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "automation generation\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): automation generation")
+	server, provider := newGitCMMessageProvider(t, "feat: automation generation")
 	defer server.Close()
 	configureGitCMProvider(t, server.URL)
 	stdout := &bytes.Buffer{}
@@ -583,7 +583,7 @@ func TestGitCMGenerationOnlyAutomationRetainsTheDurableResult(t *testing.T) {
 	if err != nil || result.Generated == nil || result.PromptedCommit || provider.calls != 1 {
 		t.Fatalf("Run() = (%#v, %v), provider calls = %d", result, err, provider.calls)
 	}
-	if !strings.Contains(stdout.String(), "feat(cm): automation generation") || stderr.Len() != 0 {
+	if !strings.Contains(stdout.String(), "feat: automation generation") || stderr.Len() != 0 {
 		t.Fatalf("Automation streams = (%q, %q)", stdout.String(), stderr.String())
 	}
 	if status := gitCMOutput(t, repository, "status", "--short"); status != "?? README.md\n" {
@@ -598,7 +598,7 @@ func TestGitCMRedirectedGenerationOnlyKeepsResultAndTranscriptSeparate(t *testin
 	repository := newGitCMRepository(t)
 	withGitCMWorkingDirectory(t, repository)
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "redirected generation\n")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): redirected generation")
+	server, provider := newGitCMMessageProvider(t, "feat: redirected generation")
 	defer server.Close()
 	configureGitCMProvider(t, server.URL)
 	streams := terminaltest.NewRedirectedStreams("")
@@ -619,7 +619,7 @@ func TestGitCMRedirectedGenerationOnlyKeepsResultAndTranscriptSeparate(t *testin
 	if err != nil || result.Generated == nil || provider.calls != 1 {
 		t.Fatalf("redirected Run() = (%#v, %v), provider calls = %d", result, err, provider.calls)
 	}
-	if !strings.Contains(streams.Stdout.String(), "feat(cm): redirected generation") || streams.Stderr.Len() != 0 {
+	if !strings.Contains(streams.Stdout.String(), "feat: redirected generation") || streams.Stderr.Len() != 0 {
 		t.Fatalf("redirected streams = (%q, %q)", streams.Stdout.String(), streams.Stderr.String())
 	}
 	if terminaltest.ContainsTerminalControl(append(streams.Stdout.Bytes(), streams.Stderr.Bytes()...)) {
@@ -634,7 +634,7 @@ func TestExecuteCMPresentsCommittedPartialOutcomeAfterPushFailure(t *testing.T) 
 	writeGitCMFile(t, filepath.Join(repository, "README.md"), "partial push\n")
 	runGitCM(t, repository, "add", "README.md")
 	beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-	server, provider := newGitCMMessageProvider(t, "feat(cm): retain partial commit")
+	server, provider := newGitCMMessageProvider(t, "feat: retain partial commit")
 	defer server.Close()
 	configureGitCMProvider(t, server.URL)
 	stdout := &bytes.Buffer{}
@@ -651,10 +651,10 @@ func TestExecuteCMPresentsCommittedPartialOutcomeAfterPushFailure(t *testing.T) 
 	if err == nil || !result.Committed || result.Pushed || result.PushRemote != "" || provider.calls != 1 {
 		t.Fatalf("Run() = (%#v, %v), provider calls = %d", result, err, provider.calls)
 	}
-	if !strings.Contains(stdout.String(), "Commit created") || strings.Contains(stdout.String(), "feat(cm): retain partial commit") || strings.Contains(stdout.String(), "Commit created and pushed") {
+	if !strings.Contains(stdout.String(), "Commit created") || strings.Contains(stdout.String(), "feat: retain partial commit") || strings.Contains(stdout.String(), "Commit created and pushed") {
 		t.Fatalf("partial stdout = %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "feat(cm): retain partial commit") || !strings.Contains(stderr.String(), "Pushing commit") {
+	if !strings.Contains(stderr.String(), "feat: retain partial commit") || !strings.Contains(stderr.String(), "Pushing commit") {
 		t.Fatalf("partial stderr = %q", stderr.String())
 	}
 	if afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD"); afterHead == beforeHead {
@@ -679,7 +679,7 @@ func TestGitCMPlainCommitDecisionCancellationAndDeclineDoNotMutate(t *testing.T)
 			writeGitCMFile(t, filepath.Join(repository, "README.md"), "decision\n")
 			runGitCM(t, repository, "add", "README.md")
 			beforeHead := gitCMOutput(t, repository, "rev-parse", "HEAD")
-			server, provider := newGitCMMessageProvider(t, "feat(cm): decision")
+			server, provider := newGitCMMessageProvider(t, "feat: decision")
 			defer server.Close()
 			configureGitCMProvider(t, server.URL)
 			stdout := &bytes.Buffer{}
@@ -698,7 +698,7 @@ func TestGitCMPlainCommitDecisionCancellationAndDeclineDoNotMutate(t *testing.T)
 			if got, want := stdout.String(), "Cancelled\n"; got != want {
 				t.Fatalf("stdout = %q, want %q", got, want)
 			}
-			if !strings.Contains(stderr.String(), "Create this commit? [Y/n]:") || strings.Contains(stdout.String(), "feat(cm): decision") || strings.Contains(stdout.String(), "Commit created") {
+			if !strings.Contains(stderr.String(), "Create this commit? [Y/n]:") || strings.Contains(stdout.String(), "feat: decision") || strings.Contains(stdout.String(), "Commit created") {
 				t.Fatalf("decision streams = (%q, %q)", stdout.String(), stderr.String())
 			}
 			if afterHead := gitCMOutput(t, repository, "rev-parse", "HEAD"); afterHead != beforeHead {
@@ -761,7 +761,7 @@ func TestGitCMPlainStaleScopeAndHookFailureKeepCommitUncreated(t *testing.T) {
 				t.Errorf("refresh stale-scope index: %v\n%s", err, output)
 			}
 			response.Header().Set("Content-Type", "application/json")
-			_, _ = response.Write([]byte(`{"choices":[{"message":{"content":"feat(cm): stale"}}]}`))
+			_, _ = response.Write([]byte(`{"choices":[{"message":{"content":"feat: stale"}}]}`))
 		}))
 		defer server.Close()
 		configureGitCMProvider(t, server.URL)
@@ -797,7 +797,7 @@ func TestGitCMPlainStaleScopeAndHookFailureKeepCommitUncreated(t *testing.T) {
 		if err := os.Chmod(hook, 0o700); err != nil {
 			t.Fatalf("chmod pre-commit hook: %v", err)
 		}
-		server, provider := newGitCMMessageProvider(t, "feat(cm): hook failure")
+		server, provider := newGitCMMessageProvider(t, "feat: hook failure")
 		defer server.Close()
 		configureGitCMProvider(t, server.URL)
 		stdout := &bytes.Buffer{}
@@ -839,7 +839,7 @@ func TestGitCMDocumentsPreserveTheExistingPlainResults(t *testing.T) {
 			t.Fatalf("Outcome(%#v) = %q, want %q", testCase.result, got, testCase.want)
 		}
 	}
-	generated := gitCMGeneratedDocument(GeneratedMessage{Message: "feat(cm): compact", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 4000, RepresentedClusters: 2, TotalClusters: 3, IncludedFacts: 18, OmittedFacts: 13, ContentCompacted: true}}, ProfileDiagnostic{Name: "work", Model: "model"})
+	generated := gitCMGeneratedDocument(GeneratedMessage{Message: "feat: compact", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 4000, RepresentedClusters: 2, TotalClusters: 3, IncludedFacts: 18, OmittedFacts: 13, ContentCompacted: true}}, ProfileDiagnostic{Name: "work", Model: "model"})
 	if got := terminalexperience.RenderPlain(generated); !strings.Contains(got, "Provider tokens: unavailable") || !strings.Contains(got, "4,000") || !strings.Contains(got, "3 clusters represented with compacted semantic evidence") {
 		t.Fatalf("generated output = %q", got)
 	}

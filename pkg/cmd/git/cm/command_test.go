@@ -15,9 +15,10 @@ func TestNewCmdCMParsesLegacyFlagMatrix(t *testing.T) {
 	var inputs []Input
 	for _, arguments := range [][]string{
 		{},
-		{"--profile", "work", "--timeout-ms", "0x3e8", "-l", "zh", "-S", "-s", "-a", "-d", "-b"},
+		{"--profile", "work", "--timeout-ms", "0x3e8", "-l", "zh", "-S", "-s", "-a", "-d", "-b", "-o"},
 		{"--push"},
 		{"--stage-push=upstream"},
+		{"--scope"},
 	} {
 		command := NewCmdCM(newCMTestFactory(&bytes.Buffer{}, &bytes.Buffer{}), func(options *Options) error {
 			inputs = append(inputs, options.Input)
@@ -29,13 +30,13 @@ func TestNewCmdCMParsesLegacyFlagMatrix(t *testing.T) {
 		}
 	}
 
-	if len(inputs) != 4 {
+	if len(inputs) != 5 {
 		t.Fatalf("inputs = %#v", inputs)
 	}
 	if got := inputs[0]; got != (Input{Language: "en"}) {
 		t.Fatalf("default input = %#v", got)
 	}
-	if got := inputs[1]; got.Profile != "work" || got.TimeoutMS == nil || *got.TimeoutMS != 1000 || got.Language != "zh" || !got.Staged || !got.Stage || !got.StageAll || !got.DryRun || !got.Body {
+	if got := inputs[1]; got.Profile != "work" || got.TimeoutMS == nil || *got.TimeoutMS != 1000 || got.Language != "zh" || !got.Staged || !got.Stage || !got.StageAll || !got.DryRun || !got.Body || !got.IncludeScope {
 		t.Fatalf("full input = %#v", got)
 	}
 	if got := inputs[2]; got.Push == nil || *got.Push != "origin" || got.StagePush != nil {
@@ -43,6 +44,9 @@ func TestNewCmdCMParsesLegacyFlagMatrix(t *testing.T) {
 	}
 	if got := inputs[3]; got.Push != nil || got.StagePush == nil || *got.StagePush != "upstream" {
 		t.Fatalf("stage push input = %#v", got)
+	}
+	if got := inputs[4]; !got.IncludeScope {
+		t.Fatalf("scope input = %#v", got)
 	}
 }
 
