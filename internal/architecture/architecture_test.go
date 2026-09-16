@@ -68,7 +68,6 @@ var approvedPackageInventory = []string{
 	"pkg/cmd/upgrade",
 	"pkg/cmd/zip",
 	"pkg/cmdutil",
-	"tools/check-no-bun",
 	"tools/hookctl",
 	"tools/prepare-frp-runtime",
 	"tools/prepare-sevenzip",

@@ -5,9 +5,9 @@ VERSION_FILE := cmd/ycy/VERSION
 CURRENT_VERSION := $(shell tr -d '\r\n' < $(VERSION_FILE))
 RELEASE_DIR := release/$(CURRENT_VERSION)
 
-GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
+GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/release tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
 
-.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-no-bun check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
+.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
 
 help:
 	@printf '%s\n' 'Targets: bootstrap, hooks-install, hooks-doctor, hooks-uninstall, fmt, check, check-terminal, acceptance, acceptance-web, acceptance-terminal, command-surface, command-surface-update, build, cross-build, release, release-candidate, web-browser-harness, prototype-terminal'
@@ -66,10 +66,7 @@ check-locks: ensure-web-deps
 	@cd tools/lefthook && GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) mod verify
 	@$(PNPM) --dir web install --frozen-lockfile --offline --ignore-scripts
 
-check-no-bun:
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/check-no-bun
-
-check: check-locks check-no-bun check-go
+check: check-locks check-go
 
 check-terminal:
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 $(GO) test -count=1 ./internal/terminal ./internal/terminaltest ./pkg/cmd/root ./pkg/cmd/export/env ./pkg/cmd/config/fork/... ./pkg/cmd/config/cm/... ./pkg/cmd/git/... ./pkg/cmd/diff ./pkg/cmd/fs ./pkg/cmd/rm ./pkg/cmd/run ./pkg/cmd/tunnel/... ./pkg/cmd/upgrade ./pkg/cmd/zip
