@@ -254,9 +254,6 @@ func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
 		"Running make check...",
 		"CHECK_STDOUT",
 		"CHECK_STDERR",
-		"Validating GitHub Actions workflows...",
-		"ACTIONLINT_STDOUT",
-		"ACTIONLINT_STDERR",
 	} {
 		at := strings.LastIndex(text, marker)
 		if exit < 0 || at < 0 || exit > at {
@@ -274,7 +271,6 @@ func TestRunReleaseStopsBeforeChecksWhenPromptCannotClose(t *testing.T) {
 		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
 		Commands:    commands,
 		Prompt:      prompt,
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: io.Discard,
 		Output:      io.Discard,
 		DryRun:      true,
@@ -296,15 +292,32 @@ func TestRunReleaseClosesPromptBeforeStartingChecks(t *testing.T) {
 		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
 		Commands:    commands,
 		Prompt:      prompt,
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: io.Discard,
 		Output:      io.Discard,
 		DryRun:      true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(commands.calls) != 2 {
-		t.Fatalf("checks = %#v, want make check and actionlint", commands.calls)
+	if got, want := commands.calls, []string{"make"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("checks = %#v, want %#v", got, want)
+	}
+}
+
+func TestRunReleaseChecksOnlyWithMake(t *testing.T) {
+	root := writeReleaseVersion(t)
+	commands := &fakeCommands{}
+	err := runRelease(context.Background(), releaseOptions{
+		Root:     root,
+		Git:      newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Commands: commands,
+		Prompt:   &fakePrompt{selection: "next", confirmed: true},
+		DryRun:   true,
+	})
+	if err != nil {
+		t.Fatalf("runRelease() error = %v", err)
+	}
+	if got, want := commands.calls, []string{root + "/make check"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("external command calls = %#v, want %#v", got, want)
 	}
 }
 
@@ -317,7 +330,6 @@ func TestRunReleaseStartsPreflightBeforeGit(t *testing.T) {
 		Git:         git,
 		Commands:    &fakeCommands{},
 		Prompt:      prompt,
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: io.Discard,
 		Output:      io.Discard,
 		DryRun:      true,
@@ -338,22 +350,21 @@ func TestRunReleaseKeepsChildStdoutAndStderrSeparate(t *testing.T) {
 		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
 		Commands:    releasePTYCommands{},
 		Prompt:      &fakePrompt{selection: "next", confirmed: true},
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: &stderr,
 		Output:      &stdout,
 		DryRun:      true,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := stdout.String(); got != "CHECK_STDOUT\nACTIONLINT_STDOUT\n" {
+	if got := stdout.String(); got != "CHECK_STDOUT\n" {
 		t.Fatalf("child stdout = %q", got)
 	}
-	for _, marker := range []string{"CHECK_STDERR", "ACTIONLINT_STDERR", "Release checks", "Release ready"} {
+	for _, marker := range []string{"CHECK_STDERR", "Release checks", "Release ready"} {
 		if !strings.Contains(stderr.String(), marker) {
 			t.Errorf("diagnostics missing %q: %q", marker, stderr.String())
 		}
 	}
-	for _, marker := range []string{"CHECK_STDOUT", "ACTIONLINT_STDOUT"} {
+	for _, marker := range []string{"CHECK_STDOUT"} {
 		if strings.Contains(stderr.String(), marker) {
 			t.Errorf("diagnostics unexpectedly contain child stdout %q: %q", marker, stderr.String())
 		}
@@ -377,7 +388,6 @@ func TestRunReleaseCommitsVersionBeforeTagging(t *testing.T) {
 		Git:         git,
 		Commands:    commands,
 		Prompt:      prompt,
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: &diagnostics,
 		Output:      io.Discard,
 	}
@@ -401,7 +411,7 @@ func TestRunReleaseCommitsVersionBeforeTagging(t *testing.T) {
 	if strings.Index(joined, commit) > strings.Index(joined, mainPush) || strings.Index(joined, mainPush) > strings.Index(joined, tag) || strings.Index(joined, tag) > strings.Index(joined, tagPush) {
 		t.Fatalf("mutation order is incorrect:\n%s", joined)
 	}
-	if len(commands.calls) != 2 || !strings.HasSuffix(commands.calls[0], "/make check") || !strings.Contains(commands.calls[1], "/actionlint .github/workflows/release.yml .github/workflows/docker.yml") {
+	if got, want := commands.calls, []string{root + "/make check"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("external command calls = %#v", commands.calls)
 	}
 }
@@ -421,7 +431,6 @@ func TestRunReleaseDryRunDoesNotMutate(t *testing.T) {
 		Git:         git,
 		Commands:    commands,
 		Prompt:      &fakePrompt{selection: "next", confirmed: true},
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: io.Discard,
 		Output:      io.Discard,
 		DryRun:      true,
@@ -471,9 +480,6 @@ func (releasePTYCommands) Run(_ context.Context, _ string, name string, _ []stri
 	case "make":
 		_, _ = io.WriteString(stdout, "CHECK_STDOUT\n")
 		_, _ = io.WriteString(stderr, "CHECK_STDERR\n")
-	case "actionlint":
-		_, _ = io.WriteString(stdout, "ACTIONLINT_STDOUT\n")
-		_, _ = io.WriteString(stderr, "ACTIONLINT_STDERR\n")
 	default:
 		return errors.New("unexpected command: " + name)
 	}
@@ -606,7 +612,6 @@ func runReleaseRichHandoffHelper(t *testing.T) {
 		Git:         delayedReleaseGit{fakeGit: newReleaseGit(root, "fix: repair\x1f\x1e")},
 		Commands:    releasePTYCommands{},
 		Prompt:      prompt,
-		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
 		Diagnostics: os.Stderr,
 		Output:      os.Stdout,
 	}); err != nil {

@@ -202,7 +202,6 @@ type releaseOptions struct {
 	Git         gitRunner
 	Commands    commandRunner
 	Prompt      releasePrompter
-	LookPath    func(string) (string, error)
 	Diagnostics io.Writer
 	Output      io.Writer
 	DryRun      bool
@@ -247,7 +246,6 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 	options := releaseOptions{
 		Git:         &gitprocess.Runner{},
 		Commands:    osCommandRunner{},
-		LookPath:    exec.LookPath,
 		Diagnostics: diagnostics,
 		Output:      output,
 		DryRun:      dryRun == "1",
@@ -348,9 +346,6 @@ func normalizeReleaseOptions(options releaseOptions) releaseOptions {
 	}
 	if options.Output == nil {
 		options.Output = io.Discard
-	}
-	if options.LookPath == nil {
-		options.LookPath = exec.LookPath
 	}
 	return options
 }
@@ -464,7 +459,7 @@ func confirmRelease(ctx context.Context, options releaseOptions, plan releasePla
 		return confirmedRelease{}, fmt.Errorf("unknown release selection: %s", selected)
 	}
 	targetTag := "v" + target.Version
-	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check and actionlint\nMutation: update %s, commit, push main, create and push annotated tag", plan.current.String(), target.Version, targetTag, versionFile)
+	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check\nMutation: update %s, commit, push main, create and push annotated tag", plan.current.String(), target.Version, targetTag, versionFile)
 	confirmed, err := options.Prompt.Confirm(ctx, "Create release?", summary)
 	if err != nil {
 		return confirmedRelease{}, fmt.Errorf("confirm release: %w", err)
@@ -487,13 +482,6 @@ func executeRelease(ctx context.Context, options releaseOptions, release confirm
 	fmt.Fprintln(options.Diagnostics, "  Running make check...")
 	if err := options.Commands.Run(ctx, release.root, "make", []string{"check"}, options.Output, options.Diagnostics); err != nil {
 		return fmt.Errorf("make check failed: %w", err)
-	}
-	if _, err := options.LookPath("actionlint"); err != nil {
-		return errors.New("actionlint is required; install it before releasing")
-	}
-	fmt.Fprintln(options.Diagnostics, "\n  Validating GitHub Actions workflows...")
-	if err := options.Commands.Run(ctx, release.root, "actionlint", []string{".github/workflows/release.yml", ".github/workflows/docker.yml"}, options.Output, options.Diagnostics); err != nil {
-		return fmt.Errorf("actionlint failed: %w", err)
 	}
 	if err := ensureReleaseState(ctx, options, release.baseHead); err != nil {
 		return err

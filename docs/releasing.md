@@ -29,8 +29,8 @@ make release
 The Go tool requires the `main` branch and an interactive terminal. It
 fast-forwards from `origin`, reads `cmd/ycy/VERSION`, and offers major, minor,
 patch, next, and Conventional Commit-derived candidates. `next` is the
-default patch candidate. After a summary confirmation it runs `make check` and
-`actionlint`, updates VERSION, creates and pushes a `chore(release): vX.Y.Z`
+default patch candidate. After a summary confirmation it runs `make check`,
+updates VERSION, creates and pushes a `chore(release): vX.Y.Z`
 commit to `main`, then creates and pushes the annotated tag. The tag push starts
 `.github/workflows/release.yml`; that workflow remains responsible for
 building, verifying, attesting, publishing the Release, and starting Docker
@@ -42,14 +42,13 @@ To run the same preflight without creating or pushing a tag:
 DRY_RUN=1 make release
 ```
 
-`actionlint` must be installed locally. The tool rejects prereleases, build
-metadata, leading zeroes, version drift, existing local or remote tags, dirty
-trees, non-`main` branches, and non-fast-forward updates. It never force-pushes.
-Dry-run performs the pull, selection, confirmation, and checks but does not
-write VERSION, commit, create a tag, or push. If the release commit push fails,
-the local commit is kept for diagnosis. If the final tag push fails, the local
-annotated tag is kept for an exact retry; do not delete or replace a published
-Release.
+The tool rejects prereleases, build metadata, leading zeroes, version drift,
+existing local or remote tags, dirty trees, non-`main` branches, and
+non-fast-forward updates. It never force-pushes. Dry-run performs the pull,
+selection, confirmation, and checks but does not write VERSION, commit, create
+a tag, or push. If the release commit push fails, the local commit is kept for
+diagnosis. If the final tag push fails, the local annotated tag is kept for an
+exact retry; do not delete or replace a published Release.
 
 ## Pipeline Contract
 
