@@ -103,7 +103,7 @@ cross-build: check-web prepare-7zip-all
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-windows-arm64.exe ./cmd/ycy
 
 release:
-	@DRY_RUN="$(DRY_RUN)" GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release
+	@set -e; release_tool="$$(mktemp -t ycy-release.XXXXXX)"; trap 'rm -f "$$release_tool"' EXIT; GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) build -o "$$release_tool" ./tools/release; DRY_RUN="$(DRY_RUN)" "$$release_tool"
 
 release-clean:
 	@test -n "$(CURRENT_VERSION)" || { printf '%s\n' 'release-candidate requires a non-empty cmd/ycy/VERSION'; exit 1; }

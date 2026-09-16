@@ -11,7 +11,27 @@ import (
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/gitprocess"
+	"github.com/hackycy/hackycy-cli/internal/terminal"
 )
+
+func TestReleaseConsoleDescriptorDeclaresEveryRichForm(t *testing.T) {
+	descriptor := releaseConsoleDescriptor()
+	if descriptor.Command != "make release" || descriptor.Target != "repository release" {
+		t.Fatalf("descriptor identity = %#v", descriptor)
+	}
+	if len(descriptor.FormCatalog) != 2 {
+		t.Fatalf("form catalog length = %d, want 2", len(descriptor.FormCatalog))
+	}
+	for index, want := range []terminal.ConsoleFormStep{
+		{ID: "release-version", Name: "Release version"},
+		{ID: "release-confirm", Name: "Release confirmation"},
+	} {
+		got := descriptor.FormCatalog[index]
+		if got.ID != want.ID || got.Name != want.Name {
+			t.Errorf("form %d = %#v, want ID/name %q/%q", index, got, want.ID, want.Name)
+		}
+	}
+}
 
 func TestCandidates(t *testing.T) {
 	current, err := parseStableVersion("0.0.69")
@@ -77,6 +97,57 @@ func TestWriteVersionAtomic(t *testing.T) {
 	}
 	if string(contents) != "1.2.3\n" {
 		t.Fatalf("VERSION = %q, want newline-terminated version", contents)
+	}
+}
+
+func TestWriteReleaseErrorFormatsDirtyWorkingTree(t *testing.T) {
+	var output bytes.Buffer
+	writeReleaseError(&output, &dirtyWorkingTreeError{status: " M tools/release/main.go\n?? tools/release/new.go\nD  scripts/release"})
+	want := "\nRelease blocked\n  Commit, stash, or discard these changes before releasing:\n  modified   tools/release/main.go\n  untracked  tools/release/new.go\n  deleted    scripts/release\n\n"
+	if output.String() != want {
+		t.Fatalf("error output = %q, want %q", output.String(), want)
+	}
+}
+
+func TestLazyPrompterDoesNotOpenBeforeTheFirstPrompt(t *testing.T) {
+	factoryCalls := 0
+	inner := &fakePrompt{selection: "next", confirmed: true}
+	prompt := &lazyPrompter{new: func() (releasePrompter, error) {
+		factoryCalls++
+		return inner, nil
+	}}
+	if err := prompt.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if factoryCalls != 0 || inner.closed {
+		t.Fatalf("preflight close initialized prompt: factory=%d closed=%t", factoryCalls, inner.closed)
+	}
+	selection, err := prompt.Select(context.Background(), "Select", "", nil)
+	if err != nil || selection != "next" || factoryCalls != 1 {
+		t.Fatalf("Select() = %q, %v; factory=%d", selection, err, factoryCalls)
+	}
+	if err := prompt.Close(); err != nil || !inner.closed {
+		t.Fatalf("Close() = %v, closed=%t", err, inner.closed)
+	}
+}
+
+func TestRunWithPrompterClosesBeforeReturningPreflightFailure(t *testing.T) {
+	root := t.TempDir()
+	git := &fakeGit{outputs: map[string]gitprocess.Output{
+		"-C " + root + " symbolic-ref --quiet --short HEAD":        {Stdout: []byte("main\n")},
+		"-C " + root + " status --porcelain --untracked-files=all": {Stdout: []byte(" M tools/release/main.go\n")},
+	}}
+	prompt := &fakePrompt{}
+	err := runWithPrompter(context.Background(), releaseOptions{
+		Root:     root,
+		Git:      git,
+		Commands: &fakeCommands{},
+	}, prompt)
+	if err == nil || !strings.Contains(err.Error(), "working tree is not clean") {
+		t.Fatalf("runWithPrompter() error = %v", err)
+	}
+	if !prompt.closed {
+		t.Fatal("runWithPrompter did not close the terminal prompt before returning")
 	}
 }
 
@@ -187,6 +258,7 @@ func (commands *fakeCommands) Run(_ context.Context, directory, name string, arg
 type fakePrompt struct {
 	selection string
 	confirmed bool
+	closed    bool
 }
 
 func (prompt *fakePrompt) Select(context.Context, string, string, []promptOption) (string, error) {
@@ -197,7 +269,10 @@ func (prompt *fakePrompt) Confirm(context.Context, string, string) (bool, error)
 	return prompt.confirmed, nil
 }
 
-func (prompt *fakePrompt) Close() error { return nil }
+func (prompt *fakePrompt) Close() error {
+	prompt.closed = true
+	return nil
+}
 
 func newReleaseGit(root, logOutput string) *fakeGit {
 	prefix := "-C " + root + " "

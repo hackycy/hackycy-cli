@@ -51,6 +51,46 @@ type terminalPrompter struct {
 	run terminal.ExperienceRun
 }
 
+type lazyPrompter struct {
+	new   func() (releasePrompter, error)
+	inner releasePrompter
+}
+
+func (prompter *lazyPrompter) Select(ctx context.Context, message, description string, options []promptOption) (string, error) {
+	inner, err := prompter.ensure()
+	if err != nil {
+		return "", err
+	}
+	return inner.Select(ctx, message, description, options)
+}
+
+func (prompter *lazyPrompter) Confirm(ctx context.Context, message, description string) (bool, error) {
+	inner, err := prompter.ensure()
+	if err != nil {
+		return false, err
+	}
+	return inner.Confirm(ctx, message, description)
+}
+
+func (prompter *lazyPrompter) Close() error {
+	if prompter.inner == nil {
+		return nil
+	}
+	return prompter.inner.Close()
+}
+
+func (prompter *lazyPrompter) ensure() (releasePrompter, error) {
+	if prompter.inner != nil {
+		return prompter.inner, nil
+	}
+	inner, err := prompter.new()
+	if err != nil {
+		return nil, err
+	}
+	prompter.inner = inner
+	return inner, nil
+}
+
 func newTerminalPrompter(input io.Reader, output, diagnostics *os.File) (*terminalPrompter, error) {
 	inputFile, inputOK := input.(*os.File)
 	caps := terminal.Classify(terminal.Facts{
@@ -68,7 +108,22 @@ func newTerminalPrompter(input io.Reader, output, diagnostics *os.File) (*termin
 		Output:       output,
 		Diagnostics:  diagnostics,
 	})
-	return &terminalPrompter{run: experience.Open(context.Background())}, nil
+	run, err := experience.OpenConsole(context.Background(), releaseConsoleDescriptor())
+	if err != nil {
+		return nil, err
+	}
+	return &terminalPrompter{run: run}, nil
+}
+
+func releaseConsoleDescriptor() terminal.ConsoleDescriptor {
+	return terminal.ConsoleDescriptor{
+		Command: "make release",
+		Target:  "repository release",
+		FormCatalog: []terminal.ConsoleFormStep{
+			{ID: "release-version", Name: "Release version", Detail: "Select the next stable version"},
+			{ID: "release-confirm", Name: "Release confirmation", Detail: "Confirm checks, commit, and tag push"},
+		},
+	}
 }
 
 func (prompter *terminalPrompter) Select(ctx context.Context, message, description string, options []promptOption) (string, error) {
@@ -81,6 +136,7 @@ func (prompter *terminalPrompter) Select(ctx context.Context, message, descripti
 		Message:         message,
 		Description:     description,
 		Options:         choices,
+		ConsoleStepID:   "release-version",
 		HasDefault:      true,
 		Default:         terminal.InteractionAnswer{Value: "next"},
 		TranscriptLabel: "Release version",
@@ -96,6 +152,7 @@ func (prompter *terminalPrompter) Confirm(ctx context.Context, message, descript
 		Kind:            terminal.InteractionConfirm,
 		Message:         message,
 		Description:     description,
+		ConsoleStepID:   "release-confirm",
 		HasDefault:      true,
 		Default:         terminal.InteractionAnswer{Confirmed: false},
 		TranscriptLabel: "Release confirmation",
@@ -143,18 +200,73 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 		Output:      output,
 		DryRun:      dryRun == "1",
 	}
-	prompter, err := newTerminalPrompter(input, os.Stdout, os.Stderr)
-	if err != nil {
-		fmt.Fprintf(diagnostics, "release: %v\n", err)
-		return 1
-	}
-	options.Prompt = prompter
-	defer prompter.Close()
-	if err := runRelease(ctx, options); err != nil {
-		fmt.Fprintf(diagnostics, "release: %v\n", err)
+	prompter := &lazyPrompter{new: func() (releasePrompter, error) {
+		return newTerminalPrompter(input, os.Stdout, os.Stderr)
+	}}
+	if err := runWithPrompter(ctx, options, prompter); err != nil {
+		writeReleaseError(diagnostics, err)
 		return 1
 	}
 	return 0
+}
+
+// runWithPrompter always restores the terminal before runCLI reports a failure.
+// A Rich console otherwise clears an error written to its diagnostic stream.
+func runWithPrompter(ctx context.Context, options releaseOptions, prompter releasePrompter) error {
+	options.Prompt = prompter
+	releaseErr := runRelease(ctx, options)
+	closeErr := prompter.Close()
+	return errors.Join(releaseErr, closeErr)
+}
+
+type dirtyWorkingTreeError struct {
+	status string
+}
+
+func (err *dirtyWorkingTreeError) Error() string {
+	return "working tree is not clean"
+}
+
+func writeReleaseError(writer io.Writer, err error) {
+	var dirty *dirtyWorkingTreeError
+	if errors.As(err, &dirty) {
+		fmt.Fprintln(writer, "")
+		fmt.Fprintln(writer, "Release blocked")
+		fmt.Fprintln(writer, "  Commit, stash, or discard these changes before releasing:")
+		for _, line := range strings.Split(strings.TrimRight(dirty.status, "\r\n"), "\n") {
+			fmt.Fprintf(writer, "  %-10s %s\n", releaseChangeKind(line), releaseChangePath(line))
+		}
+		fmt.Fprintln(writer, "")
+		return
+	}
+	fmt.Fprintln(writer, "")
+	fmt.Fprintln(writer, "Release stopped")
+	fmt.Fprintf(writer, "  %v\n\n", err)
+}
+
+func releaseChangeKind(status string) string {
+	if len(status) < 2 {
+		return "changed"
+	}
+	switch {
+	case status[:2] == "??":
+		return "untracked"
+	case strings.Contains(status[:2], "D"):
+		return "deleted"
+	case strings.Contains(status[:2], "R"):
+		return "renamed"
+	case strings.Contains(status[:2], "A"):
+		return "added"
+	default:
+		return "modified"
+	}
+}
+
+func releaseChangePath(status string) string {
+	if len(status) < 4 {
+		return strings.TrimSpace(status)
+	}
+	return strings.TrimSpace(status[3:])
 }
 
 func runRelease(ctx context.Context, options releaseOptions) error {
@@ -384,8 +496,9 @@ func ensureClean(ctx context.Context, options releaseOptions) error {
 	if err != nil || output.ExitCode != 0 {
 		return gitFailure("inspect working tree", output, err)
 	}
-	if strings.TrimSpace(string(output.Stdout)) != "" {
-		return fmt.Errorf("working tree is not clean:\n%s", strings.TrimSpace(string(output.Stdout)))
+	status := strings.TrimRight(string(output.Stdout), "\r\n")
+	if status != "" {
+		return &dirtyWorkingTreeError{status: status}
 	}
 	return nil
 }
