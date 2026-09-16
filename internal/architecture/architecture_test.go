@@ -72,6 +72,7 @@ var approvedPackageInventory = []string{
 	"tools/hookctl",
 	"tools/prepare-frp-runtime",
 	"tools/prepare-sevenzip",
+	"tools/release",
 	"tools/release-artifacts",
 	"tools/web-browser-harness",
 	"web",
@@ -574,8 +575,8 @@ func assertThinBinaryEntry(t *testing.T, root string) {
 	if err != nil {
 		t.Fatalf("read cmd/ycy: %v", err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "main.go" || entries[0].IsDir() {
-		t.Fatalf("cmd/ycy inventory = %#v, want only main.go", entries)
+	if len(entries) != 2 || entries[0].Name() != "VERSION" || entries[0].IsDir() || entries[1].Name() != "main.go" || entries[1].IsDir() {
+		t.Fatalf("cmd/ycy inventory = %#v, want VERSION and main.go", entries)
 	}
 
 	fileSet := token.NewFileSet()

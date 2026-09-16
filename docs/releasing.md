@@ -1,8 +1,9 @@
 # ycy Release Runbook
 
-The Go release version is the annotated Git tag. There is no release-version
-file and maintainers do not edit `cmd/ycy/main.go` for a release. The first Go
-release is `v0.1.0`; historical `v0.0.x` Bun releases remain unchanged.
+The release baseline is recorded in `cmd/ycy/VERSION` and published as an
+annotated Git tag with a `v` prefix. The initial migrated value is `0.0.69`;
+historical `v0.0.x` Bun releases remain unchanged. Maintainers do not edit
+`cmd/ycy/main.go` for a release.
 This release line does not use macOS or Windows code signing; integrity is
 provided by SHA-256 manifests and GitHub Artifact Attestations.
 
@@ -22,28 +23,33 @@ notes; this repository intentionally does not maintain a `CHANGELOG` file.
 Run the release target from the repository root on a clean `main` checkout:
 
 ```sh
-make release VERSION=v0.1.0
+make release
 ```
 
-The command requires the `main` branch, fast-forwards it from `origin`, checks
-that the working tree and target tag are unused, runs `make check` and
-`actionlint`, creates an annotated tag, and pushes only
-`refs/tags/v0.1.0`. The tag push starts `.github/workflows/release.yml`; that
-workflow remains responsible for building, verifying, attesting, publishing
-the Release, and starting Docker publication.
+The Go tool requires the `main` branch and an interactive terminal. It
+fast-forwards from `origin`, reads `cmd/ycy/VERSION`, and offers major, minor,
+patch, next, and Conventional Commit-derived candidates. `next` is the
+default patch candidate. After a summary confirmation it runs `make check` and
+`actionlint`, updates VERSION, creates and pushes a `chore(release): vX.Y.Z`
+commit to `main`, then creates and pushes the annotated tag. The tag push starts
+`.github/workflows/release.yml`; that workflow remains responsible for
+building, verifying, attesting, publishing the Release, and starting Docker
+publication.
 
 To run the same preflight without creating or pushing a tag:
 
 ```sh
-make release VERSION=v0.1.0 DRY_RUN=1
+DRY_RUN=1 make release
 ```
 
-`actionlint` must be installed locally. The script rejects prereleases,
-build metadata, leading zeroes, existing local or remote tags, dirty trees,
-non-`main` branches, and non-fast-forward updates. It never force-pushes or
-pushes the branch. If the final tag push fails, the annotated local tag is
-intentionally kept so the failure can be diagnosed and the exact tag push
-retried; do not delete or replace a published Release.
+`actionlint` must be installed locally. The tool rejects prereleases, build
+metadata, leading zeroes, version drift, existing local or remote tags, dirty
+trees, non-`main` branches, and non-fast-forward updates. It never force-pushes.
+Dry-run performs the pull, selection, confirmation, and checks but does not
+write VERSION, commit, create a tag, or push. If the release commit push fails,
+the local commit is kept for diagnosis. If the final tag push fails, the local
+annotated tag is kept for an exact retry; do not delete or replace a published
+Release.
 
 ## Pipeline Contract
 
@@ -51,10 +57,11 @@ The workflow validates the tag and release state, runs `make bootstrap && make
 check`, then uses a fresh checkout to run:
 
 ```sh
-make release-candidate RELEASE_VERSION=X.Y.Z
+make release-candidate
 ```
 
-The candidate contains the six long-standing bare binary names and
+The candidate reads the version from `cmd/ycy/VERSION` and contains the six
+long-standing bare binary names and
 `SHA256SUMS`. The verifier receives the version explicitly and checks target
 format, CGO-free builds, Go build metadata, Web and 7-Zip embedding, FRP
 manifest values, and checksums. `actions/attest` creates GitHub Artifact

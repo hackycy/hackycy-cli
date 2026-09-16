@@ -49,6 +49,11 @@ jobs:
             echo "tag must be a stable vX.Y.Z annotated tag: $tag" >&2
             exit 1
           }
+          version_file="$(tr -d '\r\n' < cmd/ycy/VERSION)"
+          [[ "$version_file" == "${tag#v}" ]] || {
+            echo "cmd/ycy/VERSION ($version_file) does not match tag $tag" >&2
+            exit 1
+          }
           git fetch --force --tags origin "refs/tags/$tag:refs/tags/$tag"
           [[ "$(git cat-file -t "$tag" 2>/dev/null || true)" == tag ]] || {
             echo "tag is not annotated: $tag" >&2
@@ -132,7 +137,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Build release candidate
-        run: make release-candidate RELEASE_VERSION=${{ needs.validate.outputs.version }}
+        run: make release-candidate
       - name: Upload release assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

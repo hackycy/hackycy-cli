@@ -1,11 +1,11 @@
 GO_TOOLCHAIN ?= go1.26.7
 GO ?= go
 PNPM ?= pnpm
-VERSION ?= 0.0.0-dev
-RELEASE_VERSION ?=
-RELEASE_DIR := release/$(RELEASE_VERSION)
+VERSION_FILE := cmd/ycy/VERSION
+CURRENT_VERSION := $(shell tr -d '\r\n' < $(VERSION_FILE))
+RELEASE_DIR := release/$(CURRENT_VERSION)
 
-GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
+GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/check-no-bun tools/release tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
 
 .PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-no-bun check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
 
@@ -91,24 +91,23 @@ command-surface-update:
 
 build: check-web prepare-7zip
 	@mkdir -p build
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/ycy ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/ycy ./cmd/ycy
 
 cross-build: check-web prepare-7zip-all
 	@mkdir -p build/cross
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-macos-x64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-macos-arm64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-linux-x64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-linux-arm64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-windows-x64.exe ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(VERSION)" -o build/cross/ycy-windows-arm64.exe ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-macos-x64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-macos-arm64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-linux-x64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-linux-arm64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-windows-x64.exe ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o build/cross/ycy-windows-arm64.exe ./cmd/ycy
 
 release:
-	@test "$(VERSION)" != "0.0.0-dev" || { printf '%s\n' 'release requires VERSION=vX.Y.Z'; exit 1; }
-	@DRY_RUN="$(DRY_RUN)" ./scripts/release "$(VERSION)"
+	@DRY_RUN="$(DRY_RUN)" GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release
 
 release-clean:
-	@test -n "$(RELEASE_VERSION)" || { printf '%s\n' 'release-candidate requires RELEASE_VERSION=X.Y.Z'; exit 1; }
-	@printf '%s\n' "$(RELEASE_VERSION)" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { printf '%s\n' 'release-candidate requires a stable X.Y.Z RELEASE_VERSION'; exit 1; }
+	@test -n "$(CURRENT_VERSION)" || { printf '%s\n' 'release-candidate requires a non-empty cmd/ycy/VERSION'; exit 1; }
+	@printf '%s\n' "$(CURRENT_VERSION)" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$$' || { printf '%s\n' 'cmd/ycy/VERSION must contain a stable X.Y.Z version'; exit 1; }
 	@for candidate in web/dist web/node_modules build .cache .tmp release internal/sevenzipruntime/payload tools/lefthook/bin; do \
 		test ! -e "$$candidate" || { printf '%s\n' "release-candidate requires a clean checkout; found $$candidate"; exit 1; }; \
 	done
@@ -118,14 +117,14 @@ release-candidate: release-clean
 	@$(PNPM) --dir web run build
 	@$(MAKE) prepare-7zip-all
 	@mkdir -p $(RELEASE_DIR)
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-macos-x64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-macos-arm64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-linux-x64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-linux-arm64 ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-windows-x64.exe ./cmd/ycy
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(RELEASE_VERSION)" -o $(RELEASE_DIR)/ycy-windows-arm64.exe ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-macos-x64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-macos-arm64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-linux-x64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-linux-arm64 ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=amd64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-windows-x64.exe ./cmd/ycy
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 GOOS=windows GOARCH=arm64 $(GO) build -trimpath -ldflags "-X main.version=$(CURRENT_VERSION)" -o $(RELEASE_DIR)/ycy-windows-arm64.exe ./cmd/ycy
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --directory $(RELEASE_DIR)
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --verify --version $(RELEASE_VERSION) --directory $(RELEASE_DIR)
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run ./tools/release-artifacts --verify --version $(CURRENT_VERSION) --directory $(RELEASE_DIR)
 	@$(MAKE) release-untracked
 
 release-untracked:
