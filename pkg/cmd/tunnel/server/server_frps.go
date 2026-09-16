@@ -349,6 +349,12 @@ func (managed *ManagedFRPS) State() ServerHTTPState {
 	}
 }
 
+// FRPToken exposes the effective token used by managed frps and trusted
+// clients. Authorization is owned by ServerWorkspace, not this accessor.
+func (managed *ManagedFRPS) FRPToken() string {
+	return managed.internalFRPToken
+}
+
 // FRPSState exposes only process availability to the agent admission path.
 func (managed *ManagedFRPS) FRPSState() tunnelruntime.FRPSupervisorState {
 	return managed.supervisor.State()

@@ -151,6 +151,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 		Accounts:            runtime.accounts,
 		ControlPlane:        runtime.controlPlane,
 		FRPS:                runtime.frps,
+		FRPTokenReader:      runtime.frps,
 		Custom404PageReader: runtime.frps,
 		Custom404PageWriter: runtime.frps,
 		FRPSChanges:         runtime.frps,

@@ -1,7 +1,7 @@
 import { Cable, Pencil } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { EmptyState, FeedbackProvider, PageHeader, RowActionMenu, Status } from './ui'
+import { EmptyState, FeedbackProvider, PageHeader, RowActionMenu, SecretToken, Status } from './ui'
 
 describe('tunnel server UI', () => {
   it('renders page header context through the shared header', () => {
@@ -52,5 +52,18 @@ describe('tunnel server UI', () => {
     expect(markup).toContain('aria-label="Actions for Edge gateway"')
     expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('aria-expanded="false"')
+  })
+
+  it('masks sensitive tokens until explicitly revealed', () => {
+    const markup = renderToStaticMarkup(
+      <FeedbackProvider>
+        <SecretToken value="effective-frp-token" />
+      </FeedbackProvider>,
+    )
+
+    expect(markup).toContain('****************')
+    expect(markup).not.toContain('effective-frp-token')
+    expect(markup).toContain('Reveal FRP token')
+    expect(markup).toContain('Copy FRP token')
   })
 })

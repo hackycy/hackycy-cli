@@ -168,6 +168,54 @@ func TestServerWorkspaceLimitsFRPSControlToAdministrators(t *testing.T) {
 	assertServerDomainCode(t, unconfigured.ControlFRPS(context.Background(), ServerFRPSActionStart), "FRPS_UNAVAILABLE")
 }
 
+func TestServerWorkspaceLimitsFRPTokenReadingToAdministrators(t *testing.T) {
+	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})
+	if err != nil {
+		t.Fatalf("OpenState() error = %v", err)
+	}
+	t.Cleanup(func() { _ = state.Close() })
+	accounts := openServerAccounts(t, state, "admin", "environment-secret")
+	sessions := openServerSessions(t, accounts, state)
+	plane := openServerControlPlane(t, state)
+	reader := &serverWorkspaceTestFRPTokenReader{token: "effective-frp-token"}
+	openWorkspace := func(t *testing.T, username, password string, withReader bool) *ServerWorkspace {
+		t.Helper()
+		grant, err := sessions.SignIn(context.Background(), username, password)
+		if err != nil {
+			t.Fatalf("SignIn(%q) error = %v", username, err)
+		}
+		dependencies := ServerWorkspaceDependencies{Sessions: sessions, Accounts: accounts, ControlPlane: plane}
+		if withReader {
+			dependencies.FRPTokenReader = reader
+		}
+		workspace, err := OpenServerWorkspace(context.Background(), dependencies, grant.Token)
+		if err != nil {
+			t.Fatalf("OpenServerWorkspace(%q) error = %v", username, err)
+		}
+		return workspace
+	}
+
+	admin := openWorkspace(t, "admin", "environment-secret", true)
+	if _, err := admin.CreateLocalAccount(context.Background(), "alice", "alice-secret", AccountRoleUser); err != nil {
+		t.Fatalf("CreateLocalAccount(alice) error = %v", err)
+	}
+	alice := openWorkspace(t, "alice", "alice-secret", true)
+	if _, err := alice.ReadFRPToken(context.Background()); err == nil {
+		t.Fatal("ReadFRPToken() by ordinary user error = nil")
+	} else {
+		assertServerDomainCode(t, err, "FORBIDDEN")
+	}
+	if reader.reads != 0 {
+		t.Fatalf("ordinary-user token reads = %d", reader.reads)
+	}
+	if token, err := admin.ReadFRPToken(context.Background()); err != nil || token != reader.token || reader.reads != 1 {
+		t.Fatalf("admin ReadFRPToken() = (%q, %v), reads = %d", token, err, reader.reads)
+	}
+	unconfigured := openWorkspace(t, "admin", "environment-secret", false)
+	_, err = unconfigured.ReadFRPToken(context.Background())
+	assertServerDomainCode(t, err, "FRPS_UNAVAILABLE")
+}
+
 func TestServerWorkspaceFiltersAgentRuntimeChangesByClientOwner(t *testing.T) {
 	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})
 	if err != nil {
@@ -416,6 +464,16 @@ func (controller *serverWorkspaceTestFRPSController) Restart(context.Context) er
 type serverWorkspaceTestCustom404PageReader struct {
 	content string
 	reads   int
+}
+
+type serverWorkspaceTestFRPTokenReader struct {
+	token string
+	reads int
+}
+
+func (reader *serverWorkspaceTestFRPTokenReader) FRPToken() string {
+	reader.reads++
+	return reader.token
 }
 
 func (reader *serverWorkspaceTestCustom404PageReader) ReadCustom404Page() (string, error) {

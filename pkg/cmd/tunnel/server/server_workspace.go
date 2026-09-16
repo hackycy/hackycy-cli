@@ -13,6 +13,7 @@ type ServerWorkspaceDependencies struct {
 	Accounts            *ServerAccounts
 	ControlPlane        *ServerControlPlane
 	FRPS                ServerFRPSController
+	FRPTokenReader      ServerFRPTokenReader
 	Custom404PageReader ServerFRPSCustom404PageReader
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
@@ -34,6 +35,12 @@ type ServerFRPSController interface {
 	Start(context.Context) error
 	Stop() error
 	Restart(context.Context) error
+}
+
+// ServerFRPTokenReader exposes the effective managed FRP authentication token
+// only to the workspace's administrator authorization boundary.
+type ServerFRPTokenReader interface {
+	FRPToken() string
 }
 
 // ServerFRPSCustom404PageReader exposes only the managed custom-page read
@@ -65,6 +72,7 @@ type ServerWorkspace struct {
 	accounts            *ServerAccounts
 	controlPlane        *ServerControlPlane
 	frps                ServerFRPSController
+	frpTokenReader      ServerFRPTokenReader
 	custom404PageReader ServerFRPSCustom404PageReader
 	custom404PageWriter ServerFRPSCustom404PageWriter
 	frpsChanges         ServerFRPSChangeObserver
@@ -88,6 +96,7 @@ func OpenServerWorkspace(ctx context.Context, dependencies ServerWorkspaceDepend
 		accounts:            dependencies.Accounts,
 		controlPlane:        dependencies.ControlPlane,
 		frps:                dependencies.FRPS,
+		frpTokenReader:      dependencies.FRPTokenReader,
 		custom404PageReader: dependencies.Custom404PageReader,
 		custom404PageWriter: dependencies.Custom404PageWriter,
 		frpsChanges:         dependencies.FRPSChanges,
@@ -98,6 +107,21 @@ func OpenServerWorkspace(ctx context.Context, dependencies ServerWorkspaceDepend
 		return nil, err
 	}
 	return workspace, nil
+}
+
+// ReadFRPToken authorizes read-only access to the effective managed FRP token.
+func (workspace *ServerWorkspace) ReadFRPToken(ctx context.Context) (string, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return "", err
+	}
+	if workspace.frpTokenReader == nil {
+		return "", serverDomainError("FRPS_UNAVAILABLE", "Managed frps is unavailable")
+	}
+	token := workspace.frpTokenReader.FRPToken()
+	if token == "" {
+		return "", serverDomainError("FRPS_UNAVAILABLE", "Managed frps token is unavailable")
+	}
+	return token, nil
 }
 
 func (workspace *ServerWorkspace) currentAccount(ctx context.Context) (ServerAccount, error) {

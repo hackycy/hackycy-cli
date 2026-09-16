@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { Check, Clipboard, Ellipsis, RefreshCw, XCircle } from 'lucide-react'
+import { Check, Clipboard, Ellipsis, Eye, EyeOff, RefreshCw, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { AdminPageHeader } from '../shared/admin'
 import { ConfirmDialog, FeedbackProvider, IconButton, Spinner, Switch, useFeedback } from './primitives'
@@ -157,6 +157,31 @@ export function Token({ value }: { value: string }): React.JSX.Element {
     <div className="token">
       <code>{value}</code>
       <IconButton label="Copy Client Token" onClick={() => void copy()}>{copied ? <Check size={15} /> : <Clipboard size={15} />}</IconButton>
+    </div>
+  )
+}
+
+export function SecretToken({ value }: { value: string }): React.JSX.Element {
+  const [revealed, setRevealed] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const { notify } = useFeedback()
+  const copy = async (): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    }
+    catch (cause) {
+      notify(cause instanceof Error ? cause.message : 'Could not copy FRP token', 'error')
+    }
+  }
+  return (
+    <div className="secret-token">
+      <code>{revealed ? value : '****************'}</code>
+      <IconButton label={revealed ? 'Hide FRP token' : 'Reveal FRP token'} onClick={() => setRevealed(current => !current)}>
+        {revealed ? <EyeOff size={15} /> : <Eye size={15} />}
+      </IconButton>
+      <IconButton label="Copy FRP token" onClick={() => void copy()}>{copied ? <Check size={15} /> : <Clipboard size={15} />}</IconButton>
     </div>
   )
 }

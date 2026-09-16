@@ -69,6 +69,9 @@ func TestManagedFRPSComposesTypedConfigurationAndRedactedState(t *testing.T) {
 	if got, want := managed.Custom404PagePath(), filepath.Join(dataDirectory, "404.html"); got != want {
 		t.Fatalf("Custom404PagePath() = %q, want %q", got, want)
 	}
+	if got, want := managed.FRPToken(), "internal-frp-token"; got != want {
+		t.Fatalf("FRPToken() = %q, want %q", got, want)
+	}
 	rendered, err := managed.RenderConfiguration()
 	if err != nil {
 		t.Fatalf("RenderConfiguration() error = %v", err)

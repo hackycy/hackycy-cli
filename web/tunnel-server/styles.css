@@ -500,6 +500,47 @@ th:last-child {
   background: transparent;
 }
 
+.secret-token {
+  display: flex;
+  min-width: 0;
+  max-width: 620px;
+  align-items: center;
+  gap: 4px;
+}
+
+.secret-token code {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secret-token .icon-button {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.secret-token-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.secret-token-error {
+  color: var(--danger);
+}
+
 .row-action-menu {
   z-index: 160;
   display: grid;

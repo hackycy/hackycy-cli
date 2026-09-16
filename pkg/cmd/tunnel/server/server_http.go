@@ -49,6 +49,7 @@ type ServerHTTPOptions struct {
 	ControlPlane        *ServerControlPlane
 	Runtime             ServerClientRuntimeProvider
 	FRPS                ServerFRPSController
+	FRPTokenReader      ServerFRPTokenReader
 	Custom404PageReader ServerFRPSCustom404PageReader
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
@@ -99,6 +100,7 @@ type ServerHTTPHandler struct {
 	controlPlane        *ServerControlPlane
 	runtime             ServerClientRuntimeProvider
 	frps                ServerFRPSController
+	frpTokenReader      ServerFRPTokenReader
 	custom404PageReader ServerFRPSCustom404PageReader
 	custom404PageWriter ServerFRPSCustom404PageWriter
 	frpsChanges         ServerFRPSChangeObserver
@@ -120,6 +122,7 @@ func NewServerHTTPHandler(options ServerHTTPOptions) (*ServerHTTPHandler, error)
 		controlPlane:        options.ControlPlane,
 		runtime:             runtime,
 		frps:                options.FRPS,
+		frpTokenReader:      options.FRPTokenReader,
 		custom404PageReader: options.Custom404PageReader,
 		custom404PageWriter: options.Custom404PageWriter,
 		frpsChanges:         options.FRPSChanges,
@@ -148,6 +151,8 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 		handler.serveFRPSControl(writer, request, ServerFRPSActionStop)
 	case "/api/server/frp/restart":
 		handler.serveFRPSControl(writer, request, ServerFRPSActionRestart)
+	case "/api/server/frp/token":
+		handler.serveFRPToken(writer, request)
 	case "/api/server/frps/config/custom-404-page":
 		handler.serveCustom404Page(writer, request)
 	case "/api/accounts":
@@ -502,6 +507,26 @@ func (handler *ServerHTTPHandler) serveFRPSControl(writer http.ResponseWriter, r
 		Version int                  `json:"version"`
 		Server  serverHTTPServerView `json:"server"`
 	}{Version: 1, Server: presentServerHTTPServerState(handler.serverState.State())})
+}
+
+func (handler *ServerHTTPHandler) serveFRPToken(writer http.ResponseWriter, request *http.Request) {
+	session, workspace := handler.authenticatedWorkspace(writer, request)
+	if session == nil || workspace == nil {
+		return
+	}
+	if request.Method != http.MethodGet {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use GET")
+		return
+	}
+	token, err := workspace.ReadFRPToken(request.Context())
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	writeServerAuthenticatedJSON(writer, session, http.StatusOK, struct {
+		Version int    `json:"version"`
+		Token   string `json:"token"`
+	}{Version: 1, Token: token})
 }
 
 func (handler *ServerHTTPHandler) serveCustom404Page(writer http.ResponseWriter, request *http.Request) {
@@ -1110,6 +1135,7 @@ func (handler *ServerHTTPHandler) authenticatedWorkspace(writer http.ResponseWri
 		Accounts:            handler.accounts,
 		ControlPlane:        handler.controlPlane,
 		FRPS:                handler.frps,
+		FRPTokenReader:      handler.frpTokenReader,
 		Custom404PageReader: handler.custom404PageReader,
 		Custom404PageWriter: handler.custom404PageWriter,
 		FRPSChanges:         handler.frpsChanges,

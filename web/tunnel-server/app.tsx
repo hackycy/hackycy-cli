@@ -11,7 +11,7 @@ import { ApiError, apiJson, jsonRequest } from './api'
 import { ClientDetailPage, ClientsPage } from './client-pages'
 import { FormError, FormField } from './form'
 import { DialogShell } from './primitives'
-import { ErrorState, IconButton, navigate, PageHeader, Spinner, Status, useFeedback } from './ui'
+import { ErrorState, IconButton, navigate, PageHeader, SecretToken, Spinner, Status, useFeedback } from './ui'
 
 interface ServerProjection {
   frps: { state: string, pid?: number, error?: { message: string } }
@@ -35,6 +35,11 @@ interface StateView {
 
 interface Custom404PageView {
   content: string
+}
+
+interface FRPTokenView {
+  version: number
+  token: string
 }
 
 type Page = { name: 'overview' | 'clients' | 'accounts' | 'server' } | { name: 'client', id: string }
@@ -297,8 +302,27 @@ function Custom404PageEditor({ refreshSequence }: { refreshSequence: number }): 
 
 function ServerView({ server, reload, refreshSequence }: { server: ServerProjection, reload: () => Promise<void>, refreshSequence: number }): React.JSX.Element {
   const [error, setError] = useState('')
+  const [frpToken, setFrpToken] = useState<string>()
+  const [frpTokenLoading, setFrpTokenLoading] = useState(true)
+  const [frpTokenError, setFrpTokenError] = useState('')
   const [pending, setPending] = useState<'start' | 'stop' | 'restart'>()
   const { notify } = useFeedback()
+  const loadFrpToken = useCallback(async () => {
+    setFrpTokenLoading(true)
+    try {
+      const response = await apiJson<FRPTokenView>('/api/server/frp/token')
+      setFrpToken(response.token)
+      setFrpTokenError('')
+    }
+    catch (cause) {
+      setFrpToken(undefined)
+      setFrpTokenError(cause instanceof Error ? cause.message : String(cause))
+    }
+    finally {
+      setFrpTokenLoading(false)
+    }
+  }, [])
+  useEffect(() => void loadFrpToken(), [loadFrpToken])
   const action = async (value: 'start' | 'stop' | 'restart'): Promise<void> => {
     setPending(value)
     try {
@@ -384,6 +408,27 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
           <dd className="mono break">{server.settings.dataDir}</dd>
           <dt>Deployment Administrator</dt>
           <dd>{server.settings.adminUser}</dd>
+        </dl>
+      </section>
+      <section className="section-band">
+        <div className="section-title">
+          <div>
+            <h2>FRP authentication</h2>
+            <p>The token used by managed frps and trusted clients.</p>
+          </div>
+        </div>
+        <dl className="detail-grid">
+          <dt>FRP token</dt>
+          <dd className="mono">
+            {frpTokenLoading && (
+              <span className="secret-token-state">
+                <Spinner size={14} />
+                Loading token
+              </span>
+            )}
+            {!frpTokenLoading && frpTokenError && <span className="secret-token-state secret-token-error" role="alert">{frpTokenError}</span>}
+            {!frpTokenLoading && !frpTokenError && frpToken && <SecretToken value={frpToken} />}
+          </dd>
         </dl>
       </section>
       <Custom404PageEditor refreshSequence={refreshSequence} />

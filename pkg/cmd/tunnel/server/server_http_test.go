@@ -2299,6 +2299,14 @@ func (provider serverHTTPTestStateProvider) State() ServerHTTPState {
 	return provider.state
 }
 
+type serverHTTPTestFRPTokenReader struct {
+	token string
+}
+
+func (reader serverHTTPTestFRPTokenReader) FRPToken() string {
+	return reader.token
+}
+
 type serverHTTPTestFRPSController struct {
 	calls   []ServerFRPSAction
 	err     error
@@ -2457,9 +2465,10 @@ func TestServerHTTPHandlerServesScopedStateAndRedactsDeploymentSecrets(t *testin
 	failedRevision := bobFailed.DesiredRevision
 	prefix := 7123
 	handler, err := NewServerHTTPHandler(ServerHTTPOptions{
-		Sessions:     sessions,
-		Accounts:     accounts,
-		ControlPlane: plane,
+		Sessions:       sessions,
+		Accounts:       accounts,
+		ControlPlane:   plane,
+		FRPTokenReader: serverHTTPTestFRPTokenReader{token: "effective-frp-token"},
 		Runtime: serverHTTPTestClientRuntime{states: map[string]ServerClientRuntimeState{
 			aliceCurrent.ID: {ConnectionState: ServerClientConnected, ProcessState: tunnelruntime.FRPProcessRunning},
 			alicePending.ID: {ConnectionState: ServerClientDisconnected, ProcessState: tunnelruntime.FRPProcessStopped},
@@ -2557,6 +2566,33 @@ func TestServerHTTPHandlerServesScopedStateAndRedactsDeploymentSecrets(t *testin
 		t.Fatalf("admin state leaked secret fields: %s", adminResponse.Body.String())
 	}
 
+	tokenResponse := serverHTTPReadRequest(handler, http.MethodGet, "/api/server/frp/token", adminGrant.Token)
+	if tokenResponse.Code != http.StatusOK {
+		t.Fatalf("admin GET /api/server/frp/token = (%d, %s)", tokenResponse.Code, tokenResponse.Body.String())
+	}
+	assertServerHTTPHeaders(t, tokenResponse.Result())
+	var tokenBody struct {
+		Version int    `json:"version"`
+		Token   string `json:"token"`
+	}
+	if err := json.Unmarshal(tokenResponse.Body.Bytes(), &tokenBody); err != nil {
+		t.Fatalf("decode admin FRP token: %v", err)
+	}
+	if tokenBody.Version != 1 || tokenBody.Token != "effective-frp-token" {
+		t.Fatalf("admin FRP token = %#v", tokenBody)
+	}
+	ordinaryTokenResponse := serverHTTPReadRequest(handler, http.MethodGet, "/api/server/frp/token", aliceGrant.Token)
+	if ordinaryTokenResponse.Code != http.StatusForbidden {
+		t.Fatalf("ordinary GET /api/server/frp/token = (%d, %s)", ordinaryTokenResponse.Code, ordinaryTokenResponse.Body.String())
+	}
+	assertServerHTTPError(t, ordinaryTokenResponse.Body.Bytes(), "FORBIDDEN")
+	unauthenticatedTokenResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unauthenticatedTokenResponse, httptest.NewRequest(http.MethodGet, "http://tunnel.example.test/api/server/frp/token", nil))
+	if unauthenticatedTokenResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated GET /api/server/frp/token = (%d, %s)", unauthenticatedTokenResponse.Code, unauthenticatedTokenResponse.Body.String())
+	}
+	assertServerHTTPError(t, unauthenticatedTokenResponse.Body.Bytes(), "AUTHENTICATION_REQUIRED")
+
 	unauthenticated := httptest.NewRecorder()
 	handler.ServeHTTP(unauthenticated, httptest.NewRequest(http.MethodGet, "http://tunnel.example.test/api/state", nil))
 	if unauthenticated.Code != http.StatusUnauthorized {
@@ -2568,6 +2604,16 @@ func TestServerHTTPHandlerServesScopedStateAndRedactsDeploymentSecrets(t *testin
 		t.Fatalf("POST /api/state = (%d, %s)", unsupported.Code, unsupported.Body.String())
 	}
 	assertServerHTTPError(t, unsupported.Body.Bytes(), "METHOD_NOT_ALLOWED")
+
+	unconfiguredHandler, err := NewServerHTTPHandler(ServerHTTPOptions{Sessions: sessions, Accounts: accounts, ControlPlane: plane})
+	if err != nil {
+		t.Fatalf("NewServerHTTPHandler(unconfigured token reader) error = %v", err)
+	}
+	unconfiguredTokenResponse := serverHTTPReadRequest(unconfiguredHandler, http.MethodGet, "/api/server/frp/token", adminGrant.Token)
+	if unconfiguredTokenResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unconfigured GET /api/server/frp/token = (%d, %s)", unconfiguredTokenResponse.Code, unconfiguredTokenResponse.Body.String())
+	}
+	assertServerHTTPError(t, unconfiguredTokenResponse.Body.Bytes(), "FRPS_UNAVAILABLE")
 }
 
 func TestServerHTTPHandlerControlsManagedFRPSForAdministrators(t *testing.T) {
