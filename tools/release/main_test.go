@@ -6,12 +6,16 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/hackycy/hackycy-cli/internal/gitprocess"
 	"github.com/hackycy/hackycy-cli/internal/terminal"
+	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
 func TestReleaseConsoleDescriptorDeclaresEveryRichForm(t *testing.T) {
@@ -109,6 +113,25 @@ func TestWriteReleaseErrorFormatsDirtyWorkingTree(t *testing.T) {
 	}
 }
 
+func TestPrepareReleaseFormatsPreflightProgress(t *testing.T) {
+	root := writeReleaseVersion(t)
+	var diagnostics bytes.Buffer
+	if _, err := prepareRelease(context.Background(), normalizeReleaseOptions(releaseOptions{
+		Root:        root,
+		Git:         newReleaseGit(root, "docs: update\x1f\x1e"),
+		Commands:    &fakeCommands{},
+		Prompt:      &fakePrompt{},
+		Diagnostics: &diagnostics,
+		Output:      io.Discard,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	want := "Release preflight\n  Fast-forwarding main from origin...\n  Conventional suggestion unavailable: no releasable feat, fix, or perf commit found.\n"
+	if got := diagnostics.String(); got != want {
+		t.Fatalf("preflight progress = %q, want %q", got, want)
+	}
+}
+
 func TestLazyPrompterDoesNotOpenBeforeTheFirstPrompt(t *testing.T) {
 	factoryCalls := 0
 	inner := &fakePrompt{selection: "next", confirmed: true}
@@ -131,23 +154,176 @@ func TestLazyPrompterDoesNotOpenBeforeTheFirstPrompt(t *testing.T) {
 	}
 }
 
-func TestRunWithPrompterClosesBeforeReturningPreflightFailure(t *testing.T) {
+func TestRunReleaseClosesBeforeReturningPreflightFailure(t *testing.T) {
 	root := t.TempDir()
 	git := &fakeGit{outputs: map[string]gitprocess.Output{
 		"-C " + root + " symbolic-ref --quiet --short HEAD":        {Stdout: []byte("main\n")},
 		"-C " + root + " status --porcelain --untracked-files=all": {Stdout: []byte(" M tools/release/main.go\n")},
 	}}
 	prompt := &fakePrompt{}
-	err := runWithPrompter(context.Background(), releaseOptions{
+	err := runRelease(context.Background(), releaseOptions{
 		Root:     root,
 		Git:      git,
 		Commands: &fakeCommands{},
-	}, prompt)
+		Prompt:   prompt,
+	})
 	if err == nil || !strings.Contains(err.Error(), "working tree is not clean") {
-		t.Fatalf("runWithPrompter() error = %v", err)
+		t.Fatalf("runRelease() error = %v", err)
 	}
 	if !prompt.closed {
-		t.Fatal("runWithPrompter did not close the terminal prompt before returning")
+		t.Fatal("runRelease did not close the terminal prompt before returning")
+	}
+}
+
+func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
+	const helperEnvironment = "YCY_RELEASE_RICH_HANDOFF_HELPER"
+	if os.Getenv(helperEnvironment) == "1" {
+		runReleaseRichHandoffHelper(t)
+		return
+	}
+
+	command := exec.Command(os.Args[0], "-test.run=^TestReleaseRestoresRichTerminalBeforeRunningChecks$")
+	command.Env = append(releasePTYEnvironment(), helperEnvironment+"=1", "TERM=xterm-256color")
+	process, err := terminaltest.StartPTY(command)
+	if errors.Is(err, terminaltest.ErrPTYUnsupported) {
+		t.Skip(err)
+	}
+	if err != nil {
+		t.Fatalf("start release PTY helper: %v", err)
+	}
+	defer process.Close()
+
+	output := newReleasePTYBuffer("Select release version")
+	readDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(output, process.Terminal())
+		close(readDone)
+	}()
+	respondToReleaseTerminalQueries(t, process, output)
+	waitForReleasePTYText(t, output, "Select release version")
+	writeReleasePTYInput(t, process, "\r")
+	waitForReleasePTYText(t, output, "Create release?")
+	writeReleasePTYInput(t, process, "y")
+
+	if err := process.Wait(); err != nil {
+		t.Fatalf("wait release PTY helper: %v\n%s", err, output.String())
+	}
+	if err := process.Close(); err != nil {
+		t.Fatalf("close release PTY helper: %v", err)
+	}
+	select {
+	case <-readDone:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out reading release PTY output: %q", output.String())
+	}
+
+	text := output.String()
+	exit := releaseAlternateScreenExit(text)
+	for _, marker := range []string{
+		"Release checks",
+		"Running make check...",
+		"CHECK_STDOUT",
+		"CHECK_STDERR",
+		"Validating GitHub Actions workflows...",
+		"ACTIONLINT_STDOUT",
+		"ACTIONLINT_STDERR",
+	} {
+		at := strings.LastIndex(text, marker)
+		if exit < 0 || at < 0 || exit > at {
+			t.Fatalf("Rich terminal was not restored before %q: %q", marker, text)
+		}
+	}
+}
+
+func TestRunReleaseStopsBeforeChecksWhenPromptCannotClose(t *testing.T) {
+	root := writeReleaseVersion(t)
+	prompt := &fakePrompt{selection: "next", confirmed: true, closeErr: errors.New("terminal restore failed")}
+	commands := &fakeCommands{}
+	err := runRelease(context.Background(), releaseOptions{
+		Root:        root,
+		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Commands:    commands,
+		Prompt:      prompt,
+		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
+		Diagnostics: io.Discard,
+		Output:      io.Discard,
+		DryRun:      true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "restore interactive terminal") {
+		t.Fatalf("runRelease() error = %v", err)
+	}
+	if len(commands.calls) != 0 {
+		t.Fatalf("checks ran after terminal close failed: %#v", commands.calls)
+	}
+}
+
+func TestRunReleaseClosesPromptBeforeStartingChecks(t *testing.T) {
+	root := writeReleaseVersion(t)
+	prompt := &fakePrompt{selection: "next", confirmed: true}
+	commands := &promptAwareCommands{prompt: prompt}
+	if err := runRelease(context.Background(), releaseOptions{
+		Root:        root,
+		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Commands:    commands,
+		Prompt:      prompt,
+		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
+		Diagnostics: io.Discard,
+		Output:      io.Discard,
+		DryRun:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands.calls) != 2 {
+		t.Fatalf("checks = %#v, want make check and actionlint", commands.calls)
+	}
+}
+
+func TestRunReleaseDoesNotRunGitWhilePromptOwnsTerminal(t *testing.T) {
+	root := writeReleaseVersion(t)
+	prompt := &fakePrompt{selection: "next", confirmed: true}
+	git := &promptAwareGit{fakeGit: newReleaseGit(root, "fix: repair\x1f\x1e"), prompt: prompt}
+	if err := runRelease(context.Background(), releaseOptions{
+		Root:        root,
+		Git:         git,
+		Commands:    &fakeCommands{},
+		Prompt:      prompt,
+		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
+		Diagnostics: io.Discard,
+		Output:      io.Discard,
+		DryRun:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunReleaseKeepsChildStdoutAndStderrSeparate(t *testing.T) {
+	root := writeReleaseVersion(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runRelease(context.Background(), releaseOptions{
+		Root:        root,
+		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Commands:    releasePTYCommands{},
+		Prompt:      &fakePrompt{selection: "next", confirmed: true},
+		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
+		Diagnostics: &stderr,
+		Output:      &stdout,
+		DryRun:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "CHECK_STDOUT\nACTIONLINT_STDOUT\n" {
+		t.Fatalf("child stdout = %q", got)
+	}
+	for _, marker := range []string{"CHECK_STDERR", "ACTIONLINT_STDERR", "Release checks", "Release ready"} {
+		if !strings.Contains(stderr.String(), marker) {
+			t.Errorf("diagnostics missing %q: %q", marker, stderr.String())
+		}
+	}
+	for _, marker := range []string{"CHECK_STDOUT", "ACTIONLINT_STDOUT"} {
+		if strings.Contains(stderr.String(), marker) {
+			t.Errorf("diagnostics unexpectedly contain child stdout %q: %q", marker, stderr.String())
+		}
 	}
 }
 
@@ -255,13 +431,57 @@ func (commands *fakeCommands) Run(_ context.Context, directory, name string, arg
 	return commands.err
 }
 
+type releasePTYCommands struct{}
+
+func (releasePTYCommands) Run(_ context.Context, _ string, name string, _ []string, stdout, stderr io.Writer) error {
+	switch name {
+	case "make":
+		_, _ = io.WriteString(stdout, "CHECK_STDOUT\n")
+		_, _ = io.WriteString(stderr, "CHECK_STDERR\n")
+	case "actionlint":
+		_, _ = io.WriteString(stdout, "ACTIONLINT_STDOUT\n")
+		_, _ = io.WriteString(stderr, "ACTIONLINT_STDERR\n")
+	default:
+		return errors.New("unexpected command: " + name)
+	}
+	return nil
+}
+
+type promptAwareCommands struct {
+	prompt *fakePrompt
+	calls  []string
+}
+
+func (commands *promptAwareCommands) Run(_ context.Context, _ string, name string, _ []string, _, _ io.Writer) error {
+	if !commands.prompt.closed {
+		return errors.New("check started before interactive prompt closed")
+	}
+	commands.calls = append(commands.calls, name)
+	return nil
+}
+
+type promptAwareGit struct {
+	*fakeGit
+	prompt *fakePrompt
+}
+
+func (git *promptAwareGit) Run(ctx context.Context, arguments []string) (gitprocess.Output, error) {
+	if git.prompt.opened && !git.prompt.closed {
+		return gitprocess.Output{}, errors.New("git command started before interactive prompt closed")
+	}
+	return git.fakeGit.Run(ctx, arguments)
+}
+
 type fakePrompt struct {
 	selection string
 	confirmed bool
+	opened    bool
 	closed    bool
+	closeErr  error
 }
 
 func (prompt *fakePrompt) Select(context.Context, string, string, []promptOption) (string, error) {
+	prompt.opened = true
 	return prompt.selection, nil
 }
 
@@ -271,7 +491,7 @@ func (prompt *fakePrompt) Confirm(context.Context, string, string) (bool, error)
 
 func (prompt *fakePrompt) Close() error {
 	prompt.closed = true
-	return nil
+	return prompt.closeErr
 }
 
 func newReleaseGit(root, logOutput string) *fakeGit {
@@ -294,4 +514,126 @@ func newReleaseGit(root, logOutput string) *fakeGit {
 		prefix + "push origin refs/tags/v0.0.70":                {},
 	}
 	return &fakeGit{outputs: outputs}
+}
+
+func writeReleaseVersion(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "ycy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, versionFile), []byte("0.0.69\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func runReleaseRichHandoffHelper(t *testing.T) {
+	t.Helper()
+	root := writeReleaseVersion(t)
+	prompt, err := newTerminalPrompter(os.Stdin, os.Stdout, os.Stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runRelease(context.Background(), releaseOptions{
+		Root:        root,
+		Git:         newReleaseGit(root, "fix: repair\x1f\x1e"),
+		Commands:    releasePTYCommands{},
+		Prompt:      prompt,
+		LookPath:    func(string) (string, error) { return "/usr/bin/actionlint", nil },
+		Diagnostics: os.Stderr,
+		Output:      os.Stdout,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type releasePTYBuffer struct {
+	mu        sync.Mutex
+	buffer    bytes.Buffer
+	needle    string
+	prompt    chan struct{}
+	query     chan struct{}
+	once      sync.Once
+	queryOnce sync.Once
+}
+
+func newReleasePTYBuffer(needle string) *releasePTYBuffer {
+	return &releasePTYBuffer{needle: needle, prompt: make(chan struct{}), query: make(chan struct{})}
+}
+
+func (buffer *releasePTYBuffer) Write(value []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	count, err := buffer.buffer.Write(value)
+	text := buffer.buffer.String()
+	if strings.Contains(text, buffer.needle) {
+		buffer.once.Do(func() { close(buffer.prompt) })
+	}
+	if strings.Contains(text, "\x1b]11;?") || strings.Contains(text, "\x1b[6n") {
+		buffer.queryOnce.Do(func() { close(buffer.query) })
+	}
+	return count, err
+}
+
+func (buffer *releasePTYBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.buffer.String()
+}
+
+func respondToReleaseTerminalQueries(t *testing.T, process *terminaltest.PTYProcess, output *releasePTYBuffer) {
+	t.Helper()
+	select {
+	case <-output.query:
+		writeReleasePTYInput(t, process, "\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")
+	case <-output.prompt:
+		// The terminal may have enough cached capability state to render immediately.
+	}
+}
+
+func waitForReleasePTYText(t *testing.T, output *releasePTYBuffer, needle string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(output.String(), needle) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("release PTY output did not contain %q: %q", needle, output.String())
+}
+
+func writeReleasePTYInput(t *testing.T, process *terminaltest.PTYProcess, value string) {
+	t.Helper()
+	if _, err := io.WriteString(process.Terminal(), value); err != nil {
+		t.Fatalf("write release PTY input: %v", err)
+	}
+}
+
+func releaseAlternateScreenExit(output string) int {
+	exit := -1
+	for _, code := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
+		exit = max(exit, strings.LastIndex(output, code))
+	}
+	return exit
+}
+
+func releasePTYEnvironment() []string {
+	ignored := map[string]struct{}{
+		"CI":             {},
+		"CLICOLOR":       {},
+		"CLICOLOR_FORCE": {},
+		"COLORTERM":      {},
+		"NO_COLOR":       {},
+		"TERM":           {},
+	}
+	environment := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if _, skip := ignored[key]; !skip {
+			environment = append(environment, entry)
+		}
+	}
+	return environment
 }

@@ -173,6 +173,23 @@ type releaseOptions struct {
 	DryRun      bool
 }
 
+// releasePlan is the immutable preflight state used to form the interactive
+// confirmation. It contains no pending mutation.
+type releasePlan struct {
+	root       string
+	current    stableVersion
+	candidates []versionCandidate
+	baseHead   string
+}
+
+// confirmedRelease is the selected release plan after the user has approved it.
+// External commands must only run after the interactive prompt is closed.
+type confirmedRelease struct {
+	releasePlan
+	target    versionCandidate
+	targetTag string
+}
+
 func main() {
 	os.Exit(runCLI(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
@@ -203,20 +220,34 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 	prompter := &lazyPrompter{new: func() (releasePrompter, error) {
 		return newTerminalPrompter(input, os.Stdout, os.Stderr)
 	}}
-	if err := runWithPrompter(ctx, options, prompter); err != nil {
+	options.Prompt = prompter
+	if err := runRelease(ctx, options); err != nil {
 		writeReleaseError(diagnostics, err)
 		return 1
 	}
 	return 0
 }
 
-// runWithPrompter always restores the terminal before runCLI reports a failure.
-// A Rich console otherwise clears an error written to its diagnostic stream.
-func runWithPrompter(ctx context.Context, options releaseOptions, prompter releasePrompter) error {
-	options.Prompt = prompter
-	releaseErr := runRelease(ctx, options)
-	closeErr := prompter.Close()
-	return errors.Join(releaseErr, closeErr)
+// runRelease owns the terminal handoff: it closes the interactive view before
+// any post-confirmation Git or check command can inherit the terminal.
+func runRelease(ctx context.Context, options releaseOptions) error {
+	if options.Prompt == nil {
+		return errors.New("release dependencies are incomplete")
+	}
+	options = normalizeReleaseOptions(options)
+
+	plan, err := prepareRelease(ctx, options)
+	if err != nil {
+		return errors.Join(err, options.Prompt.Close())
+	}
+	confirmed, err := confirmRelease(ctx, options, plan)
+	if err != nil {
+		return errors.Join(err, options.Prompt.Close())
+	}
+	if err := options.Prompt.Close(); err != nil {
+		return fmt.Errorf("restore interactive terminal before release checks: %w", err)
+	}
+	return executeRelease(ctx, options, confirmed)
 }
 
 type dirtyWorkingTreeError struct {
@@ -269,135 +300,156 @@ func releaseChangePath(status string) string {
 	return strings.TrimSpace(status[3:])
 }
 
-func runRelease(ctx context.Context, options releaseOptions) error {
-	if options.Git == nil || options.Commands == nil || options.Prompt == nil {
-		return errors.New("release dependencies are incomplete")
-	}
+func normalizeReleaseOptions(options releaseOptions) releaseOptions {
 	if options.Diagnostics == nil {
 		options.Diagnostics = io.Discard
 	}
 	if options.Output == nil {
 		options.Output = io.Discard
 	}
+	if options.LookPath == nil {
+		options.LookPath = exec.LookPath
+	}
+	return options
+}
+
+func prepareRelease(ctx context.Context, options releaseOptions) (releasePlan, error) {
+	if options.Git == nil || options.Commands == nil || options.Prompt == nil {
+		return releasePlan{}, errors.New("release dependencies are incomplete")
+	}
 	root := options.Root
 	if root == "" {
 		output, err := options.Git.Run(ctx, []string{"rev-parse", "--show-toplevel"})
 		if err != nil || output.ExitCode != 0 {
-			return gitFailure("resolve repository root", output, err)
+			return releasePlan{}, gitFailure("resolve repository root", output, err)
 		}
 		root = strings.TrimSpace(string(output.Stdout))
 	}
 	if root == "" {
-		return errors.New("repository root is empty")
+		return releasePlan{}, errors.New("repository root is empty")
 	}
 	options.Root = root
 	if err := requireGitValue(ctx, options, []string{"symbolic-ref", "--quiet", "--short", "HEAD"}, "main", "release must start from the main branch"); err != nil {
-		return err
+		return releasePlan{}, err
 	}
 	if err := ensureClean(ctx, options); err != nil {
-		return err
+		return releasePlan{}, err
 	}
-	fmt.Fprintln(options.Diagnostics, "release: fast-forwarding main from origin...")
+	fmt.Fprintln(options.Diagnostics, "Release preflight")
+	fmt.Fprintln(options.Diagnostics, "  Fast-forwarding main from origin...")
 	if err := runGitCommand(ctx, options, []string{"pull", "--ff-only", "origin", "main"}); err != nil {
-		return err
+		return releasePlan{}, err
 	}
 	if err := ensureClean(ctx, options); err != nil {
-		return err
+		return releasePlan{}, err
 	}
 	currentText, err := os.ReadFile(filepath.Join(root, versionFile))
 	if err != nil {
-		return fmt.Errorf("read %s: %w", versionFile, err)
+		return releasePlan{}, fmt.Errorf("read %s: %w", versionFile, err)
 	}
 	currentValue := strings.TrimSpace(string(currentText))
 	current, err := parseStableVersion(currentValue)
 	if err != nil {
-		return fmt.Errorf("%s: %w", versionFile, err)
+		return releasePlan{}, fmt.Errorf("%s: %w", versionFile, err)
 	}
 	currentTag := "v" + current.String()
 	if err := validateCurrentTag(ctx, options, currentTag, current); err != nil {
-		return err
+		return releasePlan{}, err
 	}
 	conventional, err := resolveConventionalBump(ctx, options, currentTag)
 	if err != nil {
-		return err
-	}
-	versionCandidates := candidates(current, conventional)
-	selected, err := options.Prompt.Select(ctx, "Select release version", "Current version "+current.String(), candidateOptions(versionCandidates))
-	if err != nil {
-		return fmt.Errorf("select release version: %w", err)
-	}
-	target, ok := candidateByKind(versionCandidates, bumpKind(selected))
-	if !ok {
-		return fmt.Errorf("unknown release selection: %s", selected)
-	}
-	targetTag := "v" + target.Version
-	if err := ensureTargetTagUnused(ctx, options, targetTag); err != nil {
-		return err
+		return releasePlan{}, err
 	}
 	baseHead, err := gitValue(ctx, options, []string{"rev-parse", "HEAD"})
 	if err != nil {
-		return err
+		return releasePlan{}, err
 	}
-	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check and actionlint\nMutation: update %s, commit, push main, create and push annotated tag", current.String(), target.Version, targetTag, versionFile)
+	return releasePlan{
+		root:       root,
+		current:    current,
+		candidates: candidates(current, conventional),
+		baseHead:   baseHead,
+	}, nil
+}
+
+func confirmRelease(ctx context.Context, options releaseOptions, plan releasePlan) (confirmedRelease, error) {
+	selected, err := options.Prompt.Select(ctx, "Select release version", "Current version "+plan.current.String(), candidateOptions(plan.candidates))
+	if err != nil {
+		return confirmedRelease{}, fmt.Errorf("select release version: %w", err)
+	}
+	target, ok := candidateByKind(plan.candidates, bumpKind(selected))
+	if !ok {
+		return confirmedRelease{}, fmt.Errorf("unknown release selection: %s", selected)
+	}
+	targetTag := "v" + target.Version
+	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check and actionlint\nMutation: update %s, commit, push main, create and push annotated tag", plan.current.String(), target.Version, targetTag, versionFile)
 	confirmed, err := options.Prompt.Confirm(ctx, "Create release?", summary)
 	if err != nil {
-		return fmt.Errorf("confirm release: %w", err)
+		return confirmedRelease{}, fmt.Errorf("confirm release: %w", err)
 	}
 	if !confirmed {
-		return errors.New("release cancelled")
+		return confirmedRelease{}, errors.New("release cancelled")
 	}
-	fmt.Fprintln(options.Diagnostics, "release: running make check...")
-	if err := options.Commands.Run(ctx, root, "make", []string{"check"}, options.Output, options.Output); err != nil {
+	return confirmedRelease{releasePlan: plan, target: target, targetTag: targetTag}, nil
+}
+
+func executeRelease(ctx context.Context, options releaseOptions, release confirmedRelease) error {
+	options.Root = release.root
+	if err := ensureReleaseState(ctx, options, release.baseHead); err != nil {
+		return err
+	}
+	if err := ensureTargetTagUnused(ctx, options, release.targetTag); err != nil {
+		return err
+	}
+	fmt.Fprintln(options.Diagnostics, "\nRelease checks")
+	fmt.Fprintln(options.Diagnostics, "  Running make check...")
+	if err := options.Commands.Run(ctx, release.root, "make", []string{"check"}, options.Output, options.Diagnostics); err != nil {
 		return fmt.Errorf("make check failed: %w", err)
-	}
-	if options.LookPath == nil {
-		options.LookPath = exec.LookPath
 	}
 	if _, err := options.LookPath("actionlint"); err != nil {
 		return errors.New("actionlint is required; install it before releasing")
 	}
-	fmt.Fprintln(options.Diagnostics, "release: validating GitHub Actions workflows...")
-	if err := options.Commands.Run(ctx, root, "actionlint", []string{".github/workflows/release.yml", ".github/workflows/docker.yml"}, options.Output, options.Output); err != nil {
+	fmt.Fprintln(options.Diagnostics, "\n  Validating GitHub Actions workflows...")
+	if err := options.Commands.Run(ctx, release.root, "actionlint", []string{".github/workflows/release.yml", ".github/workflows/docker.yml"}, options.Output, options.Diagnostics); err != nil {
 		return fmt.Errorf("actionlint failed: %w", err)
 	}
-	if err := ensureClean(ctx, options); err != nil {
+	if err := ensureReleaseState(ctx, options, release.baseHead); err != nil {
 		return err
-	}
-	if head, err := gitValue(ctx, options, []string{"rev-parse", "HEAD"}); err != nil || head != baseHead {
-		if err != nil {
-			return err
-		}
-		return errors.New("HEAD changed while release checks were running; aborting")
 	}
 	if options.DryRun {
-		fmt.Fprintln(options.Diagnostics, "release: dry run complete; VERSION, commit, and tag were not changed")
+		fmt.Fprintln(options.Diagnostics, "\nRelease ready")
+		fmt.Fprintln(options.Diagnostics, "  Dry run complete. VERSION, commit, and tag were not changed.")
 		return nil
 	}
-	if err := writeVersionAtomic(root, target.Version); err != nil {
+	fmt.Fprintln(options.Diagnostics, "\nRelease publishing")
+	fmt.Fprintf(options.Diagnostics, "  Updating %s...\n", versionFile)
+	if err := writeVersionAtomic(release.root, release.target.Version); err != nil {
 		return err
 	}
+	fmt.Fprintln(options.Diagnostics, "  Creating release commit...")
 	if err := runGitCommand(ctx, options, []string{"add", "--", versionFile}); err != nil {
 		return err
 	}
-	if err := runGitCommand(ctx, options, []string{"commit", "-m", "chore(release): " + targetTag}); err != nil {
+	if err := runGitCommand(ctx, options, []string{"commit", "-m", "chore(release): " + release.targetTag}); err != nil {
 		return fmt.Errorf("create release commit: %w", err)
 	}
-	fmt.Fprintln(options.Diagnostics, "release: pushing release commit to origin/main...")
+	fmt.Fprintln(options.Diagnostics, "  Pushing release commit to origin/main...")
 	if err := runGitCommand(ctx, options, []string{"push", "origin", "HEAD:main"}); err != nil {
 		return fmt.Errorf("release commit was created locally but main push failed: %w", err)
 	}
-	if err := ensureTargetTagUnused(ctx, options, targetTag); err != nil {
+	if err := ensureTargetTagUnused(ctx, options, release.targetTag); err != nil {
 		return err
 	}
-	fmt.Fprintf(options.Diagnostics, "release: creating annotated tag %s...\n", targetTag)
-	if err := runGitCommand(ctx, options, []string{"tag", "-a", targetTag, "-m", "chore: release " + targetTag}); err != nil {
+	fmt.Fprintf(options.Diagnostics, "  Creating annotated tag %s...\n", release.targetTag)
+	if err := runGitCommand(ctx, options, []string{"tag", "-a", release.targetTag, "-m", "chore: release " + release.targetTag}); err != nil {
 		return err
 	}
-	fmt.Fprintf(options.Diagnostics, "release: pushing only refs/tags/%s...\n", targetTag)
-	if err := runGitCommand(ctx, options, []string{"push", "origin", "refs/tags/" + targetTag}); err != nil {
-		return fmt.Errorf("tag push failed; local tag %s was kept: %w", targetTag, err)
+	fmt.Fprintf(options.Diagnostics, "  Pushing refs/tags/%s...\n", release.targetTag)
+	if err := runGitCommand(ctx, options, []string{"push", "origin", "refs/tags/" + release.targetTag}); err != nil {
+		return fmt.Errorf("tag push failed; local tag %s was kept: %w", release.targetTag, err)
 	}
-	fmt.Fprintf(options.Diagnostics, "release: tag %s pushed; GitHub Actions will run the release workflow\n", targetTag)
+	fmt.Fprintln(options.Diagnostics, "\nRelease complete")
+	fmt.Fprintf(options.Diagnostics, "  %s pushed; GitHub Actions will run the release workflow.\n", release.targetTag)
 	return nil
 }
 
@@ -425,7 +477,7 @@ func resolveConventionalBump(ctx context.Context, options releaseOptions, curren
 	}
 	kind, found := conventionalBump(string(output.Stdout))
 	if !found {
-		fmt.Fprintln(options.Diagnostics, "release: conventional option unavailable; no releasable feat/fix/perf commit was found")
+		fmt.Fprintln(options.Diagnostics, "  Conventional suggestion unavailable: no releasable feat, fix, or perf commit found.")
 		return nil, nil
 	}
 	return &kind, nil
@@ -499,6 +551,20 @@ func ensureClean(ctx context.Context, options releaseOptions) error {
 	status := strings.TrimRight(string(output.Stdout), "\r\n")
 	if status != "" {
 		return &dirtyWorkingTreeError{status: status}
+	}
+	return nil
+}
+
+func ensureReleaseState(ctx context.Context, options releaseOptions, baseHead string) error {
+	if err := ensureClean(ctx, options); err != nil {
+		return err
+	}
+	head, err := gitValue(ctx, options, []string{"rev-parse", "HEAD"})
+	if err != nil {
+		return err
+	}
+	if head != baseHead {
+		return errors.New("HEAD changed since release preflight; aborting")
 	}
 	return nil
 }
