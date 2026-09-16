@@ -1,7 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { ChevronRight, Menu, Moon, Network, Sun, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export type AdminTheme = 'light' | 'dark'
 
@@ -194,6 +194,8 @@ export function AdminShell({
   children: ReactNode
 }): React.JSX.Element {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
+  const contentScrollRef = useRef<HTMLDivElement>(null)
+  const pageKey = `${activeNavigationId}:${breadcrumbs.map(breadcrumb => breadcrumb.label).join('/')}`
   useEffect(() => {
     if (!mobileNavigationOpen)
       return
@@ -204,6 +206,10 @@ export function AdminShell({
     window.addEventListener('keydown', closeOnEscape)
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [mobileNavigationOpen])
+  useEffect(() => {
+    if (contentScrollRef.current)
+      contentScrollRef.current.scrollTop = 0
+  }, [pageKey])
   return (
     <div className="admin-shell">
       <aside className="admin-sidebar">
@@ -251,7 +257,7 @@ export function AdminShell({
           </div>
         </header>
         <div className="admin-content">
-          <div className="admin-content-scroll">{children}</div>
+          <div ref={contentScrollRef} className="admin-content-scroll">{children}</div>
         </div>
       </main>
     </div>

@@ -2,14 +2,14 @@ import type { AccountView } from './api'
 import type { AccountRole } from './domain'
 import type { ConfirmAction } from './ui'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { KeyRound, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { KeyRound, Pencil, Plus, RefreshCw, Trash2, Users } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Controller, useForm } from 'react-hook-form'
 import { z } from 'zod'
 import { apiJson, jsonRequest } from './api'
 import { FormError, FormField } from './form'
 import { DialogShell, SegmentedControl } from './primitives'
-import { ConfirmationDialog, ErrorState, IconButton, LoadingState, PageHeader, Spinner, Status, useFeedback } from './ui'
+import { ConfirmationDialog, EmptyState, ErrorState, IconButton, LoadingState, PageHeader, RowActionMenu, Spinner, Status, useFeedback } from './ui'
 
 function accountSchema(creating: boolean) {
   return z.object({
@@ -152,6 +152,7 @@ export function AccountsPage({ currentAccountId, refreshSequence, onSessionEnded
     <>
       <PageHeader
         title="Control Plane Accounts"
+        description="Manage administrators and users allowed to own trusted tunnel clients."
         actions={(
           <>
             <IconButton label="Refresh accounts" loading={refreshing} onClick={() => void load()}><RefreshCw size={15} /></IconButton>
@@ -169,13 +170,12 @@ export function AccountsPage({ currentAccountId, refreshSequence, onSessionEnded
           : (
               <>
                 {error && <ErrorState message={error} retrying={refreshing} onRetry={() => void load()} />}
-                <section className="table-wrap" aria-busy={refreshing}>
-                  <table>
+                <section className="table-wrap data-panel" aria-busy={refreshing}>
+                  <table className="data-table accounts-table">
                     <thead>
                       <tr>
-                        <th>Username</th>
+                        <th>Account</th>
                         <th>Role</th>
-                        <th>Source</th>
                         <th>Clients</th>
                         <th aria-label="Actions" />
                       </tr>
@@ -183,22 +183,41 @@ export function AccountsPage({ currentAccountId, refreshSequence, onSessionEnded
                     <tbody>
                       {accounts.map(account => (
                         <tr key={account.id}>
-                          <td><strong>{account.username}</strong></td>
-                          <td><Status value={account.role} /></td>
-                          <td>{account.managedByEnvironment ? 'Environment' : 'Local'}</td>
-                          <td>{account.clientCount}</td>
-                          <td>
-                            <div className="row-actions">
-                              <IconButton label="Change role" disabled={account.managedByEnvironment} onClick={() => setEditing(account)}><Pencil size={15} /></IconButton>
-                              <IconButton label="Reset password" disabled={account.managedByEnvironment} onClick={() => setResetting(account)}><KeyRound size={15} /></IconButton>
-                              <IconButton label={account.clientCount ? 'Delete owned clients first' : 'Delete account'} disabled={account.managedByEnvironment || account.clientCount > 0} onClick={() => setConfirmation({ message: `Delete account ${account.username}?`, successMessage: 'Account deleted', action: () => remove(account) })}><Trash2 size={15} /></IconButton>
+                          <td className="entity-cell" data-label="Account">
+                            <div className="entity-content">
+                              <strong>{account.username}</strong>
+                              <span>{account.managedByEnvironment ? 'Environment managed' : 'Local account'}</span>
                             </div>
+                          </td>
+                          <td data-label="Role"><Status value={account.role} /></td>
+                          <td className="tabular" data-label="Clients">{account.clientCount}</td>
+                          <td data-label="Actions">
+                            <RowActionMenu
+                              label={`Actions for ${account.username}`}
+                              actions={[
+                                { label: 'Change role', icon: Pencil, disabled: account.managedByEnvironment, disabledReason: 'Managed by environment', onSelect: () => setEditing(account) },
+                                { label: 'Reset password', icon: KeyRound, disabled: account.managedByEnvironment, disabledReason: 'Managed by environment', onSelect: () => setResetting(account) },
+                                { label: 'Delete account', icon: Trash2, destructive: true, disabled: account.managedByEnvironment || account.clientCount > 0, disabledReason: account.managedByEnvironment ? 'Managed by environment' : account.clientCount ? 'Delete owned clients first' : undefined, onSelect: () => setConfirmation({ message: `Delete account ${account.username}?`, successMessage: 'Account deleted', action: () => remove(account) }) },
+                              ]}
+                            />
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {!accounts.length && <div className="empty-row">No accounts</div>}
+                  {!accounts.length && (
+                    <EmptyState
+                      icon={Users}
+                      title="No local accounts"
+                      description="Create an account to delegate access to the tunnel control plane."
+                      action={(
+                        <button className="primary" type="button" onClick={() => setEditing(null)}>
+                          <Plus size={15} />
+                          Create account
+                        </button>
+                      )}
+                    />
+                  )}
                 </section>
               </>
             )}

@@ -1,5 +1,7 @@
+import type { LucideIcon } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { Check, Clipboard, RefreshCw, XCircle } from 'lucide-react'
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
+import { Check, Clipboard, Ellipsis, RefreshCw, XCircle } from 'lucide-react'
 import { useState } from 'react'
 import { AdminPageHeader } from '../shared/admin'
 import { ConfirmDialog, FeedbackProvider, IconButton, Spinner, Switch, useFeedback } from './primitives'
@@ -22,7 +24,63 @@ function statusClass(value: string): string {
 }
 
 export function Status({ value }: { value: string }): React.JSX.Element {
-  return <span className={statusClass(value)}>{value.replaceAll('_', ' ')}</span>
+  return (
+    <span className={statusClass(value)}>
+      <span className="status-dot" aria-hidden="true" />
+      <span className="status-label">{value.replaceAll('_', ' ')}</span>
+    </span>
+  )
+}
+
+export function EmptyState({ icon: Icon, title, description, action }: { icon: LucideIcon, title: string, description: string, action?: ReactNode }): React.JSX.Element {
+  return (
+    <div className="empty-state">
+      <span className="empty-state-icon"><Icon size={18} aria-hidden="true" /></span>
+      <div className="empty-state-copy">
+        <strong>{title}</strong>
+        <span>{description}</span>
+      </div>
+      {action && <div className="empty-state-action">{action}</div>}
+    </div>
+  )
+}
+
+export interface RowAction {
+  label: string
+  icon: LucideIcon
+  onSelect: () => void
+  destructive?: boolean
+  disabled?: boolean
+  disabledReason?: string
+}
+
+export function RowActionMenu({ label = 'More actions', actions }: { label?: string, actions: RowAction[] }): React.JSX.Element {
+  return (
+    <DropdownMenu.Root modal={false}>
+      <DropdownMenu.Trigger asChild>
+        <IconButton label={label}><Ellipsis size={16} /></IconButton>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content className="row-action-menu" align="end" sideOffset={6} collisionPadding={12}>
+          {actions.map((action) => {
+            const Icon = action.icon
+            return (
+              <DropdownMenu.Item
+                className={`row-action-item${action.destructive ? ' destructive' : ''}`}
+                key={action.label}
+                disabled={action.disabled}
+                onSelect={action.onSelect}
+              >
+                <Icon size={15} aria-hidden="true" />
+                <span>{action.label}</span>
+                {action.disabled && action.disabledReason && <small>{action.disabledReason}</small>}
+              </DropdownMenu.Item>
+            )
+          })}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  )
 }
 
 export function LoadingState({ label }: { label: string }): React.JSX.Element {
@@ -78,8 +136,8 @@ export function ConfirmationDialog({ request, onClose }: { request: ConfirmActio
   return <ConfirmDialog open message={request.message} busy={running} error={error} onClose={onClose} onConfirm={() => void confirmAction()} />
 }
 
-export function PageHeader({ title, actions }: { title: string, actions?: ReactNode }): React.JSX.Element {
-  return <AdminPageHeader title={title} actions={actions} />
+export function PageHeader({ title, eyebrow, description, actions }: { title: string, eyebrow?: string, description?: ReactNode, actions?: ReactNode }): React.JSX.Element {
+  return <AdminPageHeader eyebrow={eyebrow} title={title} description={description} actions={actions} />
 }
 
 export function Token({ value }: { value: string }): React.JSX.Element {

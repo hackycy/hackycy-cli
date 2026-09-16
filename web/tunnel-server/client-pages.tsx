@@ -3,7 +3,7 @@ import type { ClientView, TunnelImportPreview, TunnelView } from './api'
 import type { TunnelEditorSection, TunnelFormValues } from './tunnel-form'
 import type { ConfirmAction } from './ui'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { ArrowLeft, ArrowRight, ChevronDown, ChevronRight, Pencil, Plus, Power, RefreshCw, RotateCcw, Trash2, Upload } from 'lucide-react'
+import { ArrowRight, Cable, ChevronDown, ChevronRight, Pencil, Plus, Power, RefreshCw, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
@@ -11,7 +11,7 @@ import { apiJson, jsonRequest } from './api'
 import { FormError, FormField, FormMessage } from './form'
 import { DialogShell, FormScrollArea, SegmentedControl, Select } from './primitives'
 import { buildTunnelPayload, createTunnelSchema, draftToTunnelForm, sectionForTunnelField } from './tunnel-form'
-import { ConfirmationDialog, ErrorState, IconButton, LoadingState, navigate, PageHeader, Spinner, Status, Switch, Token, useFeedback } from './ui'
+import { ConfirmationDialog, EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, RowActionMenu, Spinner, Status, Switch, Token, useFeedback } from './ui'
 
 const clientRemarkSchema = z.object({ remark: z.string().max(100, 'Client remark must be 100 characters or fewer') })
 
@@ -19,6 +19,12 @@ type ClientRemarkValues = z.infer<typeof clientRemarkSchema>
 
 function message(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+function clientSyncState(client: ClientView): 'Applied' | 'Pending' | 'Error' {
+  if (client.tunnelCounts.error || client.runtime.lastError)
+    return 'Error'
+  return client.lastAppliedRevision === client.desiredRevision ? 'Applied' : 'Pending'
 }
 
 function ClientRemarkEditor({ client, onClose, onSaved }: { client?: ClientView, onClose: () => void, onSaved: () => void }): React.JSX.Element {
@@ -101,6 +107,7 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
     <>
       <PageHeader
         title="Trusted Tunnel Clients"
+        description="Client identities, connectivity, and configuration synchronization."
         actions={(
           <>
             <IconButton label="Refresh clients" loading={refreshing} onClick={() => void load()}><RefreshCw size={15} /></IconButton>
@@ -118,15 +125,14 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
           : (
               <>
                 {error && <ErrorState message={error} retrying={refreshing} onRetry={() => void load()} />}
-                <section className="table-wrap" aria-busy={refreshing}>
-                  <table>
+                <section className="table-wrap data-panel" aria-busy={refreshing}>
+                  <table className="data-table clients-table">
                     <thead>
                       <tr>
-                        <th>Client Token</th>
-                        <th>Client Remark</th>
+                        <th>Client</th>
                         {showOwner && <th>Owner</th>}
                         <th>Connection</th>
-                        <th>Revision</th>
+                        <th>Sync</th>
                         <th>Restart</th>
                         <th>Tunnels</th>
                         <th aria-label="Actions" />
@@ -135,32 +141,54 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                     <tbody>
                       {clients.map(client => (
                         <tr key={client.id}>
-                          <td className="client-token"><Token value={client.token} /></td>
-                          <td className="client-remark">{client.remark || 'Unlabeled client'}</td>
-                          {showOwner && <td>{client.owner.username}</td>}
-                          <td><Status value={client.runtime.connectionState} /></td>
-                          <td className="mono">
-                            {client.lastAppliedRevision}
-                            {' '}
-                            /
-                            {' '}
-                            {client.desiredRevision}
+                          <td className="client-identity" data-label="Client">
+                            <button className="entity-link" type="button" onClick={() => navigate(`/clients/${encodeURIComponent(client.id)}`)}>{client.remark || 'Unlabeled client'}</button>
+                            <Token value={client.token} />
                           </td>
-                          <td><Status value={client.restart.state} /></td>
-                          <td>{client.tunnelCounts.total}</td>
-                          <td>
-                            <div className="row-actions">
-                              <IconButton label="Edit Client Remark" onClick={() => setEditing(client)}><Pencil size={15} /></IconButton>
-                              <IconButton label="Open client" onClick={() => navigate(`/clients/${encodeURIComponent(client.id)}`)}><ArrowRight size={15} /></IconButton>
-                              <IconButton label="Rotate Client Token" onClick={() => setConfirmation({ message: 'Rotate this Client Token? The active client will stop.', successMessage: 'Client Token rotated', action: () => rotate(client.id) })}><RotateCcw size={15} /></IconButton>
-                              <IconButton label="Delete client" onClick={() => setConfirmation({ message: 'Delete this trusted client and all of its Tunnel Definitions?', successMessage: 'Trusted client deleted', action: () => remove(client.id) })}><Trash2 size={15} /></IconButton>
+                          {showOwner && <td className="entity-owner" data-label="Owner">{client.owner.username}</td>}
+                          <td data-label="Connection"><Status value={client.runtime.connectionState} /></td>
+                          <td data-label="Sync">
+                            <div className="status-stack">
+                              <Status value={clientSyncState(client)} />
+                              <span className="mono">
+                                rev
+                                {' '}
+                                {client.lastAppliedRevision}
+                                {' / '}
+                                {client.desiredRevision}
+                              </span>
                             </div>
+                          </td>
+                          <td data-label="Restart"><Status value={client.restart.state} /></td>
+                          <td className="tabular" data-label="Tunnels">{client.tunnelCounts.total}</td>
+                          <td data-label="Actions">
+                            <RowActionMenu
+                              label={`Actions for ${client.remark || 'unlabeled client'}`}
+                              actions={[
+                                { label: 'Open client', icon: ArrowRight, onSelect: () => navigate(`/clients/${encodeURIComponent(client.id)}`) },
+                                { label: 'Edit remark', icon: Pencil, onSelect: () => setEditing(client) },
+                                { label: 'Rotate token', icon: RotateCcw, onSelect: () => setConfirmation({ message: 'Rotate this Client Token? The active client will stop.', successMessage: 'Client Token rotated', action: () => rotate(client.id) }) },
+                                { label: 'Delete client', icon: Trash2, destructive: true, onSelect: () => setConfirmation({ message: 'Delete this trusted client and all of its Tunnel Definitions?', successMessage: 'Trusted client deleted', action: () => remove(client.id) }) },
+                              ]}
+                            />
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                  {!clients.length && <div className="empty-row">No trusted clients</div>}
+                  {!clients.length && (
+                    <EmptyState
+                      icon={Cable}
+                      title="No trusted clients"
+                      description="Create a client identity before connecting an agent or defining a tunnel."
+                      action={(
+                        <button className="primary" type="button" onClick={() => setEditing(null)}>
+                          <Plus size={15} />
+                          Create client
+                        </button>
+                      )}
+                    />
+                  )}
                 </section>
               </>
             )}
@@ -772,24 +800,21 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
     <>
       <PageHeader
         title={client?.remark || 'Unlabeled client'}
+        description="Public tunnel mappings, local endpoints, and agent synchronization."
         actions={(
           <>
-            <button type="button" onClick={() => navigate('/clients')}>
-              <ArrowLeft size={15} />
-              Clients
-            </button>
             <IconButton label="Refresh client" loading={refreshing} onClick={() => void load()}><RefreshCw size={15} /></IconButton>
             <button type="button" disabled={pending.has('restart')} aria-busy={pending.has('restart')} onClick={() => void restart()}>
               {pending.has('restart') ? <Spinner /> : <Power size={15} />}
               Restart frpc
             </button>
-            <button className="primary" type="button" onClick={() => setEditing(null)}>
-              <Plus size={15} />
-              New tunnel
-            </button>
             <button type="button" onClick={() => setImporting(true)}>
               <Upload size={15} />
               Import configuration
+            </button>
+            <button className="primary" type="button" onClick={() => setEditing(null)}>
+              <Plus size={15} />
+              New tunnel
             </button>
           </>
         )}
@@ -802,34 +827,44 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
               <>
                 {error && <ErrorState message={error} retrying={refreshing} onRetry={() => void load()} />}
                 {client && (
-                  <section className="client-strip">
-                    <Token value={client.token} />
-                    <Status value={client.runtime.connectionState} />
-                    <Status value={client.runtime.processState} />
-                    <Status value={client.restart.state} />
-                    {showOwner && (
-                      <span className="mono">
-                        Owner
-                        {' '}
-                        {client.owner.username}
-                      </span>
-                    )}
-                    <span className="mono">
-                      Revision
-                      {' '}
-                      {client.lastAppliedRevision}
-                      {' '}
-                      {' '}
-                      /
-                      {' '}
-                      {' '}
-                      {client.desiredRevision}
-                    </span>
+                  <section className="client-summary" aria-label="Client summary">
+                    <div className="client-summary-token">
+                      <span>Client token</span>
+                      <Token value={client.token} />
+                    </div>
+                    <div className="client-summary-facts">
+                      <div className="summary-fact">
+                        <span>Connection</span>
+                        <Status value={client.runtime.connectionState} />
+                      </div>
+                      <div className="summary-fact">
+                        <span>Process</span>
+                        <Status value={client.runtime.processState} />
+                      </div>
+                      <div className="summary-fact">
+                        <span>Restart</span>
+                        <Status value={client.restart.state} />
+                      </div>
+                      <div className="summary-fact">
+                        <span>Revision</span>
+                        <strong className="mono">
+                          {client.lastAppliedRevision}
+                          {' / '}
+                          {client.desiredRevision}
+                        </strong>
+                      </div>
+                      {showOwner && (
+                        <div className="summary-fact">
+                          <span>Owner</span>
+                          <strong>{client.owner.username}</strong>
+                        </div>
+                      )}
+                    </div>
                   </section>
                 )}
                 {client?.runtime.lastError && <p className="runtime-error" role="alert">{client.runtime.lastError.message}</p>}
                 {client?.restart.error && <p className="runtime-error" role="alert">{client.restart.error.message}</p>}
-                <section className="table-wrap" aria-busy={refreshing}>
+                <section className="table-wrap data-panel" aria-busy={refreshing}>
                   <table className="tunnel-table">
                     <thead>
                       <tr>
@@ -866,10 +901,13 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                             <td data-label="Status"><Status value={tunnel.state} /></td>
                             <td data-label="Enabled"><Switch label={`${tunnel.enabled ? 'Disable' : 'Enable'} ${tunnel.label || tunnel.id}`} checked={tunnel.enabled} loading={pending.has(`toggle:${tunnel.id}`)} onChange={() => void toggle(tunnel)} /></td>
                             <td data-label="Actions">
-                              <div className="row-actions">
-                                <IconButton label="Edit tunnel" onClick={() => setEditing(tunnel)}><Pencil size={15} /></IconButton>
-                                <IconButton label="Delete tunnel" onClick={() => setConfirmation({ message: 'Delete this Tunnel Definition?', successMessage: 'Tunnel Definition deleted', action: () => remove(tunnel) })}><Trash2 size={15} /></IconButton>
-                              </div>
+                              <RowActionMenu
+                                label={`Actions for ${tunnel.label || 'unlabeled tunnel'}`}
+                                actions={[
+                                  { label: 'Edit tunnel', icon: Pencil, onSelect: () => setEditing(tunnel) },
+                                  { label: 'Delete tunnel', icon: Trash2, destructive: true, onSelect: () => setConfirmation({ message: 'Delete this Tunnel Definition?', successMessage: 'Tunnel Definition deleted', action: () => remove(tunnel) }) },
+                                ]}
+                              />
                             </td>
                           </tr>
                           {expanded.has(tunnel.id) && <tr className="details-row"><td colSpan={7}><TunnelDetails tunnel={tunnel} /></td></tr>}
@@ -877,7 +915,19 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                       ))}
                     </tbody>
                   </table>
-                  {!tunnels.length && <div className="empty-row">No Tunnel Definitions</div>}
+                  {!tunnels.length && (
+                    <EmptyState
+                      icon={Cable}
+                      title="No tunnel definitions"
+                      description="Create a public mapping to route traffic to this client's local service."
+                      action={(
+                        <button className="primary" type="button" onClick={() => setEditing(null)}>
+                          <Plus size={15} />
+                          New tunnel
+                        </button>
+                      )}
+                    />
+                  )}
                 </section>
               </>
             )}

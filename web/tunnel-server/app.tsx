@@ -82,7 +82,7 @@ function Login({ theme, onThemeChange, onLogin }: { theme: 'light' | 'dark', onT
     }
   })
   return (
-    <AdminLoginShell brand={{ name: 'HACKYCY TUNNEL', icon: CloudCog }} title="Sign in" theme={theme} onThemeChange={onThemeChange}>
+    <AdminLoginShell brand={{ name: 'HACKYCY TUNNEL', icon: CloudCog }} title="Sign in" description="Manage trusted clients, tunnel routes, and server runtime." theme={theme} onThemeChange={onThemeChange}>
       <form className="tunnel-login-form" aria-busy={submitting} onSubmit={submit}>
         <FormField label="Username" error={form.formState.errors.username}>
           <input {...form.register('username')} autoComplete="username" autoFocus disabled={submitting} aria-invalid={Boolean(form.formState.errors.username)} />
@@ -172,39 +172,41 @@ function Layout({ page, account, children, loggingOut, onLogout, onChangePasswor
 
 function Overview({ state, refreshing, reload }: { state: StateView, refreshing: boolean, reload: () => void }): React.JSX.Element {
   const metrics = [
-    { label: 'Trusted clients', value: state.counts.clients },
-    { label: 'Connected', value: state.counts.connected, detail: `${state.counts.clients ? Math.round((state.counts.connected / state.counts.clients) * 100) : 0}% of trusted clients`, tone: 'success' as const },
+    ...(state.server
+      ? [{ label: 'Server runtime', value: state.server.frps.state.replaceAll('_', ' '), detail: state.server.frps.pid ? `PID ${state.server.frps.pid}` : 'No active process', tone: state.server.frps.state === 'running' ? 'success' as const : 'danger' as const }]
+      : []),
+    { label: 'Client health', value: `${state.counts.connected} / ${state.counts.clients}`, detail: state.counts.clients ? `${Math.round((state.counts.connected / state.counts.clients) * 100)}% connected` : 'No trusted clients', tone: state.counts.connected === state.counts.clients ? 'success' as const : 'warning' as const },
     { label: 'Tunnel definitions', value: state.counts.tunnels },
     { label: 'Pending', value: state.counts.pending, detail: state.counts.pending ? 'Awaiting client sync' : 'No pending changes', tone: state.counts.pending ? 'warning' as const : 'default' as const },
     { label: 'Errors', value: state.counts.errors, detail: state.counts.errors ? 'Needs intervention' : 'No reported errors', tone: state.counts.errors ? 'danger' as const : 'success' as const },
   ]
   return (
     <>
-      <PageHeader title="Overview" actions={<IconButton label="Refresh overview" loading={refreshing} onClick={reload}><RefreshCw size={15} /></IconButton>} />
+      <PageHeader title="Overview" description="Runtime health and synchronization across the control plane." actions={<IconButton label="Refresh overview" loading={refreshing} onClick={reload}><RefreshCw size={15} /></IconButton>} />
       <AdminSummaryStrip items={metrics} />
       {state.server && (
-        <section className="section-band">
+        <section className="section-band runtime-overview">
           <div className="section-title">
             <h2>Runtime</h2>
             <Status value={state.server.frps.state} />
           </div>
           <dl className="detail-grid">
             <dt>frps process</dt>
-            <dd>{state.server.frps.pid ? `PID ${state.server.frps.pid}` : 'No active process'}</dd>
+            <dd className="mono">{state.server.frps.pid ? `PID ${state.server.frps.pid}` : 'No active process'}</dd>
             <dt>Control listener</dt>
-            <dd>
+            <dd className="mono">
               {state.server.settings.address}
               :
               {state.server.settings.controlPort}
             </dd>
             <dt>FRP bind</dt>
-            <dd>
+            <dd className="mono">
               {state.server.settings.address}
               :
               {state.server.settings.frpPort}
             </dd>
             <dt>HTTP vhost</dt>
-            <dd>
+            <dd className="mono">
               {state.server.settings.address}
               :
               {state.server.settings.httpPort}
@@ -263,8 +265,13 @@ function Custom404PageEditor({ refreshSequence }: { refreshSequence: number }): 
   return (
     <section className="section-band">
       <div className="section-title">
-        <h2>Custom 404 page</h2>
-        {loading && <Spinner size={15} />}
+        <div>
+          <h2>Custom 404 page</h2>
+          <p>HTML returned when no public HTTP route matches a request.</p>
+        </div>
+        <span className={`save-state${dirty ? ' is-dirty' : ''}`}>
+          {loading ? <Spinner size={14} /> : dirty ? 'Unsaved changes' : 'Saved'}
+        </span>
       </div>
       {error && <p className="runtime-error" role="alert">{error}</p>}
       <textarea
@@ -277,7 +284,7 @@ function Custom404PageEditor({ refreshSequence }: { refreshSequence: number }): 
         disabled={loading || saving}
         onChange={event => setContent(event.target.value)}
       />
-      <div className="custom-404-actions">
+      <div className="custom-404-actions sticky-actions">
         <IconButton label="Restore FRP default 404 page" disabled={loading || saving || !content} onClick={() => setContent('')}><RotateCcw size={15} /></IconButton>
         <button className="primary" type="button" disabled={loading || saving || !dirty} onClick={() => void save()}>
           {saving ? <Spinner /> : <Save size={15} />}
@@ -312,23 +319,33 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
     <>
       <PageHeader
         title="Tunnel Server"
+        description="Supervise the FRP runtime and review deployment-level configuration."
         actions={(
-          <>
-            <IconButton label="Start frps" loading={pending === 'start'} disabled={Boolean(pending)} onClick={() => void action('start')}><Play size={15} /></IconButton>
-            <IconButton label="Stop frps" loading={pending === 'stop'} disabled={Boolean(pending)} onClick={() => void action('stop')}><Square size={14} /></IconButton>
-            <IconButton label="Restart frps" loading={pending === 'restart'} disabled={Boolean(pending)} onClick={() => void action('restart')}><Power size={15} /></IconButton>
-          </>
+          <div className="runtime-controls" role="group" aria-label="FRP server controls">
+            <button type="button" disabled={Boolean(pending)} onClick={() => void action('start')}>
+              {pending === 'start' ? <Spinner /> : <Play size={15} />}
+              Start
+            </button>
+            <button type="button" disabled={Boolean(pending)} onClick={() => void action('stop')}>
+              {pending === 'stop' ? <Spinner /> : <Square size={14} />}
+              Stop
+            </button>
+            <button className="primary" type="button" disabled={Boolean(pending)} onClick={() => void action('restart')}>
+              {pending === 'restart' ? <Spinner /> : <Power size={15} />}
+              Restart
+            </button>
+          </div>
         )}
       />
       {error && <p className="runtime-error" role="alert">{error}</p>}
-      <section className="section-band">
+      <section className="section-band server-runtime-panel">
         <div className="section-title">
           <h2>frps</h2>
           <Status value={server.frps.state} />
         </div>
         <dl className="detail-grid">
           <dt>Process</dt>
-          <dd>{server.frps.pid ? `PID ${server.frps.pid}` : 'Stopped'}</dd>
+          <dd className="mono">{server.frps.pid ? `PID ${server.frps.pid}` : 'Stopped'}</dd>
         </dl>
         {server.frps.error && <p className="runtime-error">{server.frps.error.message}</p>}
       </section>
@@ -336,25 +353,25 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
         <div className="section-title"><h2>Deployment settings</h2></div>
         <dl className="detail-grid">
           <dt>Control listener</dt>
-          <dd>
+          <dd className="mono">
             {server.settings.address}
             :
             {server.settings.controlPort}
           </dd>
           <dt>FRP bind</dt>
-          <dd>
+          <dd className="mono">
             {server.settings.address}
             :
             {server.settings.frpPort}
           </dd>
           <dt>HTTP vhost</dt>
-          <dd>
+          <dd className="mono">
             {server.settings.address}
             :
             {server.settings.httpPort}
           </dd>
           <dt>Server Port Pool</dt>
-          <dd>
+          <dd className="mono">
             {server.settings.portRange.start}
             -
             {server.settings.portRange.end}
@@ -362,7 +379,7 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
             TCP/UDP
           </dd>
           <dt>Advertised FRP</dt>
-          <dd>{server.settings.advertiseFrpAddress ? `${server.settings.advertiseFrpAddress.host}:${server.settings.advertiseFrpAddress.port}` : 'Derived from agent request'}</dd>
+          <dd className="mono">{server.settings.advertiseFrpAddress ? `${server.settings.advertiseFrpAddress.host}:${server.settings.advertiseFrpAddress.port}` : 'Derived from agent request'}</dd>
           <dt>Data directory</dt>
           <dd className="mono break">{server.settings.dataDir}</dd>
           <dt>Deployment Administrator</dt>

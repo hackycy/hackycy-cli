@@ -1,7 +1,7 @@
 import { Gauge, Users } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { AdminLoginShell, AdminPage, AdminShell, AdminSummaryStrip } from './index'
+import { AdminLoginShell, AdminPage, AdminPageHeader, AdminShell, AdminSummaryStrip } from './index'
 
 describe('admin Panel', () => {
   it('renders the configured workspace navigation and summary', () => {
@@ -38,5 +38,21 @@ describe('admin Panel', () => {
     expect(markup).toContain('aria-labelledby="admin-login-title"')
     expect(markup).toContain('Switch to light theme')
     expect(markup).toContain('Username')
+  })
+
+  it('renders page hierarchy without changing the shell contract', () => {
+    const markup = renderToStaticMarkup(
+      <AdminPageHeader
+        eyebrow="Control plane"
+        title="Tunnel Server"
+        description="Runtime health and deployment settings."
+        actions={<button type="button">Restart</button>}
+      />,
+    )
+
+    expect(markup).toContain('admin-eyebrow')
+    expect(markup).toContain('Control plane')
+    expect(markup).toContain('Runtime health and deployment settings.')
+    expect(markup).toContain('admin-page-actions')
   })
 })

@@ -66,7 +66,13 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 			if testCase.browserSessionFor != nil {
 				browserSession = testCase.browserSessionFor(t, pageURL)
 			}
+			if testCase.name == "tunnel" {
+				createTunnelBrowserClient(t, pageURL, browserSession)
+			}
 			assertBrowserJourney(t, pageURL, testCase.readyText, testCase.apiPaths, browserSession)
+			if testCase.name == "tunnel" {
+				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
+			}
 			if err := service.stop(); err != nil {
 				t.Fatalf("clean shutdown: %v", err)
 			}
@@ -187,6 +193,29 @@ func signInTunnelBrowserSession(t *testing.T, pageURL string) *http.Cookie {
 	}
 	t.Fatalf("create Tunnel browser session: response omitted ycy_tunnel_session\n%s", body)
 	return nil
+}
+
+func createTunnelBrowserClient(t *testing.T, pageURL string, session *http.Cookie) {
+	t.Helper()
+	request, err := http.NewRequest(http.MethodPost, pageURL+"/api/clients", strings.NewReader(`{"remark":"Browser dialog client"}`))
+	if err != nil {
+		t.Fatalf("create Tunnel browser client request: %v", err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", pageURL)
+	request.AddCookie(session)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("create Tunnel browser client: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("read Tunnel browser client response: %v", err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create Tunnel browser client: got %s\n%s", response.Status, body)
+	}
 }
 
 func startService(t *testing.T, binary, directory string, environment []string, arguments ...string) *runningService {
@@ -395,6 +424,57 @@ func assertBrowserJourney(t *testing.T, pageURL, readyText string, apiPaths []st
 	}
 	if err := observer.assertClean(pageURL, criticalResources, apiPaths); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertTunnelDialogRestoresPointerEvents(t *testing.T, pageURL string, browserSession *http.Cookie) {
+	t.Helper()
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	allocatorOptions = append(allocatorOptions,
+		chromedp.ExecPath(chromeExecutable(t)),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("headless", true),
+	)
+	allocatorContext, closeAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer closeAllocator()
+	browserContext, closeBrowser := chromedp.NewContext(allocatorContext)
+	defer closeBrowser()
+	ctx, cancel := context.WithTimeout(browserContext, browserReadyTimeout)
+	defer cancel()
+
+	run := func(label string, actions ...chromedp.Action) {
+		t.Helper()
+		if err := chromedp.Run(ctx, actions...); err != nil {
+			t.Fatalf("%s: %v", label, err)
+		}
+	}
+	run("open Tunnel clients page",
+		network.Enable(),
+		network.SetCookie(browserSession.Name, browserSession.Value).WithURL(pageURL).WithHTTPOnly(browserSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
+		chromedp.Navigate(pageURL+"/clients"),
+		chromedp.WaitReady("body", chromedp.ByQuery),
+	)
+	if body, err := waitForBrowserText(ctx, "Browser dialog client"); err != nil {
+		t.Fatalf("wait for Tunnel browser client: %v\nbody:\n%s", err, body)
+	}
+	run("open Tunnel row actions",
+		chromedp.WaitVisible(`[aria-label="Actions for Browser dialog client"]`, chromedp.ByQuery),
+		chromedp.Click(`[aria-label="Actions for Browser dialog client"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`//div[@role="menuitem"][.//span[normalize-space()="Edit remark"]]`, chromedp.BySearch),
+	)
+	run("open Tunnel client editor",
+		chromedp.Click(`//div[@role="menuitem"][.//span[normalize-space()="Edit remark"]]`, chromedp.BySearch),
+		chromedp.WaitVisible(`[role="dialog"]`, chromedp.ByQuery),
+	)
+	run("cancel Tunnel client editor",
+		chromedp.Click(`//div[@role="dialog"]//button[normalize-space()="Cancel"]`, chromedp.BySearch),
+		chromedp.WaitNotPresent(`[role="dialog"]`, chromedp.ByQuery),
+	)
+
+	var pointerEvents string
+	run("read Tunnel body pointer events", chromedp.Evaluate(`document.body.style.pointerEvents`, &pointerEvents))
+	if pointerEvents != "" {
+		t.Fatalf("closing a row-action dialog left body pointer events locked: %q", pointerEvents)
 	}
 }
 
