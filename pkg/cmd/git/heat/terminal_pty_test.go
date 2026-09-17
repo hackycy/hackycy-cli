@@ -158,14 +158,14 @@ func assertGitHeatRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	live := gitHeatPTYText(output[enter:leave])
 	for _, needle := range []string{
 		"YCY / git heat",
-		"range last 20 commits",
+		"range: last 20 commits",
 	} {
 		if !strings.Contains(live, needle) {
 			t.Fatalf("Rich PTY live Console omitted %q: %q", needle, output)
 		}
 	}
 	if wide {
-		for _, needle := range []string{"sort path", "relative time", "file heat"} {
+		for _, needle := range []string{"sort: path", "time: relative time", "file heat"} {
 			if !strings.Contains(live, needle) {
 				t.Fatalf("Rich PTY wide Console omitted %q: %q", needle, output)
 			}

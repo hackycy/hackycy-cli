@@ -134,7 +134,7 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	live := cmUsePTYText(output[enter:leave])
 	expected := []string{
 		"YCY / config cm use",
-		"scope commit message configuration",
+		"scope: commit message configuration",
 		"Profile: work",
 	}
 	if wide {

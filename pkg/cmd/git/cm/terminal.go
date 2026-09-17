@@ -180,8 +180,12 @@ func (adapter *terminalGitCMAdapter) ConfirmCommit(prompt CommitPrompt) (bool, b
 		if err := adapter.run.Notice(document); err != nil {
 			return false, false, err
 		}
-	} else if err := adapter.run.Milestone(document); err != nil {
-		return false, false, err
+	} else {
+		for _, milestone := range gitCMGeneratedMilestones(prompt.Generated, prompt.Profile) {
+			if err := adapter.run.Milestone(milestone); err != nil {
+				return false, false, err
+			}
+		}
 	}
 	answer, cancelled, err := adapter.ask(gitCMCommitRequest(prompt))
 	if err != nil || cancelled {
@@ -853,21 +857,27 @@ func terminalGitCMPhaseState(state PhaseState) terminalexperience.PhaseState {
 }
 
 func gitCMGeneratedDocument(generated GeneratedMessage, profile ProfileDiagnostic) terminalexperience.PresentationDocument {
-	coverage := generated.Evidence
-	blocks := []terminalexperience.PresentationBlock{
-		{Role: terminalexperience.VisualRoleSuccess, Text: generated.Message + "\n\n"},
-		{Role: terminalexperience.VisualRoleMuted, Text: fmt.Sprintf("Profile: %s (%s)", profile.Name, profile.Model)},
-		{Role: terminalexperience.VisualRoleMuted, Text: formatGitCMTokenUsage(generated.Usage)},
-		{Role: terminalexperience.VisualRoleMuted, Text: fmt.Sprintf("Local evidence estimate: ~%s serialized prompt tokens / %d of %d clusters / %d of %d facts", formatGitCMCount(float64(coverage.EstimatedLocalPromptTokens)), coverage.RepresentedClusters, coverage.TotalClusters, coverage.IncludedFacts, coverage.IncludedFacts+coverage.OmittedFacts)},
-	}
-	if coverage.ContentCompacted {
-		suffix := "s"
-		if coverage.TotalClusters == 1 {
-			suffix = ""
-		}
-		blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: fmt.Sprintf("Commit scope: %d cluster%s represented with compacted semantic evidence. This does not affect which files are committed.", coverage.TotalClusters, suffix)})
+	var blocks []terminalexperience.PresentationBlock
+	for _, document := range gitCMGeneratedMilestones(generated, profile) {
+		blocks = append(blocks, document.Blocks...)
 	}
 	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func gitCMGeneratedMilestones(generated GeneratedMessage, profile ProfileDiagnostic) []terminalexperience.PresentationDocument {
+	coverage := generated.Evidence
+	details := []string{
+		fmt.Sprintf("Profile: %s (%s)", profile.Name, profile.Model),
+		formatGitCMTokenUsage(generated.Usage),
+		fmt.Sprintf("Evidence: ~%s tokens; %d/%d clusters; %d/%d facts", formatGitCMCount(float64(coverage.EstimatedLocalPromptTokens)), coverage.RepresentedClusters, coverage.TotalClusters, coverage.IncludedFacts, coverage.IncludedFacts+coverage.OmittedFacts),
+	}
+	if coverage.ContentCompacted {
+		details = append(details, "Scope: compacted")
+	}
+	return []terminalexperience.PresentationDocument{
+		{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleSuccess, Text: generated.Message}}},
+		{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleMuted, Text: strings.Join(details, " · ")}}},
+	}
 }
 
 func gitCMGeneratedText(generated GeneratedMessage, profile ProfileDiagnostic) string {
@@ -877,7 +887,7 @@ func gitCMGeneratedText(generated GeneratedMessage, profile ProfileDiagnostic) s
 func gitCMFailureDocument(profile ProfileDiagnostic) terminalexperience.PresentationDocument {
 	return terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{
 		Role: terminalexperience.VisualRoleMuted,
-		Text: fmt.Sprintf("Provider: %s\nBase URL: %s\nModel: %s", safeCMText(profile.Name, "provider"), safeCMProfileURL(profile.BaseURL), safeCMText(profile.Model, "model")),
+		Text: fmt.Sprintf("Provider: %s · Base URL: %s · Model: %s", safeCMText(profile.Name, "provider"), safeCMProfileURL(profile.BaseURL), safeCMText(profile.Model, "model")),
 	}}}
 }
 

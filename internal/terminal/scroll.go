@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -193,8 +194,8 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 	if ansi.StringWidth(stripTerminalControl(model.consoleCommand()+"  "+model.console.Target+"  "+model.consoleStatusLabel())) > width {
 		blocks = append(blocks, scrollBlock{"identity", stripTerminalControl(model.consoleCommand() + " · " + model.console.Target)})
 	}
-	for i, field := range model.console.Metadata {
-		blocks = append(blocks, scrollBlock{fmt.Sprintf("metadata-%d", i), styles[VisualRoleMuted].Render(stripTerminalControl(field.Label)+" ") + stripTerminalControl(field.Value)})
+	if metadata := consoleMetadataText(model.console.Metadata, width, styles[VisualRoleMuted]); metadata != "" {
+		blocks = append(blocks, scrollBlock{"metadata", metadata})
 	}
 	for i, document := range model.notices {
 		if text := strings.TrimSuffix(renderRich(document, RichOptions{Color: model.color}), "\n"); text != "" {
@@ -205,6 +206,28 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 		blocks = append(blocks, scrollBlock{"form", active})
 	}
 	return blocks
+}
+
+func consoleMetadataText(fields []ConsoleMetadata, width int, muted lipgloss.Style) string {
+	const separator = " · "
+	var output strings.Builder
+	lineWidth := 0
+	for _, field := range fields {
+		item := muted.Render(stripTerminalControl(field.Label)+":") + " " + stripTerminalControl(field.Value)
+		itemWidth := ansi.StringWidth(item)
+		separatorWidth := ansi.StringWidth(separator)
+		if lineWidth > 0 && width > 0 && lineWidth+separatorWidth+itemWidth > width {
+			output.WriteByte('\n')
+			lineWidth = 0
+		}
+		if lineWidth > 0 {
+			output.WriteString(muted.Render(separator))
+			lineWidth += separatorWidth
+		}
+		output.WriteString(item)
+		lineWidth += itemWidth
+	}
+	return output.String()
 }
 
 func (model *richRootModel) handleScroll(message tea.Msg) bool {

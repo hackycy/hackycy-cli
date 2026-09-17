@@ -113,6 +113,31 @@ func TestTerminalGitCMAdapterMapsCancellationAndAutomationInteraction(t *testing
 	}
 }
 
+func TestTerminalGitCMDetailedCommitPreviewUsesSeparateTranscriptMilestones(t *testing.T) {
+	experience := terminaltest.NewRecordingExperience(terminaltest.SemanticAnswer{Value: terminalexperience.InteractionAnswer{Confirmed: true}})
+	adapter := newTerminalGitCMAdapter(experience.Open(context.Background()), func() {})
+	adapter.enableDetailed()
+	prompt := CommitPrompt{
+		Message:   "Create this commit?",
+		Generated: GeneratedMessage{Message: "feat: separate commit preview", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 120, RepresentedClusters: 1, TotalClusters: 1, IncludedFacts: 3}},
+		Profile:   ProfileDiagnostic{Name: "work", Model: "model"},
+	}
+	confirmed, cancelled, err := adapter.ConfirmCommit(prompt)
+	if err != nil || cancelled || !confirmed {
+		t.Fatalf("ConfirmCommit() = (%t, %t, %v)", confirmed, cancelled, err)
+	}
+
+	operations := experience.Run.Operations()
+	if len(operations) != 3 || operations[0].Kind != terminaltest.MilestoneOperation || operations[1].Kind != terminaltest.MilestoneOperation || operations[2].Kind != terminaltest.AskOperation {
+		t.Fatalf("operations = %#v", operations)
+	}
+	commit := terminalexperience.RenderPlain(operations[0].Value.(terminalexperience.PresentationDocument))
+	details := terminalexperience.RenderPlain(operations[1].Value.(terminalexperience.PresentationDocument))
+	if commit != "feat: separate commit preview\n" || !strings.HasPrefix(details, "Profile: work (model) · Provider tokens: unavailable · Evidence:") || strings.Contains(details, "feat: separate commit preview") {
+		t.Fatalf("commit/details milestones = (%q, %q)", commit, details)
+	}
+}
+
 func TestGitCMConsoleDescriptorDeclaresApplicableFormsBeforeInteraction(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -840,8 +865,17 @@ func TestGitCMDocumentsPreserveTheExistingPlainResults(t *testing.T) {
 		}
 	}
 	generated := gitCMGeneratedDocument(GeneratedMessage{Message: "feat: compact", Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 4000, RepresentedClusters: 2, TotalClusters: 3, IncludedFacts: 18, OmittedFacts: 13, ContentCompacted: true}}, ProfileDiagnostic{Name: "work", Model: "model"})
-	if got := terminalexperience.RenderPlain(generated); !strings.Contains(got, "Provider tokens: unavailable") || !strings.Contains(got, "4,000") || !strings.Contains(got, "3 clusters represented with compacted semantic evidence") {
-		t.Fatalf("generated output = %q", got)
+	if got, want := terminalexperience.RenderPlain(generated), "feat: compact\nProfile: work (model) · Provider tokens: unavailable · Evidence: ~4,000 tokens; 2/3 clusters; 18/31 facts · Scope: compacted\n"; got != want {
+		t.Fatalf("generated output = %q, want %q", got, want)
+	}
+	promptTokens, completionTokens, totalTokens := 10.0, 4.0, 14.0
+	generated = gitCMGeneratedDocument(GeneratedMessage{Message: "fix: usage", Usage: &TokenUsage{PromptTokens: &promptTokens, CompletionTokens: &completionTokens, TotalTokens: &totalTokens}, Evidence: EvidenceCoverage{EstimatedLocalPromptTokens: 80, RepresentedClusters: 1, TotalClusters: 1, IncludedFacts: 2}}, ProfileDiagnostic{Name: "team", Model: "provider-model"})
+	if got := terminalexperience.RenderPlain(generated); !strings.Contains(got, "Provider tokens: 10 prompt / 4 completion / 14 total") || strings.Contains(got, "Scope: compacted") {
+		t.Fatalf("generated usage output = %q", got)
+	}
+	failure := gitCMFailureDocument(ProfileDiagnostic{Name: "env", BaseURL: "https://user:secret@example.invalid/v1?token=secret", Model: "model"})
+	if got, want := terminalexperience.RenderPlain(failure), "Provider: env · Base URL: https://example.invalid/v1 · Model: model\n"; got != want {
+		t.Fatalf("failure output = %q, want %q", got, want)
 	}
 }
 

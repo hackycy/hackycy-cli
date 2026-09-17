@@ -135,7 +135,7 @@ func TestConsoleWideViewKeepsStableShellRegions(t *testing.T) {
 	if !view.AltScreen || !view.DisableBracketedPasteMode {
 		t.Fatalf("wide view terminal flags = %#v", view)
 	}
-	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace repo", "provider github", "✓ Scan  ─  ◆ Write", "Write", "pending"} {
+	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace: repo · provider: github", "✓ Scan  ─  ◆ Write", "Write", "pending"} {
 		if !strings.Contains(view.Content, needle) {
 			t.Fatalf("wide view missing %q: %q", needle, view.Content)
 		}
@@ -167,7 +167,7 @@ func TestConsoleCompactViewRetainsTrailAndActiveRegion(t *testing.T) {
 		{ID: "fetch", Name: "Fetch", State: PhaseActive, Detail: "commits"},
 	}}
 	view := model.View().Content
-	for _, needle := range []string{"YCY GIT", "scope workspace", "✓ Scan  ─  ◆ Fetch", "Fetch", "commits"} {
+	for _, needle := range []string{"YCY GIT", "scope: workspace", "✓ Scan  ─  ◆ Fetch", "Fetch", "commits"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("compact view missing %q: %q", needle, view)
 		}
@@ -480,6 +480,43 @@ func TestConsoleNormalizedProjectionKeepsMetadataWithinWidth(t *testing.T) {
 		}
 	}
 
+}
+
+func TestConsoleMetadataPacksFieldsAndWrapsOnlyAtFieldBoundaries(t *testing.T) {
+	fields := []ConsoleMetadata{
+		{Label: "mode", Value: "stage and commit"},
+		{Label: "language", Value: "en"},
+		{Label: "remote", Value: "origin"},
+	}
+	muted := richStyles(false)[VisualRoleMuted]
+	if got, want := consoleMetadataText(fields, 120, muted), "mode: stage and commit · language: en · remote: origin"; got != want {
+		t.Fatalf("wide metadata = %q, want %q", got, want)
+	}
+	if got, want := consoleMetadataText(fields, 30, muted), "mode: stage and commit\nlanguage: en · remote: origin"; got != want {
+		t.Fatalf("compact metadata = %q, want %q", got, want)
+	}
+}
+
+func TestConsoleMetadataLongFieldWrapsWithoutTruncation(t *testing.T) {
+	value := "工作区/" + strings.Repeat("long-directory/", 6)
+	text := consoleMetadataText([]ConsoleMetadata{{Label: "directory", Value: "\x1b[31m" + value + "\x1b[0m"}}, 24, richStyles(true)[VisualRoleMuted])
+	if strings.Contains(text, "\x1b[31m") || !strings.Contains(ansi.Strip(text), value) {
+		t.Fatalf("metadata was not safely preserved: %q", text)
+	}
+
+	scroll := newConsoleScroll()
+	scroll.setContent([]scrollBlock{{id: "metadata", text: text}}, 24, 10)
+	lines := strings.Split(scroll.viewport.View(), "\n")
+	var joined strings.Builder
+	for _, line := range lines {
+		if ansi.StringWidth(line) > 24 {
+			t.Fatalf("metadata line exceeds width: %d > 24: %q", ansi.StringWidth(line), line)
+		}
+		joined.WriteString(strings.TrimSpace(ansi.Strip(line)))
+	}
+	if !strings.Contains(joined.String(), value) {
+		t.Fatalf("wrapped metadata was truncated: %q", lines)
+	}
 }
 
 func TestConsoleModelUsesFocusPaletteAndNoColorRemovesSGR(t *testing.T) {

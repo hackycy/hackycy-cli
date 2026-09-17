@@ -137,7 +137,7 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	live := cmListPTYText(output[enter:leave])
 	expected := []string{
 		"YCY / config cm list",
-		"scope commit message configuration",
+		"scope: commit message configuration",
 		"Default profile: personal",
 	}
 	if wide {

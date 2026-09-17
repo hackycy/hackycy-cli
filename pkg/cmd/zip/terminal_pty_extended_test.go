@@ -391,7 +391,7 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 		}
 	}
 	if wide {
-		for _, expected := range []string{"Plan and publish a bounded archive", "Zip Directory", "with-dir enabled", "reveal enabled"} {
+		for _, expected := range []string{"Plan and publish a bounded archive", "Zip Directory", "with-dir: enabled", "reveal: enabled"} {
 			if !strings.Contains(live, expected) {
 				t.Fatalf("wide zip Rich PTY omitted descriptor context %q: %q", expected, output)
 			}

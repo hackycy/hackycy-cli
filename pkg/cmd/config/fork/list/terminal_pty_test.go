@@ -137,7 +137,7 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 	live := forkListPTYText(output[enter:leave])
 	expected := []string{
 		"YCY / config fork list",
-		"scope git fork configuration",
+		"scope: git fork configuration",
 		"Loaded 1 fork provider instance",
 	}
 	if wide {

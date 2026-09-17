@@ -263,7 +263,7 @@ func assertFocusTrackedConsole(t *testing.T, output string, color bool) {
 	t.Helper()
 	plain := strings.Join(strings.Fields(ansi.Strip(output)), " ")
 	for _, needle := range []string{
-		"YCY", "terminal session", "mode interactive",
+		"YCY", "terminal session", "mode: interactive",
 		"Scanning repositories", "workspace/project", "Fetching commits",
 	} {
 		if !strings.Contains(plain, needle) {

@@ -210,6 +210,7 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("git cm push leaked provider credential: %q", output)
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
+	assertGitCMGeneratedTranscriptLines(t, transcript, "feat: rich push")
 	for _, expected := range []string{"Verify unchanged scope (completed)", "Create commit (completed)", "Push commit (completed)", "succeeded", "Commit created and pushed"} {
 		if !strings.Contains(transcript, expected) {
 			t.Fatalf("git cm push Transcript missing %q: %q", expected, output)
@@ -597,6 +598,7 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 		t.Fatalf("git cm PTY leaked provider credential or URL: %q", output)
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
+	assertGitCMGeneratedTranscriptLines(t, transcript, "feat: rich stage and commit")
 	ordered := []string{"Inspect changes (completed)", "Stage selected files (completed)", "Capture commit evidence (completed)", "Resolve provider profile (completed)", "Generate commit message (completed)", "Verify unchanged scope (completed)", "Create commit (completed)", "succeeded", "Commit created"}
 	last := 0
 	for _, expected := range ordered {
@@ -612,6 +614,19 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 				t.Fatalf("NO_COLOR git cm PTY output contains %q: %q", prefix, output)
 			}
 		}
+	}
+}
+
+func assertGitCMGeneratedTranscriptLines(t *testing.T, transcript, message string) {
+	t.Helper()
+	details := "Profile: env (fixture-model) · Provider tokens: unavailable · Evidence:"
+	commitIndex := strings.Index(transcript, message)
+	detailsIndex := strings.Index(transcript, details)
+	if commitIndex < 0 || detailsIndex <= commitIndex || !strings.Contains(transcript[commitIndex+len(message):detailsIndex], "\n") {
+		t.Fatalf("git cm Transcript did not separate commit and diagnostics: %q", transcript)
+	}
+	if strings.Contains(transcript, message+" "+details) {
+		t.Fatalf("git cm Transcript joined commit and diagnostics: %q", transcript)
 	}
 }
 
