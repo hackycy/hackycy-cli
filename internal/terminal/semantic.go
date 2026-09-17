@@ -132,6 +132,7 @@ const (
 	VisualRoleWarning
 	VisualRoleError
 	VisualRoleMuted
+	VisualRoleIdentity
 )
 
 // PresentationBlock is one block of terminal presentation text.

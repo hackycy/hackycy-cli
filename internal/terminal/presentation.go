@@ -169,13 +169,14 @@ func durableRichStyles(color bool) map[VisualRole]lipgloss.Style {
 func richStyles(color bool) map[VisualRole]lipgloss.Style {
 	plain := lipgloss.NewStyle()
 	styles := map[VisualRole]lipgloss.Style{
-		VisualRolePlain:   plain,
-		VisualRoleTitle:   plain,
-		VisualRoleActive:  plain,
-		VisualRoleSuccess: plain,
-		VisualRoleWarning: plain,
-		VisualRoleError:   plain,
-		VisualRoleMuted:   plain,
+		VisualRolePlain:    plain,
+		VisualRoleTitle:    plain,
+		VisualRoleActive:   plain,
+		VisualRoleSuccess:  plain,
+		VisualRoleWarning:  plain,
+		VisualRoleError:    plain,
+		VisualRoleMuted:    plain,
+		VisualRoleIdentity: plain,
 	}
 	if !color {
 		return styles
@@ -188,6 +189,7 @@ func richStyles(color bool) map[VisualRole]lipgloss.Style {
 	styles[VisualRoleWarning] = plain.Foreground(lipgloss.Color(bConsoleWarning)).Bold(true)
 	styles[VisualRoleError] = plain.Foreground(lipgloss.Color(bConsoleError)).Bold(true)
 	styles[VisualRoleMuted] = plain.Foreground(lipgloss.Color(bConsoleMuted)).Faint(true)
+	styles[VisualRoleIdentity] = plain.Foreground(lipgloss.Color(bConsolePrimary)).Bold(true)
 	return styles
 }
 

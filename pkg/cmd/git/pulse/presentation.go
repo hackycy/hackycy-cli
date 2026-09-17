@@ -64,7 +64,7 @@ func pulseCommitPresentationBlock(commit Commit, connector string, width int) te
 		spans := []terminalexperience.PresentationSpan{
 			{Role: terminalexperience.VisualRoleMuted, Text: date},
 			{Role: terminalexperience.VisualRoleMuted, Text: " | "},
-			{Role: terminalexperience.VisualRoleActive, Text: author},
+			{Role: terminalexperience.VisualRoleIdentity, Text: author},
 			{Role: terminalexperience.VisualRoleMuted, Text: " | "},
 		}
 		subjectLines := terminalexperience.WrapTextLines(subject, width-widePrefixWidth)
@@ -81,7 +81,7 @@ func pulseCommitPresentationBlock(commit Commit, connector string, width int) te
 	contentWidth := max(width-terminalexperience.TextWidth(pulseCommitIndent), 1)
 	spans := pulseAppendWrappedSpans(nil, terminalexperience.VisualRoleMuted, date, contentWidth)
 	spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent})
-	spans = pulseAppendWrappedSpans(spans, terminalexperience.VisualRoleActive, author, contentWidth)
+	spans = pulseAppendWrappedSpans(spans, terminalexperience.VisualRoleIdentity, author, contentWidth)
 	spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent})
 	spans = pulseAppendWrappedSpans(spans, terminalexperience.VisualRolePlain, subject, contentWidth)
 	return terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: prefix, Spans: spans}
