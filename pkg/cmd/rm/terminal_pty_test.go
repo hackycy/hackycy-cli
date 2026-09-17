@@ -159,6 +159,33 @@ func TestRunRMSmartRichPTYRestoresScreenAndProjectsTranscript(t *testing.T) {
 	}
 }
 
+func TestRunRMSmartRichPTYSkipsEmptyTargetSelectionAndExits(t *testing.T) {
+	const helperEnvironment = "YCY_RM_SMART_EMPTY_RICH_HELPER"
+	if os.Getenv(helperEnvironment) == "1" {
+		runRMSmartEmptyRichPTYHelper(t)
+		return
+	}
+
+	for _, testCase := range []struct {
+		name  string
+		extra string
+		color bool
+	}{
+		{name: "color", color: true},
+		{name: "no color", extra: "NO_COLOR=1", color: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			command := exec.Command(os.Args[0], "-test.run=^TestRunRMSmartRichPTYSkipsEmptyTargetSelectionAndExits$")
+			command.Env = append(rmPTYEnvironment(), helperEnvironment+"=1", "TERM=xterm-256color")
+			if testCase.extra != "" {
+				command.Env = append(command.Env, testCase.extra)
+			}
+			output := runRMPTYProcess(t, command, []rmPTYStep{{needle: "Select a clean action", input: "\r"}})
+			assertRMSmartEmptyRichPTYOutput(t, output, testCase.color)
+		})
+	}
+}
+
 func TestRunRMExplicitRichPTYCancellationRestoresScreenWithoutMutation(t *testing.T) {
 	const helperEnvironment = "YCY_RM_CANCEL_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
@@ -278,6 +305,27 @@ func runRMSmartRichPTYHelper(t *testing.T) {
 	_, _ = fmt.Fprintln(os.Stderr, "RM_SMART_WRITE_OK")
 }
 
+func runRMSmartEmptyRichPTYHelper(t *testing.T) {
+	t.Helper()
+	root := t.TempDir()
+	experience := newRMRichPTYExperience()
+	err := runRM(&Options{
+		Context: context.Background(),
+		WorkingDirectory: func() (string, error) {
+			return root, nil
+		},
+		Terminal: experience,
+		Remover: pathRemoverFunc(func(path string) error {
+			t.Fatalf("zero-candidate flow attempted to remove %q", path)
+			return nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("runRM() error = %v", err)
+	}
+	_, _ = fmt.Fprintln(os.Stderr, "RM_EMPTY_NO_WRITE_OK")
+}
+
 func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 	t.Helper()
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
@@ -329,6 +377,108 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
+	}
+}
+
+func assertRMSmartEmptyRichPTYOutput(t *testing.T, output string, color bool) {
+	t.Helper()
+	visible := strings.ReplaceAll(output, "\r\n", "\n")
+	for _, expected := range []string{
+		"YCY / rm",
+		"Select a clean action",
+		"Scan cleanup targets",
+		"Found 0 targets",
+		"No matching items found. Target selection skipped.",
+		"Cleanup complete",
+		"Nothing to clean.",
+		"RM_EMPTY_NO_WRITE_OK",
+	} {
+		if !strings.Contains(visible, expected) {
+			t.Fatalf("Rich PTY zero-candidate output missing %q: %q", expected, output)
+		}
+	}
+	for _, unexpected := range []string{"Select items to delete", "Selected targets", "Delete selected paths", "Deleted ", "Done!"} {
+		if strings.Contains(visible, unexpected) {
+			t.Fatalf("Rich PTY zero-candidate output contains %q: %q", unexpected, output)
+		}
+	}
+	enter := strings.Index(visible, "\x1b[?1049h")
+	leave := strings.LastIndex(visible, "\x1b[?1049l")
+	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
+		t.Fatalf("Rich PTY zero-candidate flow did not restore the primary screen: %q", output)
+	}
+	transcript := terminaltest.StripANSI(visible[leave:])
+	ordered := []string{
+		"ANSWERS",
+		"Cleanup action: Node project - delete ./dist",
+		"WORK",
+		"Scan cleanup targets (completed)",
+		"OUTCOME  succeeded",
+		"Cleanup complete",
+		"Nothing to clean.",
+	}
+	last := 0
+	for _, expected := range ordered {
+		next := strings.Index(transcript[last:], expected)
+		if next < 0 {
+			t.Fatalf("Rich PTY zero-candidate transcript missing ordered event %q: %q", expected, output)
+		}
+		last += next + len(expected)
+	}
+	if !color {
+		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
+				t.Fatalf("no-color Rich PTY zero-candidate output contains %q: %q", prefix, output)
+			}
+		}
+	}
+}
+
+func TestRunRMSmartTerminalZeroCandidatesStopsBeforeTargetSelection(t *testing.T) {
+	root := t.TempDir()
+	experience := terminaltest.NewRecordingExperience(terminaltest.SemanticAnswer{
+		Value: terminalexperience.InteractionAnswer{Value: smartActionNodeDist},
+	})
+	run := experience.Open(context.Background())
+	caps := terminalexperience.Capabilities{
+		Interaction: terminalexperience.RichInteractive,
+		Stdout:      terminalexperience.StreamCapability{Terminal: true},
+	}
+	remover := &recordingRemover{}
+	sink := newRMPhaseSink(run, caps)
+
+	if err := runRMSmartTerminal(context.Background(), caps, sink, newTerminalRMAdapter(run), remover, root, Input{}, run); err != nil {
+		t.Fatalf("runRMSmartTerminal() error = %v", err)
+	}
+	if calls := remover.callsSnapshot(); len(calls) != 0 {
+		t.Fatalf("zero-candidate remover calls = %#v, want none", calls)
+	}
+
+	operations := experience.Run.Operations()
+	var asks []terminalexperience.InteractionRequest
+	var notice string
+	var finish terminaltest.Finish
+	for _, operation := range operations {
+		switch operation.Kind {
+		case terminaltest.AskOperation:
+			asks = append(asks, operation.Value.(terminalexperience.InteractionRequest))
+		case terminaltest.NoticeOperation:
+			notice += terminalexperience.RenderPlain(operation.Value.(terminalexperience.PresentationDocument))
+		case terminaltest.FinishOperation:
+			finish = operation.Value.(terminaltest.Finish)
+		}
+	}
+	if len(asks) != 1 || asks[0].ConsoleStepID != rmSmartActionFormID {
+		t.Fatalf("zero-candidate interactions = %#v, want only smart action", asks)
+	}
+	if notice != "No matching items found. Target selection skipped.\n" {
+		t.Fatalf("zero-candidate notice = %q", notice)
+	}
+	if finish.Request.Outcome != terminalexperience.Succeeded || terminalexperience.RenderPlain(finish.Request.Summary) != "Cleanup complete\n" {
+		t.Fatalf("zero-candidate finish = %#v", finish)
+	}
+	if len(finish.Documents) != 1 || finish.Documents[0] == nil || !strings.Contains(terminalexperience.RenderPlain(*finish.Documents[0]), "Nothing to clean.") {
+		t.Fatalf("zero-candidate result = %#v", finish.Documents)
 	}
 }
 

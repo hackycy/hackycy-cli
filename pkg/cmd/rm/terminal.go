@@ -536,7 +536,7 @@ func presentRMSmartEmpty(caps terminalexperience.Capabilities, run terminalexper
 	if caps.Interaction == terminalexperience.Automation {
 		return nil
 	}
-	return run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleMuted, Text: "No targets found."}}})
+	return run.Notice(terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleMuted, Text: "No matching items found. Target selection skipped."}}})
 }
 
 func presentRMDeletion(caps terminalexperience.Capabilities, run terminalexperience.ExperienceRun, root string, result deletionResult) error {

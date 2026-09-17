@@ -124,6 +124,36 @@ func TestTerminalRMAdapterPlainPreservesLegacyInputGrammarAndMutationBoundaries(
 	}
 }
 
+func TestTerminalRMAdapterPlainSkipsTargetSelectionWhenScanFindsNoCandidates(t *testing.T) {
+	root := t.TempDir()
+	stdout, diagnostics := &bytes.Buffer{}, &bytes.Buffer{}
+	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
+		Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},
+		Input:        strings.NewReader("1\n"),
+		Output:       stdout,
+		Diagnostics:  diagnostics,
+	})
+	withRMWorkingDirectory(t, root)
+
+	if err := runRMForTest(context.Background(), experience, Input{}); err != nil {
+		t.Fatalf("runRM() error = %v", err)
+	}
+	allOutput := stdout.String() + diagnostics.String()
+	for _, expected := range []string{"No matching items found. Target selection skipped.", "Nothing to clean."} {
+		if !strings.Contains(allOutput, expected) {
+			t.Fatalf("Plain streams = (%q, %q), missing %q", stdout.String(), diagnostics.String(), expected)
+		}
+	}
+	for _, unexpected := range []string{"Select items to delete", "Delete selected paths", "Deleted ", "Done!"} {
+		if strings.Contains(allOutput, unexpected) {
+			t.Fatalf("Plain zero-candidate flow contains %q: (%q, %q)", unexpected, stdout.String(), diagnostics.String())
+		}
+	}
+	if terminaltest.ContainsTerminalControl(append(append([]byte{}, stdout.Bytes()...), diagnostics.Bytes()...)) {
+		t.Fatalf("Plain streams contain terminal control: (%q, %q)", stdout.String(), diagnostics.String())
+	}
+}
+
 func TestRMAutomationPreservesForceAndNoTargetPathsAndFailsPromptPathsBeforeEffects(t *testing.T) {
 	root := t.TempDir()
 	forcedTarget := writeStandaloneRMFile(t, root, "forced.txt")
