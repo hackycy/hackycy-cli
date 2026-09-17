@@ -12,6 +12,8 @@ import (
 	terminalexperience "github.com/hackycy/hackycy-cli/internal/terminal"
 )
 
+const pulseCommitIndent = "      "
+
 func terminalPulseRichDocumentForWidth(root string, report Report, width int) terminalexperience.PresentationDocument {
 	if width <= 0 {
 		width = pulseRichDefaultWidth
@@ -22,12 +24,23 @@ func terminalPulseRichDocumentForWidth(root string, report Report, width int) te
 		{Role: terminalexperience.VisualRoleMuted, Text: "Recent commits grouped by repository"},
 		{Role: terminalexperience.VisualRoleSuccess, Text: fmt.Sprintf("Found %d %s in %d %s", report.CommitCount, pulsePlural(report.CommitCount, "commit", "commits"), len(report.Repositories), pulsePlural(len(report.Repositories), "repository", "repositories"))},
 	}
-	for _, repository := range report.Repositories {
+	for repositoryIndex, repository := range report.Repositories {
+		if repositoryIndex > 0 {
+			blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRolePlain, Text: "\n"})
+		}
 		relative := pulseSafeRelativePath(root, repository.Path)
 		name := safePulseValue(filepath.Base(relative))
 		parent := safePulseValue(filepath.Dir(relative))
+		count := fmt.Sprintf(" (%d %s)", len(repository.Commits), pulsePlural(len(repository.Commits), "commit", "commits"))
 		blocks = append(blocks,
-			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleActive, Text: fmt.Sprintf("%s (%d %s)", name, len(repository.Commits), pulsePlural(len(repository.Commits), "commit", "commits"))},
+			terminalexperience.PresentationBlock{
+				Role: terminalexperience.VisualRoleActive,
+				Text: name,
+				Spans: []terminalexperience.PresentationSpan{{
+					Role: terminalexperience.VisualRoleMuted,
+					Text: count,
+				}},
+			},
 			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "   " + parent + string(filepath.Separator)},
 		)
 		for index, commit := range repository.Commits {
@@ -35,17 +48,53 @@ func terminalPulseRichDocumentForWidth(root string, report Report, width int) te
 			if index == len(repository.Commits)-1 {
 				connector = "`-"
 			}
-			date := safePulseValue(commit.Date)
-			author := safePulseValue(commit.Author)
-			subject := safePulseValue(commit.Subject)
-			text := fmt.Sprintf("   %s %s | %s | %s", connector, date, author, subject)
-			if width < pulseRichNarrowWidth {
-				text = fmt.Sprintf("   %s %s | %s\n      %s", connector, date, author, subject)
-			}
-			blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRolePlain, Text: text})
+			blocks = append(blocks, pulseCommitPresentationBlock(commit, connector, width))
 		}
 	}
 	return terminalexperience.PresentationDocument{Blocks: blocks}
+}
+
+func pulseCommitPresentationBlock(commit Commit, connector string, width int) terminalexperience.PresentationBlock {
+	date := safePulseValue(commit.Date)
+	author := safePulseValue(commit.Author)
+	subject := safePulseValue(commit.Subject)
+	prefix := "   " + connector + " "
+	widePrefixWidth := terminalexperience.TextWidth(prefix + date + " | " + author + " | ")
+	if width >= pulseRichNarrowWidth && widePrefixWidth < width {
+		spans := []terminalexperience.PresentationSpan{
+			{Role: terminalexperience.VisualRoleMuted, Text: date},
+			{Role: terminalexperience.VisualRoleMuted, Text: " | "},
+			{Role: terminalexperience.VisualRoleActive, Text: author},
+			{Role: terminalexperience.VisualRoleMuted, Text: " | "},
+		}
+		subjectLines := terminalexperience.WrapTextLines(subject, width-widePrefixWidth)
+		spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRolePlain, Text: subjectLines[0]})
+		for _, line := range subjectLines[1:] {
+			spans = append(spans,
+				terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent},
+				terminalexperience.PresentationSpan{Role: terminalexperience.VisualRolePlain, Text: line},
+			)
+		}
+		return terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: prefix, Spans: spans}
+	}
+
+	contentWidth := max(width-terminalexperience.TextWidth(pulseCommitIndent), 1)
+	spans := pulseAppendWrappedSpans(nil, terminalexperience.VisualRoleMuted, date, contentWidth)
+	spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent})
+	spans = pulseAppendWrappedSpans(spans, terminalexperience.VisualRoleActive, author, contentWidth)
+	spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent})
+	spans = pulseAppendWrappedSpans(spans, terminalexperience.VisualRolePlain, subject, contentWidth)
+	return terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: prefix, Spans: spans}
+}
+
+func pulseAppendWrappedSpans(spans []terminalexperience.PresentationSpan, role terminalexperience.VisualRole, value string, width int) []terminalexperience.PresentationSpan {
+	for index, line := range terminalexperience.WrapTextLines(value, width) {
+		if index > 0 {
+			spans = append(spans, terminalexperience.PresentationSpan{Role: terminalexperience.VisualRoleMuted, Text: "\n" + pulseCommitIndent})
+		}
+		spans = append(spans, terminalexperience.PresentationSpan{Role: role, Text: line})
+	}
+	return spans
 }
 
 func pulseSafeRelativePath(root, path string) string {

@@ -139,6 +139,14 @@ type PresentationBlock struct {
 	Role      VisualRole
 	Text      string
 	Sensitive bool
+	Spans     []PresentationSpan
+}
+
+// PresentationSpan appends inline text with its own semantic role to a block.
+type PresentationSpan struct {
+	Role      VisualRole
+	Text      string
+	Sensitive bool
 }
 
 // PresentationDocument is presentation content assembled from semantic roles.

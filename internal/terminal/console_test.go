@@ -34,6 +34,27 @@ func TestOpenConsoleNormalizesSafeBoundedDescriptorBeforeRichUse(t *testing.T) {
 	}
 }
 
+func TestNormalizeFinishRequestPreservesSafeInlineSummarySpans(t *testing.T) {
+	request, err := normalizeFinishRequest(FinishRequest{
+		Outcome: Succeeded,
+		Summary: PresentationDocument{Blocks: []PresentationBlock{{
+			Role: VisualRoleMuted,
+			Text: " time\n",
+			Spans: []PresentationSpan{
+				{Role: VisualRoleActive, Text: " author\x1b[31m "},
+				{Role: VisualRolePlain, Text: " secret ", Sensitive: true},
+			},
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("normalizeFinishRequest() error = %v", err)
+	}
+	block := request.Summary.Blocks[0]
+	if block.Text != "time" || len(block.Spans) != 2 || block.Spans[0].Text != "author" || block.Spans[0].Role != VisualRoleActive || block.Spans[1].Text != "secret" || !block.Spans[1].Sensitive {
+		t.Fatalf("normalized inline summary = %#v", block)
+	}
+}
+
 func TestOpenConsoleRichPreflightFailureFallsBackToPlain(t *testing.T) {
 	var diagnostics bytes.Buffer
 	runtime := NewExperience(ExperienceOptions{

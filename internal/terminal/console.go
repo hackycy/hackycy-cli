@@ -126,7 +126,20 @@ func normalizeFinishRequest(request FinishRequest) (FinishRequest, error) {
 		if err != nil {
 			return FinishRequest{}, fmt.Errorf("%w: %v", ErrInvalidFinishRequest, err)
 		}
-		summary.Blocks = append(summary.Blocks, PresentationBlock{Role: block.Role, Text: text, Sensitive: block.Sensitive})
+		spans := make([]PresentationSpan, 0, len(block.Spans))
+		totalBytes := len(text)
+		for _, span := range block.Spans {
+			spanText, err := normalizeConsoleField(span.Text, "summary", false)
+			if err != nil {
+				return FinishRequest{}, fmt.Errorf("%w: %v", ErrInvalidFinishRequest, err)
+			}
+			totalBytes += len(spanText)
+			spans = append(spans, PresentationSpan{Role: span.Role, Text: spanText, Sensitive: span.Sensitive})
+		}
+		if totalBytes > maxConsoleField {
+			return FinishRequest{}, fmt.Errorf("%w: summary exceeds %d bytes", ErrInvalidFinishRequest, maxConsoleField)
+		}
+		summary.Blocks = append(summary.Blocks, PresentationBlock{Role: block.Role, Text: text, Sensitive: block.Sensitive, Spans: spans})
 	}
 	request.Location = location
 	request.Summary = summary

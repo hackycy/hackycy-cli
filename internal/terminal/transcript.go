@@ -357,10 +357,7 @@ func interactionTranscriptText(request InteractionRequest, answer InteractionAns
 func (document PresentationDocument) transcriptText() string {
 	parts := make([]string, 0, len(document.Blocks))
 	for _, block := range document.Blocks {
-		text := block.Text
-		if block.Sensitive {
-			text = "[redacted]"
-		}
+		text := presentationBlockText(block)
 		if text != "" {
 			parts = append(parts, text)
 		}

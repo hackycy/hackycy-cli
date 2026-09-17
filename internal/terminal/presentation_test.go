@@ -57,6 +57,79 @@ func TestWritePlainRedactsSensitiveBlocks(t *testing.T) {
 	}
 }
 
+func TestPresentationSpansKeepPlainContentSafeAndRedacted(t *testing.T) {
+	document := terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{
+		{
+			Role: terminal.VisualRoleMuted,
+			Text: "2026-09-17\x1b[2K | ",
+			Spans: []terminal.PresentationSpan{
+				{Role: terminal.VisualRoleActive, Text: "Ada"},
+				{Role: terminal.VisualRoleMuted, Text: " | "},
+				{Role: terminal.VisualRolePlain, Text: "secret", Sensitive: true},
+			},
+		},
+		{Text: "ignored", Sensitive: true, Spans: []terminal.PresentationSpan{{Text: "also ignored"}}},
+	}}
+
+	if got, want := terminal.RenderPlain(document), "2026-09-17 | Ada | [redacted]\n[redacted]\n"; got != want {
+		t.Fatalf("plain inline document = %q, want %q", got, want)
+	}
+}
+
+func TestWriteRichStylesInlineSpansWithoutChangingVisibleContent(t *testing.T) {
+	document := terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+		Role: terminal.VisualRoleMuted,
+		Text: "2026-09-17 14:32:05 | ",
+		Spans: []terminal.PresentationSpan{
+			{Role: terminal.VisualRoleActive, Text: "Ada Lovelace"},
+			{Role: terminal.VisualRoleMuted, Text: " | "},
+			{Role: terminal.VisualRolePlain, Text: "feat: add cache support"},
+		},
+	}}}
+
+	var colored bytes.Buffer
+	if err := terminal.WriteRich(&colored, document, terminal.RichOptions{Width: 120, Color: true}); err != nil {
+		t.Fatalf("WriteRich(color) error = %v", err)
+	}
+	if got, want := ansi.Strip(colored.String()), terminal.RenderPlain(document); got != want {
+		t.Fatalf("colored visible content = %q, want %q", got, want)
+	}
+	for _, sequence := range []string{"\x1b[2;", "\x1b[1;"} {
+		if !strings.Contains(colored.String(), sequence) {
+			t.Fatalf("colored inline document missing semantic style %q: %q", sequence, colored.String())
+		}
+	}
+
+	var noColor bytes.Buffer
+	if err := terminal.WriteRich(&noColor, document, terminal.RichOptions{Width: 120, Color: false}); err != nil {
+		t.Fatalf("WriteRich(NO_COLOR) error = %v", err)
+	}
+	if got, want := noColor.String(), terminal.RenderPlain(document); got != want {
+		t.Fatalf("NO_COLOR inline document = %q, want %q", got, want)
+	}
+	if terminaltest.ContainsTerminalControl(noColor.Bytes()) {
+		t.Fatalf("NO_COLOR inline document contains terminal control: %q", noColor.String())
+	}
+}
+
+func TestWriteRichWrapsStyledUnicodeSpansByTerminalCells(t *testing.T) {
+	document := terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{
+		Role:  terminal.VisualRoleMuted,
+		Text:  "作者: ",
+		Spans: []terminal.PresentationSpan{{Role: terminal.VisualRoleActive, Text: "艾达洛夫莱斯提交记录"}},
+	}}}
+
+	var output bytes.Buffer
+	if err := terminal.WriteRich(&output, document, terminal.RichOptions{Width: 10, Color: true}); err != nil {
+		t.Fatalf("WriteRich() error = %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(ansi.Strip(output.String()), "\n"), "\n") {
+		if width := ansi.StringWidth(line); width > 10 {
+			t.Fatalf("wrapped line width = %d, want <= 10: %q", width, line)
+		}
+	}
+}
+
 func TestWriteRichWrapsWithoutTruncating(t *testing.T) {
 	var stdout bytes.Buffer
 	document := terminal.PresentationDocument{

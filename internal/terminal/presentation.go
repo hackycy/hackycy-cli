@@ -17,11 +17,7 @@ func RenderPlain(document PresentationDocument) string {
 		if index > 0 && output.Len() > 0 && !strings.HasSuffix(output.String(), "\n") {
 			output.WriteByte('\n')
 		}
-		text := block.Text
-		if block.Sensitive {
-			text = "[redacted]"
-		}
-		output.WriteString(stripTerminalControl(text))
+		output.WriteString(stripTerminalControl(presentationBlockText(block)))
 	}
 	if output.Len() > 0 && !strings.HasSuffix(output.String(), "\n") {
 		output.WriteByte('\n')
@@ -45,6 +41,22 @@ func WriteRich(output io.Writer, document PresentationDocument, options RichOpti
 	return writeComplete(output, renderRich(document, options))
 }
 
+// TextWidth returns the number of terminal cells occupied by safe visible text.
+func TextWidth(value string) int {
+	return ansi.StringWidth(stripTerminalControl(value))
+}
+
+// WrapTextLines wraps safe visible text to a terminal-cell width without truncating it.
+func WrapTextLines(value string, width int) []string {
+	value = stripTerminalControl(value)
+	if width <= 0 {
+		return []string{value}
+	}
+	wrapped := ansi.Wordwrap(value, width, "")
+	wrapped = ansi.Hardwrap(wrapped, width, false)
+	return strings.Split(wrapped, "\n")
+}
+
 func writeComplete(output io.Writer, value string) error {
 	written, err := io.WriteString(output, value)
 	if err != nil {
@@ -60,16 +72,34 @@ func renderRich(document PresentationDocument, options RichOptions) string {
 	var output strings.Builder
 	styles := durableRichStyles(options.Color)
 	grouped := make([]struct {
-		role VisualRole
-		text string
+		role   VisualRole
+		text   string
+		styled bool
 	}, 0, len(document.Blocks))
 	for _, block := range document.Blocks {
+		if len(block.Spans) > 0 && !block.Sensitive {
+			var text strings.Builder
+			text.WriteString(styles[block.Role].Render(stripTerminalControl(block.Text)))
+			for _, span := range block.Spans {
+				value := span.Text
+				if span.Sensitive {
+					value = "[redacted]"
+				}
+				text.WriteString(styles[span.Role].Render(stripTerminalControl(value)))
+			}
+			grouped = append(grouped, struct {
+				role   VisualRole
+				text   string
+				styled bool
+			}{text: wrapStyledText(text.String(), options.Width), styled: true})
+			continue
+		}
 		text := block.Text
 		if block.Sensitive {
 			text = "[redacted]"
 		}
 		text = wrapText(stripTerminalControl(text), options.Width)
-		if len(grouped) > 0 && grouped[len(grouped)-1].role == block.Role {
+		if len(grouped) > 0 && !grouped[len(grouped)-1].styled && grouped[len(grouped)-1].role == block.Role {
 			if grouped[len(grouped)-1].text != "" && text != "" && !strings.HasSuffix(grouped[len(grouped)-1].text, "\n") {
 				grouped[len(grouped)-1].text += "\n"
 			}
@@ -77,20 +107,48 @@ func renderRich(document PresentationDocument, options RichOptions) string {
 			continue
 		}
 		grouped = append(grouped, struct {
-			role VisualRole
-			text string
+			role   VisualRole
+			text   string
+			styled bool
 		}{role: block.Role, text: text})
 	}
 	for index, block := range grouped {
 		if index > 0 && output.Len() > 0 && !strings.HasSuffix(output.String(), "\n") {
 			output.WriteByte('\n')
 		}
-		output.WriteString(styles[block.role].Render(block.text))
+		if block.styled {
+			output.WriteString(block.text)
+		} else {
+			output.WriteString(styles[block.role].Render(block.text))
+		}
 	}
 	if len(document.Blocks) > 0 && !strings.HasSuffix(output.String(), "\n") {
 		output.WriteByte('\n')
 	}
 	return output.String()
+}
+
+func presentationBlockText(block PresentationBlock) string {
+	if block.Sensitive {
+		return "[redacted]"
+	}
+	var output strings.Builder
+	output.WriteString(block.Text)
+	for _, span := range block.Spans {
+		if span.Sensitive {
+			output.WriteString("[redacted]")
+			continue
+		}
+		output.WriteString(span.Text)
+	}
+	return output.String()
+}
+
+func wrapStyledText(value string, width int) string {
+	if width <= 0 {
+		return value
+	}
+	return ansi.Hardwrap(ansi.Wordwrap(value, width, ""), width, true)
 }
 
 // durableRichStyles projects command-owned documents with the same B palette
