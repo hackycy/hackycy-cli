@@ -114,6 +114,7 @@ func runUpgradePTYProcess(t *testing.T, command *exec.Cmd, width, height uint16)
 	if _, err := process.Terminal().Write([]byte("x\n")); err != nil {
 		t.Fatalf("release PTY helper after sizing: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}

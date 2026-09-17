@@ -281,18 +281,10 @@ func runZIPExtendedPTYProcess(t *testing.T, command *exec.Cmd, width, height uin
 			t.Fatalf("request zip planning cancellation: %v", err)
 		}
 	} else {
-		compact := width < 70
-		advanceZIPSelect(t, &output, process, "Select a package", compact)
-		advanceZIPSelect(t, &output, process, "Select a directory", compact)
-		advanceZIPSelect(t, &output, process, "Select file patterns", compact)
-		// At 40x15 the compact root can clip the active input row entirely. The
-		// state machine is still waiting on that form, so a short settling window
-		// is the stable synchronization point for the compact case.
-		if width >= 70 {
-			waitForZIPPTYText(t, &output, "text input")
-		} else {
-			time.Sleep(200 * time.Millisecond)
-		}
+		advanceZIPSelect(t, &output, process, "Select a package")
+		advanceZIPSelect(t, &output, process, "Select a directory")
+		advanceZIPSelect(t, &output, process, "Select file patterns")
+		waitForZIPPTYText(t, &output, "Enter the name")
 		if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 			t.Fatalf("submit zip output name: %v", err)
 		}
@@ -303,6 +295,7 @@ func runZIPExtendedPTYProcess(t *testing.T, command *exec.Cmd, width, height uin
 			}
 		}
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait zip PTY helper: %v\n%s", err, output.String())
 	}
@@ -358,30 +351,19 @@ func assertZIPCompletionBranchPTYOutput(t *testing.T, output, scenario string, c
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR zip %s output contains %q: %q", scenario, prefix, output)
 			}
 		}
 	}
 }
 
-func advanceZIPSelect(t *testing.T, output *zipPTYBuffer, process *terminaltest.PTYProcess, prompt string, compact bool) {
+func advanceZIPSelect(t *testing.T, output *zipPTYBuffer, process *terminaltest.PTYProcess, prompt string) {
 	t.Helper()
-	if compact {
-		// The complete Form Catalog can clip the active Huh row at 40x15, but
-		// the form state remains ready for the same two Enter submissions.
-		time.Sleep(200 * time.Millisecond)
-	} else {
-		waitForZIPPTYText(t, output, prompt)
-	}
+	waitForZIPPTYText(t, output, prompt)
+	// No filter is active, so one Enter submits the selection.
 	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 		t.Fatalf("submit zip selection %q: %v", prompt, err)
-	}
-	// Huh's searchable Select/MultiSelect commits its filter on the first
-	// Enter and submits the form on the second.
-	time.Sleep(100 * time.Millisecond)
-	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
-		t.Fatalf("finish zip selection %q: %v", prompt, err)
 	}
 }
 
@@ -390,7 +372,7 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
 	for _, form := range []string{"Workspace package", "Source directory", "File patterns", "Output name"} {
 		index := strings.Index(visible, form)
-		if index < 0 {
+		if wide && index < 0 {
 			t.Fatalf("zip Rich PTY Form Catalog did not render %q: %q", form, output)
 		}
 		if wide {
@@ -412,7 +394,7 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 			"Discover workspace", "Select source", "Select patterns", "Prepare archive",
 			"Collect files", "Compress files", "Write archive", "Reveal archive")
 	} else {
-		liveExpected = append(liveExpected, "Workspace package", "Source directory", "File patterns", "Output name")
+		liveExpected = append(liveExpected, "Select a package", "Select a directory", "Select file patterns", "Enter the name")
 	}
 	for _, expected := range liveExpected {
 		if !strings.Contains(live, expected) {
@@ -432,8 +414,8 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 	if wide {
 		outputExpected = append(outputExpected, "Select a package", "Select a directory", "Select file patterns", "Enter the name")
 	} else {
-		// The compact active region can clip prompt labels; the durable
-		// Transcript retains each safe answer instead.
+		// Compact forms now keep the active prompt visible; the transcript
+		// still retains safe answers after the terminal is restored.
 		outputExpected = append(outputExpected, "Workspace package", "Source directory", "File patterns", "Archive output", "demo-project")
 	}
 	for _, expected := range outputExpected {
@@ -476,7 +458,7 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR zip Rich PTY output contains %q: %q", prefix, output)
 			}
 		}

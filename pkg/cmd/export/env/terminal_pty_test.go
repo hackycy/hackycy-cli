@@ -198,6 +198,7 @@ func runExportEnvPTYProcess(t *testing.T, command *exec.Cmd, width, height uint1
 	if _, err := process.Terminal().Write([]byte("x\n")); err != nil {
 		t.Fatalf("release PTY helper after sizing: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}
@@ -235,10 +236,11 @@ func runExportEnvFormsPTYProcess(t *testing.T, command *exec.Cmd, width, height 
 	if _, err := process.Terminal().Write([]byte("x\n")); err != nil {
 		t.Fatalf("release PTY helper after sizing: %v", err)
 	}
-	waitForExportEnvPTYText(t, &output, "Select environment")
+	waitForExportEnvPTYText(t, &output, "↑/↓ select")
 	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 		t.Fatalf("submit environment selection: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}
@@ -359,7 +361,9 @@ func assertExportEnvRichFormsPTYOutput(t *testing.T, output string, color bool) 
 	}
 	live := exportEnvPTYText(visible[enter:leave])
 	firstWork := strings.Index(live, "Discover environment files")
-	form := strings.LastIndex(live, "Select environment")
+	// Notices now remain in scrollback, so use the active form help as the
+	// transition marker rather than the last occurrence of its history text.
+	form := strings.Index(live, "↑/↓ select")
 	lastWork := strings.LastIndex(live, "Read selected files")
 	if firstWork < 0 || form < 0 || lastWork < 0 || !(firstWork < form && form < lastWork) {
 		t.Fatalf("Rich PTY did not preserve Work/Form/Work order: %q", output)

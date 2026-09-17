@@ -53,6 +53,9 @@ func TestRichRuntimeLongListsStayVisibleAcrossNavigationAndResize(t *testing.T) 
 	time.Sleep(50 * time.Millisecond)
 	writeRichPTYInput(t, process, "\r")
 	waitForRichPromptReplacement(t, output, "Choose one", "Choose many")
+	// The catalog also contains "Choose many" before its field is ready.
+	// Wait for the active multi-select help before sending its first key.
+	waitForTrackedPrompt(t, output, "space toggle")
 
 	writeRichPTYInput(t, process, "\x01")
 	time.Sleep(50 * time.Millisecond)

@@ -2,14 +2,16 @@ package terminal
 
 import (
 	"slices"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type richFormModel interface {
 	tea.Model
-	configure(width, height int, showHelp bool)
+	configure(width int)
 	handlesEscape() bool
 }
 
@@ -30,7 +32,7 @@ func newRichForm(handler *InteractionHandler, request InteractionRequest, id uin
 	form.WithTheme(bHuhTheme(handler.capabilities.Stderr.Color))
 	form.SubmitCmd = func() tea.Msg { return richFormSubmittedMsg{id: id} }
 	form.CancelCmd = func() tea.Msg { return richFormCancelledMsg{id: id} }
-	return &richHuhForm{form: form, selectionOrder: selectionOrder}, func() InteractionAnswer {
+	return &richHuhForm{form: form, selectionOrder: selectionOrder, request: request, color: handler.capabilities.Stderr.Color}, func() InteractionAnswer {
 		if selectionOrder != nil {
 			return selectionOrder.answer()
 		}
@@ -41,6 +43,9 @@ func newRichForm(handler *InteractionHandler, request InteractionRequest, id uin
 type richHuhForm struct {
 	form           *huh.Form
 	selectionOrder *multiSelectionOrder
+	request        InteractionRequest
+	width          int
+	color          bool
 }
 
 func (form *richHuhForm) Init() tea.Cmd {
@@ -56,12 +61,80 @@ func (form *richHuhForm) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	return form, command
 }
 
+// Render the focused field directly: Huh's group and list viewports otherwise
+// clip content before the root viewport ever receives it. Huh still owns all
+// editing, filtering, validation, and submission state.
 func (form *richHuhForm) View() tea.View {
-	return tea.NewView(form.form.View())
+	lines := strings.Split(form.form.GetFocusedField().View(), "\n")
+	for len(lines) > 0 && strings.Trim(ansi.Strip(lines[len(lines)-1]), " ─│╰╯") == "" {
+		lines = lines[:len(lines)-1]
+	}
+	content := strings.Join(lines, "\n")
+	for _, err := range form.form.Errors() {
+		content += "\n" + richStyles(form.color)[VisualRoleError].Render(ansi.Hardwrap(stripTerminalControl(err.Error()), max(form.width, 1), true))
+	}
+
+	return tea.NewView(content)
 }
 
-func (form *richHuhForm) configure(width, height int, showHelp bool) {
-	form.form.WithWidth(width).WithHeight(height).WithShowHelp(showHelp)
+func (form *richHuhForm) configure(width int) {
+	form.width = width
+	form.form.WithWidth(width).WithShowHelp(false)
+	field := form.form.GetFocusedField()
+	field.WithHeight(0)
+	if form.request.Kind == InteractionMultiSelect {
+		// Huh's unbounded MultiSelect subtracts its header from the option
+		// height, so explicitly budget every wrapped option plus the header.
+		height := 0
+		for _, text := range []string{form.request.Message, form.request.Description} {
+			if text != "" {
+				height += lineCount(ansi.Hardwrap(stripTerminalControl(text), width, true))
+			}
+		}
+		for _, option := range huhOptions(form.request.Options) {
+			height += lineCount(ansi.Hardwrap(option.Key, max(width-4, 1), true))
+		}
+		field.WithHeight(max(height, 1))
+	}
+}
+
+func (form *richHuhForm) focusLine() int {
+	lines := strings.Split(ansi.Strip(form.form.GetFocusedField().View()), "\n")
+	if form.handlesEscape() {
+		return 0 // Huh places the active filter in the field title.
+	}
+	if form.request.Kind == InteractionSelect || form.request.Kind == InteractionMultiSelect {
+		for index, line := range lines {
+			if strings.HasPrefix(line, "◆ ") {
+				return index
+			}
+		}
+		return 0
+	}
+	// The input or confirmation buttons are below the title and description,
+	// above the theme's trailing padding and bottom rule.
+	for index := len(lines) - 1; index >= 0; index-- {
+		if strings.Trim(lines[index], " ─│╰╯") != "" {
+			return index
+		}
+	}
+	return 0
+}
+
+func (form *richHuhForm) help() string {
+	if form.handlesEscape() {
+		return "type filter · enter apply"
+	}
+	switch form.request.Kind {
+	case InteractionSelect:
+		return "↑/↓ select · / filter · enter confirm"
+	case InteractionMultiSelect:
+		return "multiple selection · ↑/↓ · space toggle · / filter · enter confirm"
+	case InteractionConfirm:
+		return "confirmation · ←/→ · enter confirm"
+	default:
+		return "text input · enter submit"
+	}
 }
 
 func (form *richHuhForm) handlesEscape() bool {

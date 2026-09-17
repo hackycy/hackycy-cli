@@ -59,3 +59,18 @@ func TestTrackedTeaModelSanitizesPhaseText(t *testing.T) {
 		t.Fatalf("phase view lost semantic text: %q", view)
 	}
 }
+
+func TestTrackedCurrentPhasePrioritizesActiveWorkOverFutureSteps(t *testing.T) {
+	state := trackedState{phases: []OperationPhase{
+		{Name: "Read", State: PhaseActive},
+		{Name: "Write", State: PhasePending},
+		{Name: "Finish", State: PhasePending},
+	}}
+	if got := state.currentPhase().Name; got != "Read" {
+		t.Fatalf("current phase = %q, want active Read", got)
+	}
+	state.phases[0].State = PhaseCompleted
+	if got := state.currentPhase().Name; got != "Write" {
+		t.Fatalf("current phase = %q, want next Write", got)
+	}
+}

@@ -642,6 +642,7 @@ func runGitForkPTYProcess(t *testing.T, command *exec.Cmd, width, height uint16,
 			t.Fatalf("write git fork confirmation: %v", err)
 		}
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	waitForGitForkPTYText(t, &output, marker)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait git fork PTY helper: %v\n%s", err, output.String())

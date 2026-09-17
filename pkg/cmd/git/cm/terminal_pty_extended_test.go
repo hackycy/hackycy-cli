@@ -171,6 +171,7 @@ func runGitCMPushPTYProcess(t *testing.T, command *exec.Cmd, width, height uint1
 	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 		t.Fatalf("submit Git CM push confirmation: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	waitForGitCMPTYText(t, &output, "GIT_CM_PUSH_OK")
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait Git CM push PTY helper: %v\n%s", err, output.String())
@@ -409,7 +410,7 @@ func runGitCMScenarioPTYProcess(t *testing.T, command *exec.Cmd, width, height u
 	waitForGitCMPTYFile(t, providerDone)
 	if input != "" {
 		if input == "\r" || input == "\x1b" {
-			waitForGitCMPTYText(t, &output, "feat: rich failure")
+			waitForGitCMPTYText(t, &output, "Create this commit?")
 		}
 		time.Sleep(150 * time.Millisecond)
 		if _, err := process.Terminal().Write([]byte(input)); err != nil {
@@ -417,6 +418,7 @@ func runGitCMScenarioPTYProcess(t *testing.T, command *exec.Cmd, width, height u
 		}
 	}
 	marker := "GIT_CM_"
+	terminaltest.ReviewConsole(t, process, &output)
 	waitForGitCMPTYText(t, &output, marker)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait Git CM scenario helper: %v\n%s", err, output.String())
@@ -665,6 +667,7 @@ func runGitCMPTYProcess(t *testing.T, command *exec.Cmd, width, height uint16, p
 	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 		t.Fatalf("submit Git CM confirmation: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	waitForGitCMPTYText(t, &output, "GIT_CM_STAGE_COMMIT_OK")
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait git cm PTY helper: %v\n%s", err, output.String())

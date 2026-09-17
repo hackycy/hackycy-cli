@@ -395,6 +395,7 @@ func runRMExtendedPTYProcess(t *testing.T, command *exec.Cmd, width, height uint
 			t.Fatalf("release rm writer: %v", err)
 		}
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait rm PTY helper: %v\n%s", err, output.String())
 	}

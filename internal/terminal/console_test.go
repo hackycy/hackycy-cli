@@ -471,7 +471,7 @@ func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *tes
 	}
 }
 
-func TestConsoleNormalizedProjectionKeepsMetadataSingleLineAndWithinWidth(t *testing.T) {
+func TestConsoleNormalizedProjectionKeepsMetadataWithinWidth(t *testing.T) {
 	longValue := strings.Repeat("workspace-value ", 8) + "\nwith another line"
 	runtime := NewExperience(ExperienceOptions{})
 	run, err := runtime.OpenConsole(context.Background(), ConsoleDescriptor{
@@ -496,10 +496,7 @@ func TestConsoleNormalizedProjectionKeepsMetadataSingleLineAndWithinWidth(t *tes
 			t.Fatalf("console line exceeds terminal width: %d > 70: %q", lipgloss.Width(line), line)
 		}
 	}
-	metadata := model.consoleMetadataView(richStyles(false), 20)
-	if strings.Contains(metadata, "\n") || lipgloss.Width(metadata) > 20 {
-		t.Fatalf("metadata projection is not bounded single-line: %q (width %d)", metadata, lipgloss.Width(metadata))
-	}
+
 }
 
 func TestConsoleModelUsesBPaletteAndNoColorRemovesSGR(t *testing.T) {
@@ -538,7 +535,7 @@ func TestConsoleModelUsesBPaletteAndNoColorRemovesSGR(t *testing.T) {
 	}
 }
 
-func TestConsoleNoticeStaysAsLatestBoundedActiveContextBelowTable(t *testing.T) {
+func TestConsoleNoticeHistoryRemainsAvailableBelowTable(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
 	model.mode = richTrackMode
 	model.track = &trackedState{label: "Work", phases: []OperationPhase{{Name: "Phase", State: PhaseActive, Detail: "working"}}}
@@ -547,11 +544,11 @@ func TestConsoleNoticeStaysAsLatestBoundedActiveContextBelowTable(t *testing.T) 
 		{Blocks: []PresentationBlock{{Text: "latest context"}}},
 	}
 	view := model.View().Content
-	if !strings.Contains(view, "latest context") || strings.Contains(view, "old context") {
+	if !strings.Contains(view, "latest context") || !strings.Contains(view, "old context") {
 		t.Fatalf("notice context = %q", view)
 	}
 	stateRow := strings.Index(view, "◆ ACTIVE    Phase")
-	active := strings.LastIndex(view, "\n   Work")
+	active := strings.LastIndex(view, "\n Work")
 	context := strings.Index(view, "latest context")
 	if stateRow < 0 || active < 0 || context < stateRow || context > active {
 		t.Fatalf("notice context displaced table or active region: %q", view)
@@ -842,6 +839,6 @@ func (form consoleTestForm) Update(tea.Msg) (tea.Model, tea.Cmd) { return form, 
 
 func (consoleTestForm) View() tea.View { return tea.NewView("active input") }
 
-func (consoleTestForm) configure(int, int, bool) {}
+func (consoleTestForm) configure(int) {}
 
 func (consoleTestForm) handlesEscape() bool { return false }

@@ -392,6 +392,9 @@ type richRootModel struct {
 	trackRowStart    int
 	trackRowsSynced  bool
 	spin             spinner.Model
+	scroll           consoleScroll
+	outcomeReading   bool
+	mouseDisabled    bool
 }
 
 func newRichRootModel(width, height int, color bool) *richRootModel {
@@ -405,6 +408,7 @@ func newRichRootModelWithConsole(width, height int, color bool, console ConsoleD
 		color:   color,
 		console: console,
 		spin:    newRichMeter(color),
+		scroll:  newConsoleScroll(),
 	}
 	model.initializeFormCatalog()
 	return model
@@ -461,18 +465,24 @@ func (*richRootModel) Init() tea.Cmd {
 }
 
 func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	model.prepareScroll()
+	defer model.prepareScroll()
+	if !model.tooSmall() && model.handleScroll(message) {
+		return model, nil
+	}
 	switch value := message.(type) {
 	case richReadyMsg:
 		close(value.ack)
 		return model, nil
 	case tea.WindowSizeMsg:
+		model.scroll.reveal = model.form != nil && model.scroll.focusVisible()
 		model.width = max(value.Width, 1)
 		model.height = max(value.Height, 1)
+		if model.mode == richOutcomeMode && model.tooSmall() {
+			model.outcomeReading = true
+		}
 		if model.form != nil {
 			model.configureForm()
-			updated, cmd := model.form.Update(tea.WindowSizeMsg{Width: model.width, Height: model.formHeight()})
-			model.form = updated.(richFormModel)
-			return model, cmd
 		}
 		return model, nil
 	case richNoticeMsg:
@@ -486,6 +496,9 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(value.document.Blocks) > 0 {
 			model.notices = append(model.notices, value.document)
+			if !model.scroll.following {
+				model.scroll.unread += lineCount(strings.TrimSuffix(renderRich(value.document, RichOptions{}), "\n"))
+			}
 		}
 		close(value.ack)
 		return model, nil
@@ -500,6 +513,9 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(value.document.Blocks) > 0 {
 			model.notices = append(model.notices, value.document)
+			if !model.scroll.following {
+				model.scroll.unread += lineCount(strings.TrimSuffix(renderRich(value.document, RichOptions{}), "\n"))
+			}
 		}
 		close(value.ack)
 		return model, nil
@@ -514,6 +530,8 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.preserveTrack()
 		}
 		model.mode = richFormMode
+		model.scroll.following = false
+		model.scroll.reveal = true
 		model.formID = value.id
 		model.form = value.form
 		model.answer = value.answer
@@ -585,6 +603,8 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.trackRowsSynced = true
 		model.trackRetainsForm = value.retainFormCatalog
 		model.mode = richTrackMode
+		model.scroll.following = true
+		model.scroll.unread = 0
 		model.track = &trackedState{
 			label:  value.label,
 			phases: append([]OperationPhase(nil), value.phases...),
@@ -634,6 +654,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
+		readingHistory := model.form == nil && !model.scroll.following
 		// Preserve the final Work rows in the stable table before dropping the
 		// mutable tracker. Outcome is a terminal projection, so later form/work
 		// messages are acknowledged but cannot replace it.
@@ -652,12 +673,24 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.response = nil
 		model.outcome = value.request
 		model.mode = richOutcomeMode
+		model.scroll.following = !readingHistory
+		model.prepareScroll()
+		model.outcomeReading = readingHistory || model.outcomeOverflows()
+		if model.outcomeReading && !readingHistory {
+			model.scroll.following = false
+			for index, anchor := range model.scroll.anchors {
+				if anchor.block == "form" {
+					model.scroll.viewport.SetYOffset(index)
+					break
+				}
+			}
+		}
 		close(value.ack)
 		return model, tea.Tick(outcomeDwell, func(time.Time) tea.Msg {
 			return richOutcomeElapsedMsg{}
 		})
 	case richOutcomeElapsedMsg:
-		if model.mode == richOutcomeMode {
+		if model.mode == richOutcomeMode && !model.outcomeReading {
 			return model, tea.Quit
 		}
 		return model, nil
@@ -669,11 +702,47 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.spin, command = model.spin.Update(value)
 		return model, command
 	case tea.KeyPressMsg:
+		if value.String() == "ctrl+g" {
+			model.mouseDisabled = !model.mouseDisabled
+			if model.mode == richOutcomeMode {
+				model.outcomeReading = true
+			}
+			return model, nil
+		}
+		if model.mode == richOutcomeMode {
+			switch value.String() {
+			case "enter", "esc", "ctrl+c":
+				return model, tea.Quit
+			}
+			return model, nil
+		}
+		if model.tooSmall() && value.String() != "esc" && value.String() != "ctrl+c" {
+			return model, nil
+		}
+		if model.form != nil {
+			model.scroll.reveal = true
+			switch value.String() {
+			case "enter", "tab", "shift+tab":
+				if !model.scroll.focusVisible() {
+					return model, nil
+				}
+			}
+			if form, ok := model.form.(*richHuhForm); ok && form.request.Kind == InteractionMultiSelect && !form.handlesEscape() {
+				switch value.String() {
+				case "space", "x":
+					if !model.scroll.focusVisible() {
+						return model, nil
+					}
+				}
+			}
+		}
 		if model.mode == richTrackMode && model.track != nil {
 			switch value.String() {
 			case "ctrl+c":
 				model.track.requestCancellation()
+				model.scroll.following = true
 			case "esc":
+				model.scroll.following = true
 				if model.track.cancelArmed {
 					model.track.requestCancellation()
 				} else {
@@ -705,46 +774,30 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (model *richRootModel) View() tea.View {
+	view := tea.View{AltScreen: true, DisableBracketedPasteMode: true}
 	if model.width <= 0 || model.height <= 0 {
-		return tea.View{AltScreen: true, DisableBracketedPasteMode: true}
+		return view
 	}
-	var content string
-	if model.consoleWideLayout() {
-		content = model.consoleWideView()
-	} else {
-		content = model.consoleCompactView()
+	if model.tooSmall() {
+		view.Content = takeFirstLines(ansi.Hardwrap("Window too small · 窗口过小\nResize to at least 30×10\nesc cancel", model.width, true), model.height)
+		return view
 	}
-	return tea.View{
-		Content:                   takeFirstLines(content, model.height),
-		AltScreen:                 true,
-		DisableBracketedPasteMode: true,
+	model.prepareScroll()
+	styles := richStyles(model.color)
+	body := model.scroll.viewport.View()
+	footer := styles[VisualRoleMuted].Render(model.scrollFooter())
+	content := model.consoleCompactBar(styles, model.formWidth()) + "\n" + body + "\n" + footer
+	view.Content = lipgloss.NewStyle().Padding(0, 1).Render(content)
+	if !model.mouseDisabled {
+		view.MouseMode = tea.MouseModeCellMotion
 	}
+	return view
 }
 
-// consoleWideLayout is the production B threshold. The prototype keeps the
-// complete table and active region at 70x20 and above; smaller surfaces use
-// the compact slice until its dedicated renderer is installed.
+// Wide surfaces use wrapped table columns; smaller surfaces stack each row.
+// Both layouts share the same scroll region.
 func (model *richRootModel) consoleWideLayout() bool {
 	return model.width >= 70 && model.height >= 20
-}
-
-func (model *richRootModel) consoleCompactView() string {
-	styles := richStyles(model.color)
-	inner := max(model.width-4, 1)
-	parts := []string{
-		model.consoleCompactBar(styles, inner),
-	}
-	if metadata := model.consoleMetadataView(styles, inner); metadata != "" {
-		parts = append(parts, metadata)
-	}
-	parts = append(parts, styles[VisualRoleTitle].Render("STATE / PHASE / DETAIL"))
-	for _, row := range model.consoleRows() {
-		parts = append(parts, model.consoleCompactRow(row, inner, styles))
-	}
-	if active := model.consoleActiveView(inner); active != "" {
-		parts = append(parts, "", takeFirstLines(active, model.consoleCompactActiveHeight()))
-	}
-	return lipgloss.NewStyle().Width(inner).Padding(1, 2).Render(strings.Join(parts, "\n"))
 }
 
 func (model *richRootModel) consoleCompactBar(styles map[VisualRole]lipgloss.Style, width int) string {
@@ -756,12 +809,10 @@ func (model *richRootModel) consoleCompactBar(styles map[VisualRole]lipgloss.Sty
 	if target == "" {
 		target = "terminal session"
 	}
-	bar := styles[VisualRoleActive].Render(stripTerminalControl(command)) +
-		styles[VisualRoleMuted].Render(" · ") +
-		styles[VisualRolePlain].Render(stripTerminalControl(target)) +
-		styles[VisualRoleMuted].Render(" · ") +
-		styles[VisualRoleActive].Render(model.consoleStatusLabel())
-	return consoleTruncate(bar, width)
+	status := styles[VisualRoleActive].Render(consoleTruncate(model.consoleStatusLabel(), width/2))
+	identity := styles[VisualRoleActive].Render(stripTerminalControl(command)) +
+		styles[VisualRoleMuted].Render(" · ") + styles[VisualRolePlain].Render(stripTerminalControl(target))
+	return consoleTruncate(identity, max(width-lipgloss.Width(status)-3, 1)) + styles[VisualRoleMuted].Render(" · ") + status
 }
 
 func (model *richRootModel) consoleCompactRow(row consoleStatusRow, width int, styles map[VisualRole]lipgloss.Style) string {
@@ -775,62 +826,6 @@ func (model *richRootModel) consoleCompactRow(row consoleStatusRow, width int, s
 	}
 	line = wrapText(line, width)
 	return styles[consoleStateRole(row.state)].Render(line)
-}
-
-func (model *richRootModel) consoleCompactActiveHeight() int {
-	reserved := 5 + len(model.consoleRows())
-	return max(model.height-reserved-model.consoleContextHeight(model.formWidth()), 1)
-}
-
-func (model *richRootModel) consoleWideView() string {
-	styles := richStyles(model.color)
-	inner := max(model.width-6, 1)
-	status := model.consoleStatusView(inner, styles)
-	active := model.consoleActiveView(inner)
-	parts := []string{
-		model.consoleBar(styles, inner),
-		model.consoleMetadataView(styles, inner),
-		styles[VisualRoleMuted].Render(strings.Repeat("─", inner)),
-		status,
-	}
-	if active != "" {
-		parts = append(parts, "", takeFirstLines(active, model.consoleActiveHeight()))
-	}
-	return lipgloss.NewStyle().Padding(1, 3).Render(strings.Join(parts, "\n"))
-}
-
-func (model *richRootModel) consoleBar(styles map[VisualRole]lipgloss.Style, width int) string {
-	command := model.consoleCommand()
-	if command == "" {
-		command = "YCY"
-	}
-	target := model.console.Target
-	if target == "" {
-		target = "terminal session"
-	}
-	bar := styles[VisualRoleActive].Render(stripTerminalControl(command)) +
-		styles[VisualRoleMuted].Render("  |  ") +
-		styles[VisualRolePlain].Render(stripTerminalControl(target)) +
-		styles[VisualRoleMuted].Render("  |  ") +
-		styles[VisualRoleActive].Render(model.consoleStatusLabel())
-	return consoleTruncate(bar, width)
-}
-
-func (model *richRootModel) consoleMetadataView(styles map[VisualRole]lipgloss.Style, width int) string {
-	fields := make([]string, 0, len(model.console.Metadata))
-	for _, field := range model.console.Metadata {
-		label := stripTerminalControl(field.Label)
-		value := stripTerminalControl(field.Value)
-		if label == "" || value == "" {
-			continue
-		}
-		fields = append(fields, styles[VisualRoleMuted].Render(label+" ")+styles[VisualRolePlain].Render(value))
-	}
-	if len(fields) == 0 {
-		return ""
-	}
-	separator := styles[VisualRoleMuted].Render("    ")
-	return consoleTruncate(strings.Join(fields, separator), width)
 }
 
 func (model *richRootModel) consoleCommand() string {
@@ -973,25 +968,7 @@ func (model *richRootModel) trackLabel() string {
 	return model.track.label
 }
 
-func (model *richRootModel) consoleStatusView(width int, styles map[VisualRole]lipgloss.Style) string {
-	const stateColumnWidth = 12
-	phaseColumnWidth := min(26, max(width-stateColumnWidth, 1))
-	detailColumnWidth := max(width-stateColumnWidth-phaseColumnWidth, 0)
-	rows := []string{
-		styles[VisualRoleTitle].Render(consolePad("STATE", stateColumnWidth) + consolePad("PHASE", phaseColumnWidth) + "DETAIL"),
-	}
-	for _, row := range model.consoleRows() {
-		state, label := consoleStateLabel(row.state)
-		stateText := styles[consoleStateRole(row.state)].Render(consolePad(consoleTruncate(state+" "+label, stateColumnWidth), stateColumnWidth))
-		phaseText := styles[VisualRolePlain].Render(consolePad(consoleTruncate(stripTerminalControl(row.phase), phaseColumnWidth), phaseColumnWidth))
-		detail := styles[VisualRoleMuted].Render(consoleTruncate(stripTerminalControl(row.detail), detailColumnWidth))
-		rows = append(rows, stateText+phaseText+detail)
-	}
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(rows, "\n"))
-}
-
 func (model *richRootModel) consoleActiveView(width int) string {
-	context := model.consoleNoticeContext(width)
 	var active string
 	switch model.mode {
 	case richFormMode:
@@ -1025,16 +1002,7 @@ func (model *richRootModel) consoleActiveView(width int) string {
 	case richOutcomeMode:
 		active = model.consoleOutcomeView(width)
 	}
-	if model.mode == richOutcomeMode {
-		return active
-	}
-	if active == "" {
-		return context
-	}
-	if context == "" {
-		return active
-	}
-	return context + "\n" + active
+	return active
 }
 
 func (model *richRootModel) consoleOutcomeView(width int) string {
@@ -1063,13 +1031,6 @@ func (model *richRootModel) consoleOutcomeView(width int) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-func (model *richRootModel) consoleActiveHeight() int {
-	// One line each for the bar, metadata, divider, table heading, and the
-	// separator before the active region, plus outer vertical padding.
-	reserved := 7 + len(model.consoleRows()) + model.consoleContextHeight(model.formWidth())
-	return max(model.height-reserved, 1)
 }
 
 func consolePad(value string, width int) string {
@@ -1118,59 +1079,13 @@ func consoleStateRole(state PhaseState) VisualRole {
 }
 
 func (model *richRootModel) configureForm() {
-	if model.form == nil {
-		return
+	if model.form != nil && !model.tooSmall() {
+		model.form.configure(model.formWidth())
 	}
-	model.form.configure(model.formWidth(), model.formHeight(), !model.compact())
-}
-
-func (model *richRootModel) compact() bool {
-	return !model.consoleWideLayout()
 }
 
 func (model *richRootModel) formWidth() int {
-	if model.consoleWideLayout() {
-		return max(model.width-6, 1)
-	}
-	return max(model.width-4, 1)
-}
-
-func (model *richRootModel) formHeight() int {
-	if model.consoleWideLayout() {
-		return max(model.consoleActiveHeight(), 5)
-	}
-	// The root clips the whole compact view to the physical terminal. Huh still
-	// needs enough internal rows to keep filtering and long-list navigation
-	// usable while that small surface is being resized.
-	return max(model.consoleCompactActiveHeight(), 7)
-}
-
-// consoleNoticeContext keeps only the latest non-empty Notice as transient
-// active-region context. It cannot grow into a second header or push the B
-// status table out of the view.
-func (model *richRootModel) consoleNoticeContext(width int) string {
-	if width <= 0 {
-		return ""
-	}
-	for index := len(model.notices) - 1; index >= 0; index-- {
-		rendered := strings.TrimSuffix(renderRich(model.notices[index], RichOptions{
-			Width: width,
-			Color: model.color,
-		}), "\n")
-		if rendered == "" {
-			continue
-		}
-		return takeFirstLines(rendered, min(max(model.height/3, 1), 4))
-	}
-	return ""
-}
-
-func (model *richRootModel) consoleContextHeight(width int) int {
-	context := model.consoleNoticeContext(width)
-	if context == "" {
-		return 0
-	}
-	return lineCount(context)
+	return max(model.width-2, 1)
 }
 
 func lineCount(value string) int {
@@ -1188,6 +1103,8 @@ func (model *richRootModel) preserveTrack() {
 }
 
 func (model *richRootModel) clearForm() tea.Cmd {
+	model.scroll.following = true
+	model.scroll.unread = 0
 	if model.track != nil && model.trackRetainsForm {
 		model.mode = richTrackMode
 		model.formID = 0

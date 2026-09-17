@@ -122,8 +122,8 @@ func runSelectionPTYProcess(t *testing.T, command *exec.Cmd, width, height uint1
 		t.Fatalf("release Run selection PTY helper after sizing: %v", err)
 	}
 	waitForRunPTYText(t, &output, "Select a script to run")
-	submitRunSelect(t, process, &output, "Select a package", "build", "")
-	submitRunSelect(t, process, &output, "", "yarn", filepath.Join(artifact, "selection-request"))
+	submitRunSelect(t, process, &output, "Select a package", "build")
+	submitRunSelect(t, process, &output, "", "yarn")
 	waitForRunPTYFile(t, filepath.Join(artifact, "selection-request"))
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait Run selection PTY helper: %v\n%s", err, output.String())
@@ -185,7 +185,7 @@ func assertRunSelectionPTYOutput(t *testing.T, output string, color, wide bool, 
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR Run selection output contains %q: %q", prefix, output)
 			}
 		}
@@ -342,8 +342,8 @@ func runHandoffPTYProcess(t *testing.T, command *exec.Cmd, width, height uint16,
 		t.Fatalf("release Run handoff PTY helper after sizing: %v", err)
 	}
 	waitForRunPTYText(t, &output, "Select a script to run")
-	submitRunSelect(t, process, &output, "Select a package", "", "")
-	submitRunSelect(t, process, &output, "", "", filepath.Join(artifact, "started"))
+	submitRunSelect(t, process, &output, "Select a package", "")
+	submitRunSelect(t, process, &output, "", "")
 	waitForRunPTYFile(t, filepath.Join(artifact, "started"))
 	if _, err := process.Terminal().Write([]byte("inherited stdin payload\n")); err != nil {
 		t.Fatalf("write inherited child stdin: %v", err)
@@ -429,7 +429,7 @@ func assertRunHandoffPTYOutput(t *testing.T, output string, color, wide bool, ar
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR Run handoff output contains %q: %q", prefix, output)
 			}
 		}
@@ -439,7 +439,7 @@ func assertRunHandoffPTYOutput(t *testing.T, output string, color, wide bool, ar
 	}
 }
 
-func submitRunSelect(t *testing.T, process *terminaltest.PTYProcess, output *runPTYBuffer, nextPrompt, filter, markerPath string) {
+func submitRunSelect(t *testing.T, process *terminaltest.PTYProcess, output *runPTYBuffer, nextPrompt, filter string) {
 	t.Helper()
 	if filter != "" {
 		if _, err := process.Terminal().Write([]byte("/" + filter)); err != nil {
@@ -450,16 +450,14 @@ func submitRunSelect(t *testing.T, process *terminaltest.PTYProcess, output *run
 		t.Fatalf("submit Run selection: %v", err)
 	}
 	if nextPrompt == "" {
-		if markerPath != "" {
-			if waitForRunPTYFileWithinPath(markerPath, 700*time.Millisecond) {
-				return
+		if filter != "" {
+			// The first Enter commits the active filter; the second submits.
+			time.Sleep(30 * time.Millisecond)
+			if _, err := process.Terminal().Write([]byte("\r")); err != nil {
+				t.Fatalf("submit filtered Run selection: %v", err)
 			}
-		} else if waitForRunPTYTextWithin(output, "CHILD_START", 700*time.Millisecond) {
-			return
 		}
-		if _, err := process.Terminal().Write([]byte("\r")); err != nil {
-			t.Fatalf("submit second Run selection Enter: %v", err)
-		}
+		terminaltest.ReviewConsole(t, process, output)
 		return
 	}
 	if waitForRunPTYTextWithin(output, nextPrompt, 700*time.Millisecond) {

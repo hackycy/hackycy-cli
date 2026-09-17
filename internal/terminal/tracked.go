@@ -166,8 +166,13 @@ func (state *trackedState) applyPhase(phase OperationPhase) {
 
 func (state *trackedState) currentPhase() OperationPhase {
 	for index := len(state.phases) - 1; index >= 0; index-- {
-		if state.phases[index].State == PhaseActive || state.phases[index].State == PhasePending {
+		if state.phases[index].State == PhaseActive {
 			return state.phases[index]
+		}
+	}
+	for _, phase := range state.phases {
+		if phase.State == PhasePending {
+			return phase
 		}
 	}
 	if len(state.phases) > 0 {

@@ -167,3 +167,13 @@ func TestControlledPTYRunsATerminalSubprocess(t *testing.T) {
 		t.Fatalf("PTY output = %q", got)
 	}
 }
+
+func TestStyleSequencesDistinguishesColorFromCursorPosition(t *testing.T) {
+	if got := StyleSequences("\x1b[38;1Htext\x1b[3S"); got != "" {
+		t.Fatalf("cursor/scroll commands counted as styling: %q", got)
+	}
+	const styles = "\x1b[38;2;255;180;84m\x1b[7m\x1b[m"
+	if got := StyleSequences("\x1b[38;1H" + styles); got != styles {
+		t.Fatalf("style extraction = %q, want %q", got, styles)
+	}
+}

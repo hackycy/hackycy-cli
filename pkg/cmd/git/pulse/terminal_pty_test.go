@@ -180,6 +180,7 @@ func runPulsePTYProcess(t *testing.T, command *exec.Cmd, width, height uint16, i
 	if _, err := process.Terminal().Write([]byte(input)); err != nil {
 		t.Fatalf("release PTY helper after sizing: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}
@@ -224,6 +225,7 @@ func runPulseFormsPTYProcess(t *testing.T, command *exec.Cmd, width, height uint
 	if _, err := process.Terminal().Write([]byte("\r")); err != nil {
 		t.Fatalf("submit author selection: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}

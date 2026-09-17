@@ -2,6 +2,7 @@ package terminaltest
 
 import (
 	"bytes"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -40,4 +41,12 @@ func ContainsTerminalControl(output []byte) bool {
 // command package tests can inspect semantic text through the test boundary.
 func StripANSI(output string) string {
 	return ansi.Strip(output)
+}
+
+var sgrSequence = regexp.MustCompile(`\x1b\[[0-9;:]*m`)
+
+// StyleSequences returns only SGR sequences. Cursor positioning such as
+// CSI 38;1H shares the prefix of a color code but must not fail NO_COLOR tests.
+func StyleSequences(output string) string {
+	return strings.Join(sgrSequence.FindAllString(output, -1), "")
 }
