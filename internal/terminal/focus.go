@@ -11,7 +11,7 @@ type focusStep struct {
 	name  string
 }
 
-func (model *richRootModel) focusHeader() string {
+func (model *richRootModel) focusShell() string {
 	styles := richStyles(model.color)
 	width := model.formWidth()
 	command, target := model.consoleCommand(), model.console.Target
@@ -26,14 +26,21 @@ func (model *richRootModel) focusHeader() string {
 		role = transcriptOutcomeRole(model.outcome.Outcome)
 	}
 	status := styles[role].Render(consoleTruncate(model.consoleStatusLabel(), width/2))
-	identity := styles[VisualRoleActive].Render("◆") + " " +
-		focusThemeEmphasis(styles[VisualRolePlain], model.color).Render(stripTerminalControl(command)) +
+	identity := styles[VisualRoleTitle].Render(stripTerminalControl(command)) +
 		styles[VisualRoleMuted].Render("  "+stripTerminalControl(target))
-	header := consoleTruncate(identity, max(width-lipgloss.Width(status)-2, 1)) + "  " + status
+	identity = consoleTruncate(identity, max(width-lipgloss.Width(status)-2, 1))
+	gap := max(width-lipgloss.Width(identity)-lipgloss.Width(status), 0)
+	titleBar := consoleTruncate(identity+strings.Repeat(" ", gap)+status, width)
+	divider := focusThemeStyle(model.color, focusDivider).Render(strings.Repeat("─", width))
+	lines := []string{titleBar, divider}
 	if trail := model.focusTrail(width); trail != "" {
-		header += "\n" + trail
+		lines = append(lines, trail)
 	}
-	return header
+	return strings.Join(lines, "\n")
+}
+
+func (model *richRootModel) focusBodyTop() int {
+	return lineCount(model.focusShell()) + 1
 }
 
 func (model *richRootModel) focusTrail(width int) string {
@@ -69,13 +76,16 @@ func (model *richRootModel) focusTrail(width int) string {
 		current = focusRowIndex(rows)
 	}
 	styles := richStyles(model.color)
-	separator := focusThemeStyle(model.color, focusDim).Render("  →  ")
+	separator := focusThemeStyle(model.color, focusDim).Render("  ─  ")
 	render := func(start, end int) string {
 		parts := make([]string, 0, end-start)
 		for _, row := range rows[start:end] {
 			glyph, _ := consoleStateLabel(row.state)
 			style := styles[consoleStateRole(row.state)]
-			if row.state == PhasePending {
+			switch row.state {
+			case PhaseActive:
+				style = focusThemeEmphasis(focusThemeStyle(model.color, focusAccent), model.color)
+			case PhasePending:
 				style = focusThemeStyle(model.color, focusDim)
 			}
 			parts = append(parts, style.Render(glyph+" "+stripTerminalControl(row.name)))

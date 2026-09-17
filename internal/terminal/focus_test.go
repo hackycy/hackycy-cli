@@ -21,7 +21,7 @@ func TestFocusTrailFollowsTheRequestedFormAndHidesTerminalOutcome(t *testing.T) 
 			{ID: "confirm", Name: "Confirm"},
 		},
 	})
-	if got, want := model.focusTrail(116), "◆ Workspace  →  ○ Credential  →  ○ Provider"; got != want {
+	if got, want := model.focusTrail(116), "◆ Workspace  ─  ○ Credential  ─  ○ Provider"; got != want {
 		t.Fatalf("initial trail = %q, want %q", got, want)
 	}
 	model.mode = richFormMode
@@ -29,7 +29,7 @@ func TestFocusTrailFollowsTheRequestedFormAndHidesTerminalOutcome(t *testing.T) 
 	model.formRows[2].id = 7
 	model.formRows[1].state = PhaseCompleted
 	model.formRows[2].state = PhaseActive
-	if got, want := model.focusTrail(116), "✓ Credential  →  ◆ Provider  →  ○ Capabilities"; got != want {
+	if got, want := model.focusTrail(116), "✓ Credential  ─  ◆ Provider  ─  ○ Capabilities"; got != want {
 		t.Fatalf("requested field trail = %q, want %q", got, want)
 	}
 	if got := model.focusTrail(12); got != "◆ Provider" {
@@ -52,12 +52,66 @@ func TestFocusTrailUsesOnlyTheActiveWorkCatalog(t *testing.T) {
 		{ID: "write", Name: "Write", State: PhaseActive},
 		{ID: "finish", Name: "Finish", State: PhasePending},
 	}}
-	if got := model.focusTrail(76); got != "✓ Read  →  ◆ Write  →  ○ Finish" {
+	if got := model.focusTrail(76); got != "✓ Read  ─  ◆ Write  ─  ○ Finish" {
 		t.Fatalf("work trail mixed catalogs: %q", got)
 	}
 	model.track.phases = nil
 	if got := model.focusTrail(76); got != "" {
 		t.Fatalf("catalog-free work reused old trail: %q", got)
+	}
+}
+
+func TestFocusApplicationShellSeparatesTitleProgressAndBody(t *testing.T) {
+	for _, size := range [][2]int{{80, 24}, {120, 40}} {
+		for _, color := range []bool{false, true} {
+			model := newRichRootModelWithConsole(size[0], size[1], color, ConsoleDescriptor{
+				Command:     "YCY / configure",
+				Target:      "terminal session",
+				FormCatalog: []ConsoleFormStep{{ID: "first", Name: "First step"}},
+			})
+			model.mode = richFormMode
+			rendered := model.focusShell()
+			lines := strings.Split(ansi.Strip(rendered), "\n")
+			if len(lines) != 3 || !strings.HasPrefix(lines[0], "YCY / configure  terminal session") || !strings.HasSuffix(lines[0], "ACTIVE") {
+				t.Fatalf("%dx%d color=%t title bar = %q", size[0], size[1], color, rendered)
+			}
+			if ansi.StringWidth(lines[0]) != size[0] || lines[1] != strings.Repeat("─", size[0]) {
+				t.Fatalf("%dx%d color=%t shell width = %q", size[0], size[1], color, rendered)
+			}
+			if lines[2] != "◆ First step" || model.focusBodyTop() != 4 {
+				t.Fatalf("%dx%d color=%t progress band = %q", size[0], size[1], color, rendered)
+			}
+			viewLines := strings.Split(ansi.Strip(model.View().Content), "\n")
+			if viewLines[3] != "" {
+				t.Fatalf("%dx%d color=%t body gap is not fixed: %q", size[0], size[1], color, model.View().Content)
+			}
+			if !color && strings.Contains(rendered, "\x1b[") {
+				t.Fatalf("no-color shell depends on ANSI styling: %q", rendered)
+			}
+			if color {
+				title := richStyles(true)[VisualRoleTitle].Render("YCY / configure")
+				divider := focusThemeStyle(true, focusDivider).Render(strings.Repeat("─", size[0]))
+				active := focusThemeEmphasis(focusThemeStyle(true, focusAccent), true).Render("◆ First step")
+				if !strings.Contains(rendered, title) || !strings.Contains(rendered, divider) || !strings.Contains(rendered, active) {
+					t.Fatalf("colored shell does not use distinct roles: %q", rendered)
+				}
+			}
+		}
+	}
+}
+
+func TestFocusTitleBarPreservesCommandAndRightAlignsStatus(t *testing.T) {
+	model := newRichRootModelWithConsole(80, 24, false, ConsoleDescriptor{
+		Command: "YCY / configure",
+		Target:  strings.Repeat("long-target/", 20),
+	})
+	model.mode = richTrackMode
+	titleBar := strings.Split(model.focusShell(), "\n")[0]
+	if ansi.StringWidth(titleBar) != 80 || !strings.HasPrefix(titleBar, "YCY / configure") || !strings.HasSuffix(titleBar, "ACTIVE") {
+		t.Fatalf("title bar did not preserve its fixed edges: %q", titleBar)
+	}
+	if strings.Contains(titleBar, strings.Repeat("long-target/", 20)) {
+		t.Fatalf("long target was not truncated before the command or status: %q", titleBar)
 	}
 }
 
@@ -71,11 +125,11 @@ func TestFocusHeaderStaysFixedWhileNoticeHistoryScrolls(t *testing.T) {
 	model.track.phases[7].State = PhaseActive
 	model.notices = []PresentationDocument{{Blocks: []PresentationBlock{{Text: strings.Repeat("history\n", 40)}}}}
 	model.View()
-	header := model.focusHeader()
+	header := model.focusShell()
 	model.Update(tea.KeyPressMsg{Code: tea.KeyHome})
 	for i := 0; i < len(model.scroll.anchors); i++ {
 		view := model.View().Content
-		if model.focusHeader() != header || !strings.Contains(view, "✓ Step-06  →  ◆ Step-07  →  ✓ Step-08") {
+		if model.focusShell() != header || !strings.Contains(view, "✓ Step-06  ─  ◆ Step-07  ─  ✓ Step-08") {
 			t.Fatalf("scroll changed fixed trail: %s", view)
 		}
 		model.Update(tea.KeyPressMsg{Code: tea.KeyDown})
@@ -95,7 +149,7 @@ func TestFocusWheelOnlyScrollsInsideTheContentRegion(t *testing.T) {
 		})
 		model.notices = []PresentationDocument{{Blocks: []PresentationBlock{{Text: strings.Repeat("history\n", 60)}}}}
 		model.Update(tea.KeyPressMsg{Code: tea.KeyHome})
-		top := lineCount(model.focusHeader())
+		top := model.focusBodyTop()
 		for _, point := range [][2]int{{size[0], top}, {0, 0}, {0, top - 1}, {0, top + model.scroll.viewport.Height()}} {
 			model.Update(tea.MouseWheelMsg{Button: tea.MouseWheelDown, X: point[0], Y: point[1]})
 			if model.scroll.viewport.YOffset() != 0 {
@@ -188,13 +242,32 @@ func TestFocusConfirmationShowsNoColorFocusForBothChoices(t *testing.T) {
 	}
 }
 
-func TestFocusHeaderKeepsTheSameRhythmAcrossLayoutThresholds(t *testing.T) {
+func TestFocusShellKeepsTheSameRhythmAcrossLayoutThresholds(t *testing.T) {
 	for _, size := range [][2]int{{69, 19}, {70, 20}, {120, 40}} {
 		model := newRichRootModelWithConsole(size[0], size[1], false, ConsoleDescriptor{
 			Command: "YCY", FormCatalog: []ConsoleFormStep{{ID: "one", Name: "First"}},
 		})
-		if got := lineCount(model.focusHeader()); got != 2 {
-			t.Fatalf("%dx%d header height = %d, want 2", size[0], size[1], got)
+		if got := lineCount(model.focusShell()); got != 3 || model.focusBodyTop() != 4 {
+			t.Fatalf("%dx%d shell height = %d/%d, want 3/4", size[0], size[1], got, model.focusBodyTop())
+		}
+	}
+}
+
+func TestFocusBodyGapIsNotScrollableContent(t *testing.T) {
+	model, _ := scrollTestForm(t, InteractionText, 80, 24)
+	blocks := model.scrollBlocks(model.formWidth())
+	if len(blocks) == 0 || blocks[len(blocks)-1].id != "form" {
+		t.Fatalf("active form is not the final scroll block: %#v", blocks)
+	}
+	for _, block := range blocks {
+		if block.id == "separator" {
+			t.Fatalf("fixed body gap remained in scroll blocks: %#v", blocks)
+		}
+	}
+	model.View()
+	for _, anchor := range model.scroll.anchors {
+		if anchor.block == "separator" {
+			t.Fatalf("fixed body gap entered scroll anchors: %#v", model.scroll.anchors)
 		}
 	}
 }
@@ -211,6 +284,10 @@ func TestFocusOutcomeUsesTheHeaderAsItsOnlyStatusLabel(t *testing.T) {
 	view := model.View().Content
 	if strings.Count(view, "SUCCEEDED") != 1 || strings.Contains(view, "First") {
 		t.Fatalf("outcome repeated status or trail: %q", view)
+	}
+	plainLines := strings.Split(ansi.Strip(view), "\n")
+	if plainLines[1] != strings.Repeat("─", 80) || plainLines[2] != "" || model.focusBodyTop() != 3 {
+		t.Fatalf("outcome did not retain shell separation: %q", view)
 	}
 	for _, text := range []string{"write result", "saved"} {
 		if !strings.Contains(view, text) {

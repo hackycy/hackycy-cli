@@ -135,7 +135,7 @@ func TestConsoleWideViewKeepsStableShellRegions(t *testing.T) {
 	if !view.AltScreen || !view.DisableBracketedPasteMode {
 		t.Fatalf("wide view terminal flags = %#v", view)
 	}
-	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace repo", "provider github", "✓ Scan  →  ◆ Write", "Write", "pending"} {
+	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace repo", "provider github", "✓ Scan  ─  ◆ Write", "Write", "pending"} {
 		if !strings.Contains(view.Content, needle) {
 			t.Fatalf("wide view missing %q: %q", needle, view.Content)
 		}
@@ -167,7 +167,7 @@ func TestConsoleCompactViewRetainsTrailAndActiveRegion(t *testing.T) {
 		{ID: "fetch", Name: "Fetch", State: PhaseActive, Detail: "commits"},
 	}}
 	view := model.View().Content
-	for _, needle := range []string{"YCY GIT", "scope workspace", "✓ Scan  →  ◆ Fetch", "Fetch", "commits"} {
+	for _, needle := range []string{"YCY GIT", "scope workspace", "✓ Scan  ─  ◆ Fetch", "Fetch", "commits"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("compact view missing %q: %q", needle, view)
 		}
@@ -344,12 +344,12 @@ func TestConsoleCatalogAskReusesExistingRows(t *testing.T) {
 		response: response,
 		ack:      make(chan struct{}),
 	})
-	if view := model.View().Content; !strings.Contains(view, "◆ Workspace  →  ○ Access token") {
+	if view := model.View().Content; !strings.Contains(view, "◆ Workspace  ─  ○ Access token") {
 		t.Fatalf("catalog did not expose active form in trail: %q", view)
 	}
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-response
-	if view := model.View().Content; !strings.Contains(view, "✓ Workspace  →  ○ Access token") {
+	if view := model.View().Content; !strings.Contains(view, "✓ Workspace  ─  ○ Access token") {
 		t.Fatalf("catalog did not retain completed form in trail: %q", view)
 	}
 }
@@ -374,7 +374,7 @@ func TestConsoleTrackReplacesFormCatalogWithWorkCatalog(t *testing.T) {
 	})
 
 	view := model.View().Content
-	if strings.Contains(view, "Workspace") || strings.Contains(view, "Confirm") || !strings.Contains(view, "○ Validate  →  ○ Write") {
+	if strings.Contains(view, "Workspace") || strings.Contains(view, "Confirm") || !strings.Contains(view, "○ Validate  ─  ○ Write") {
 		t.Fatalf("form/work rows mixed in view: %q", view)
 	}
 }
@@ -401,7 +401,7 @@ func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *tes
 		ack:               make(chan struct{}),
 	})
 	workView := model.View().Content
-	if strings.Contains(workView, "Select date range") || strings.Contains(workView, "Filter by authors") || !strings.Contains(workView, "○ Prepare workspace  →  ○ Scan repositories  →  ○ Fetch commits") {
+	if strings.Contains(workView, "Select date range") || strings.Contains(workView, "Filter by authors") || !strings.Contains(workView, "○ Prepare workspace  ─  ○ Scan repositories  ─  ○ Fetch commits") {
 		t.Fatalf("initial controlled Work view mixed catalogs: %q", workView)
 	}
 
@@ -424,7 +424,7 @@ func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *tes
 	}
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-dateResponse
-	if model.mode != richTrackMode || !strings.Contains(model.View().Content, "✓ Scan repositories  →  ○ Fetch commits  →  ○ Build commit tree") {
+	if model.mode != richTrackMode || !strings.Contains(model.View().Content, "✓ Scan repositories  ─  ○ Fetch commits  ─  ○ Build commit tree") {
 		t.Fatalf("date completion did not restore Work trail: mode=%d view=%q", model.mode, model.View().Content)
 	}
 
@@ -511,7 +511,7 @@ func TestConsoleModelUsesFocusPaletteAndNoColorRemovesSGR(t *testing.T) {
 	if strings.Contains(plainView, "\x1b[") {
 		t.Fatalf("NO_COLOR Focus view contains SGR/control styling: %q", plainView)
 	}
-	for _, text := range []string{"✓ Done phase  →  ◆ Active phase", "Active phase", "working"} {
+	for _, text := range []string{"✓ Done phase  ─  ◆ Active phase", "Active phase", "working"} {
 		if !strings.Contains(plainView, text) {
 			t.Fatalf("NO_COLOR Focus view missing %q: %q", text, plainView)
 		}
@@ -599,14 +599,14 @@ func TestConsoleFormRowsRetainReachedOrderAndRedactedStepDetail(t *testing.T) {
 	<-response
 	show(2, InteractionRequest{Kind: InteractionSecret, Message: "Access token", ConsoleStepID: "token", TranscriptLabel: "Access token", Sensitive: true})
 	view := model.View().Content
-	if !strings.Contains(view, "✓ Workspace  →  ◆ Access token") || strings.Contains(view, "answer captured") || strings.Contains(view, "redacted input") {
+	if !strings.Contains(view, "✓ Workspace  ─  ◆ Access token") || strings.Contains(view, "answer captured") || strings.Contains(view, "redacted input") {
 		t.Fatalf("active form trail or body = %q", view)
 	}
 
 	_, _ = model.Update(richFormCancelledMsg{id: 2})
 	<-response
 	view = model.View().Content
-	if !strings.Contains(view, "✓ Workspace  →  ⊘ Access token") || strings.Contains(view, "cancelled") {
+	if !strings.Contains(view, "✓ Workspace  ─  ⊘ Access token") || strings.Contains(view, "cancelled") {
 		t.Fatalf("cancelled form trail = %q", view)
 	}
 }

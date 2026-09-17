@@ -748,7 +748,7 @@ func (model *richRootModel) View() tea.View {
 	styles := richStyles(model.color)
 	body := model.scroll.viewport.View()
 	footer := styles[VisualRoleMuted].Render(model.scrollFooter())
-	content := model.focusHeader() + "\n" + body + "\n" + footer
+	content := model.focusShell() + "\n\n" + body + "\n" + footer
 	view.Content = content
 	if !model.mouseDisabled {
 		view.MouseMode = tea.MouseModeCellMotion

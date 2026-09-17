@@ -8,15 +8,22 @@ results and transcript headings. The existing dark palette policy applies;
 with `NO_COLOR`, the focused confirmation choice uses ASCII brackets such as
 `[Yes]  No` so focus never depends on color alone.
 
-The command/status header, neighboring-step trail, and keyboard hints stay
-fixed. The header has the same one- or two-line rhythm at every supported window
-size. The trail is the only live progress overview and shows up to three steps
-from the current form or work catalog. On narrow screens it drops neighboring
-steps before abbreviating the current name. A console without a catalog, and a
-completed outcome, has no trail. The scrollable body contains metadata, notices,
-the current form or work phase, and the result summary; completed history is
-printed in the final transcript after terminal restoration. Active work uses a
-pulse animation.
+The fixed application shell separates command identity, progress, and active
+content. Its first row keeps the emphasized command and muted target on the left
+and the current status against the right edge. A full-width divider follows,
+then the neighboring-step trail and one fixed blank row before the scrollable
+body. The trail is the only live progress overview and shows up to three steps
+from the current form or work catalog. Completed, active, and pending steps use
+`✓`, `◆`, and `○`, joined by a quiet horizontal rule. On narrow screens the trail
+drops neighboring steps before abbreviating the current name. A console without
+a catalog, and a completed outcome, has no trail but retains the divider and
+body spacing.
+
+The complete visual baseline is an `80x24` terminal. Smaller supported windows
+remain operable, bounded, and scrollable, but do not compress the normal desktop
+spacing. The scrollable body contains metadata, notices, the current form or
+work phase, and the result summary; completed history is printed in the final
+transcript after terminal restoration. Active work uses a pulse animation.
 
 The content between them scrolls continuously. Long metadata, phase details,
 notices, options, and results wrap within the window instead of being discarded.

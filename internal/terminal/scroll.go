@@ -141,15 +141,15 @@ func (model *richRootModel) prepareScroll() {
 		return
 	}
 	width := model.formWidth()
-	headerHeight := lineCount(model.focusHeader())
+	bodyTop := model.focusBodyTop()
 	// Reserve the footer's actual wrapped height. The longest status includes
 	// paused-follow information, so it cannot push the input out of the view.
 	footerHeight := max(lineCount(model.scrollFooter()), 1)
-	height := max(model.height-headerHeight-footerHeight, 1)
+	height := max(model.height-bodyTop-footerHeight, 1)
 	blocks := model.scrollBlocks(width)
 	model.scroll.setContent(blocks, width, height)
 	// A change in digit count or follow state can add one footer line.
-	height = max(model.height-headerHeight-lineCount(model.scrollFooter()), 1)
+	height = max(model.height-bodyTop-lineCount(model.scrollFooter()), 1)
 	model.scroll.viewport.SetHeight(height)
 	if model.scroll.following {
 		model.scroll.viewport.GotoBottom()
@@ -190,7 +190,7 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 	styles := richStyles(model.color)
 	var blocks []scrollBlock
 	// Keep the full command target accessible when the fixed header abbreviates it.
-	if ansi.StringWidth(stripTerminalControl("◆ "+model.consoleCommand()+"  "+model.console.Target+"  "+model.consoleStatusLabel())) > width {
+	if ansi.StringWidth(stripTerminalControl(model.consoleCommand()+"  "+model.console.Target+"  "+model.consoleStatusLabel())) > width {
 		blocks = append(blocks, scrollBlock{"identity", stripTerminalControl(model.consoleCommand() + " · " + model.console.Target)})
 	}
 	for i, field := range model.console.Metadata {
@@ -202,7 +202,7 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 		}
 	}
 	if active := model.consoleActiveView(0); active != "" {
-		blocks = append(blocks, scrollBlock{"separator", ""}, scrollBlock{"form", active})
+		blocks = append(blocks, scrollBlock{"form", active})
 	}
 	return blocks
 }
@@ -212,7 +212,7 @@ func (model *richRootModel) handleScroll(message tea.Msg) bool {
 	handled := false
 	switch value := message.(type) {
 	case tea.MouseWheelMsg:
-		top := lineCount(model.focusHeader())
+		top := model.focusBodyTop()
 		if model.mouseDisabled || value.X < 0 || value.X >= model.width || value.Y < top || value.Y >= top+v.Height() {
 			return true
 		}
