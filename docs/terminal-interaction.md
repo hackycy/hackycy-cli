@@ -1,9 +1,30 @@
-# Terminal scrolling
+# Terminal presentation and scrolling
 
-The interactive console keeps the command/status bar and keyboard hints fixed.
+The interactive console uses a flush-left Focus Flow layout with no outer or
+form indentation and no maximum content width. Titles, selection markers,
+inputs, confirmation buttons, and validation errors all begin at the terminal's
+first column. Its mint primary and violet focus colors are shared with rich
+results and transcript headings. The existing dark palette policy applies;
+with `NO_COLOR`, the focused confirmation choice uses ASCII brackets such as
+`[Yes]  No` so focus never depends on color alone.
+
+The command/status header, neighboring-step trail, and keyboard hints stay
+fixed. The header has the same one- or two-line rhythm at every supported window
+size. The trail is the only live progress overview and shows up to three steps
+from the current form or work catalog. On narrow screens it drops neighboring
+steps before abbreviating the current name. A console without a catalog, and a
+completed outcome, has no trail. The scrollable body contains metadata, notices,
+the current form or work phase, and the result summary; completed history is
+printed in the final transcript after terminal restoration. Active work uses a
+pulse animation.
+
 The content between them scrolls continuously. Long metadata, phase details,
 notices, options, and results wrap within the window instead of being discarded.
 Earlier notices remain available for the lifetime of the console.
+
+The pager line appears only when content overflows, following is paused, or new
+content is unread. Its `wheel` hint appears only while overflow exists and mouse
+mode is active. The `Ctrl+G` mouse/copy toggle stays in the compact help line.
 
 | Context | Controls |
 | --- | --- |

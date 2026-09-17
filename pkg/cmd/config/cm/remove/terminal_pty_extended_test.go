@@ -24,7 +24,7 @@ type cmRemovePTYStep struct {
 	input  string
 }
 
-func TestRunCMRemoveRichPTYFourWayBJourney(t *testing.T) {
+func TestRunCMRemoveRichPTYFourWayFocusJourney(t *testing.T) {
 	const helperEnvironment = "YCY_CONFIG_CM_REMOVE_RICH_EXTENDED_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
 		runCMRemoveExtendedPTYHelper(t)
@@ -43,7 +43,7 @@ func TestRunCMRemoveRichPTYFourWayBJourney(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			releasePath := filepath.Join(t.TempDir(), "release")
-			command := exec.Command(os.Args[0], "-test.run=^TestRunCMRemoveRichPTYFourWayBJourney$")
+			command := exec.Command(os.Args[0], "-test.run=^TestRunCMRemoveRichPTYFourWayFocusJourney$")
 			command.Env = cmRemoveExtendedPTYEnvironment(map[string]string{
 				"NO_COLOR":                       map[bool]string{true: "", false: "1"}[testCase.color],
 				"TERM":                           "xterm-256color",
@@ -340,7 +340,7 @@ func assertCMRemoveScenarioPTYOutput(t *testing.T, output, scenario string, colo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR CM remove scenario %q contains %q: %q", scenario, prefix, output)
 			}
 		}
@@ -437,6 +437,7 @@ func runCMRemoveExtendedPTYProcess(t *testing.T, command *exec.Cmd, width, heigh
 	if err := os.WriteFile(releasePath, []byte("ok"), 0o600); err != nil {
 		t.Fatalf("release CM remove writer: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}
@@ -460,7 +461,7 @@ func assertCMRemoveExtendedPTYOutput(t *testing.T, output string, color, wide bo
 		t.Fatalf("CM remove Rich PTY did not restore primary screen: %q", output)
 	}
 	live := cmRemoveExtendedPTYText(visible[enter:leave])
-	for _, expected := range []string{"YCY / config cm remove", "Validate CM profile", "Remove CM profile", "work", "STATE", "PHASE", "DETAIL", "CM_REMOVE_WRITE_OK"} {
+	for _, expected := range []string{"YCY / config cm remove", "work", "CM_REMOVE_WRITE_OK"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("CM remove Rich PTY live Console missing %q: %q", expected, output)
 		}
@@ -497,7 +498,7 @@ func assertCMRemoveExtendedPTYOutput(t *testing.T, output string, color, wide bo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR CM remove Rich PTY output contains %q: %q", prefix, output)
 			}
 		}

@@ -109,7 +109,7 @@ func TestOpenConsoleRejectsInvalidDescriptorWithoutOpeningRun(t *testing.T) {
 	}
 }
 
-func TestOpenUsesTheBCompatibleDefaultConsoleDescriptor(t *testing.T) {
+func TestOpenUsesTheCompatibleDefaultConsoleDescriptor(t *testing.T) {
 	run := NewExperience(ExperienceOptions{}).Open(context.Background()).(*runtimeRun)
 	if run.console.Command != "YCY" || run.console.Target != "terminal session" || run.console.Status != "READY" || len(run.console.Metadata) != 1 {
 		t.Fatalf("default descriptor = %#v", run.console)
@@ -135,7 +135,7 @@ func TestConsoleWideViewKeepsStableShellRegions(t *testing.T) {
 	if !view.AltScreen || !view.DisableBracketedPasteMode {
 		t.Fatalf("wide view terminal flags = %#v", view)
 	}
-	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace repo", "provider github", "STATE", "PHASE", "DETAIL", "✓ DONE", "◆ ACTIVE", "Scan", "Write", "pending"} {
+	for _, needle := range []string{"YCY CONFIG", "profile demo", "workspace repo", "provider github", "✓ Scan  →  ◆ Write", "Write", "pending"} {
 		if !strings.Contains(view.Content, needle) {
 			t.Fatalf("wide view missing %q: %q", needle, view.Content)
 		}
@@ -145,17 +145,17 @@ func TestConsoleWideViewKeepsStableShellRegions(t *testing.T) {
 	}
 }
 
-func TestConsoleCompactSurfaceUsesTheBStatusHeading(t *testing.T) {
+func TestConsoleCompactSurfaceUsesFocusTrail(t *testing.T) {
 	model := newRichRootModelWithConsole(69, 30, false, defaultConsoleDescriptor())
 	model.mode = richTrackMode
 	model.track = &trackedState{label: "work", phases: []OperationPhase{{Name: "Phase", State: PhaseActive}}}
 	view := model.View().Content
-	if !strings.Contains(view, "STATE / PHASE / DETAIL") || !strings.Contains(view, "◆ ACTIVE · Phase") {
-		t.Fatalf("compact surface omitted B status structure: %q", view)
+	if strings.Count(view, "Phase") != 2 || !strings.Contains(view, "◆ Phase") {
+		t.Fatalf("compact surface omitted Focus trail or detail: %q", view)
 	}
 }
 
-func TestConsoleCompactViewRetainsOrderedRowsAndActiveRegion(t *testing.T) {
+func TestConsoleCompactViewRetainsTrailAndActiveRegion(t *testing.T) {
 	model := newRichRootModelWithConsole(48, 16, false, ConsoleDescriptor{
 		Command:  "YCY GIT",
 		Target:   "pulse",
@@ -167,14 +167,14 @@ func TestConsoleCompactViewRetainsOrderedRowsAndActiveRegion(t *testing.T) {
 		{ID: "fetch", Name: "Fetch", State: PhaseActive, Detail: "commits"},
 	}}
 	view := model.View().Content
-	for _, needle := range []string{"YCY GIT", "scope workspace", "STATE / PHASE / DETAIL", "✓ DONE · Scan · 2 repos", "◆ ACTIVE · Fetch · commits", "Fetch", "commits"} {
+	for _, needle := range []string{"YCY GIT", "scope workspace", "✓ Scan  →  ◆ Fetch", "Fetch", "commits"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("compact view missing %q: %q", needle, view)
 		}
 	}
 }
 
-func TestConsoleTrackStartsAndAdvancesMeter(t *testing.T) {
+func TestConsoleTrackStartsAndAdvancesPulse(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
 	ack := make(chan struct{})
 	_, start := model.Update(richStartTrackMsg{
@@ -186,17 +186,17 @@ func TestConsoleTrackStartsAndAdvancesMeter(t *testing.T) {
 	if start == nil {
 		t.Fatal("starting a Rich Track returned no spinner command")
 	}
-	if model.spin.Spinner.FPS != spinner.Meter.FPS || len(model.spin.Spinner.Frames) != len(spinner.Meter.Frames) {
-		t.Fatalf("spinner = %#v, want Bubbles Meter", model.spin.Spinner)
+	if model.spin.Spinner.FPS != spinner.Pulse.FPS || len(model.spin.Spinner.Frames) != len(spinner.Pulse.Frames) {
+		t.Fatalf("spinner = %#v, want Bubbles Pulse", model.spin.Spinner)
 	}
-	for index, frame := range spinner.Meter.Frames {
+	for index, frame := range spinner.Pulse.Frames {
 		if model.spin.Spinner.Frames[index] != frame {
-			t.Fatalf("spinner frame %d = %q, want Meter frame %q", index, model.spin.Spinner.Frames[index], frame)
+			t.Fatalf("spinner frame %d = %q, want Pulse frame %q", index, model.spin.Spinner.Frames[index], frame)
 		}
 	}
 	first := model.spin.View()
-	if first != spinner.Meter.Frames[0] || !strings.Contains(model.View().Content, first+" Phase") {
-		t.Fatalf("initial Meter frame = %q, view = %q", first, model.View().Content)
+	if first != spinner.Pulse.Frames[0] || !strings.Contains(model.View().Content, first+" Phase") {
+		t.Fatalf("initial Pulse frame = %q, view = %q", first, model.View().Content)
 	}
 
 	message, ok := start().(spinner.TickMsg)
@@ -212,7 +212,7 @@ func TestConsoleTrackStartsAndAdvancesMeter(t *testing.T) {
 	}
 }
 
-func TestConsoleTrackResetsMeterAndIgnoresLateTicksOutsideWork(t *testing.T) {
+func TestConsoleTrackResetsPulseAndIgnoresLateTicksOutsideWork(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
 	startTrack := func() (int, spinner.TickMsg) {
 		ack := make(chan struct{})
@@ -231,7 +231,7 @@ func TestConsoleTrackResetsMeterAndIgnoresLateTicksOutsideWork(t *testing.T) {
 
 	firstID, late := startTrack()
 	_, _ = model.Update(late)
-	if model.spin.View() == spinner.Meter.Frames[0] {
+	if model.spin.View() == spinner.Pulse.Frames[0] {
 		// The first update is expected to advance the frame; this also proves the
 		// message belongs to the currently active spinner.
 		t.Fatalf("active spinner did not consume its tick")
@@ -243,8 +243,8 @@ func TestConsoleTrackResetsMeterAndIgnoresLateTicksOutsideWork(t *testing.T) {
 	}
 
 	secondID, _ := startTrack()
-	if secondID == firstID || model.spin.View() != spinner.Meter.Frames[0] {
-		t.Fatalf("new Track did not reset Meter: ids=(%d,%d) view=%q", firstID, secondID, model.spin.View())
+	if secondID == firstID || model.spin.View() != spinner.Pulse.Frames[0] {
+		t.Fatalf("new Track did not reset Pulse: ids=(%d,%d) view=%q", firstID, secondID, model.spin.View())
 	}
 	beforeStaleTick := model.spin.View()
 	if _, command := model.Update(late); command != nil || model.spin.View() != beforeStaleTick {
@@ -263,7 +263,7 @@ func TestConsoleTrackResetsMeterAndIgnoresLateTicksOutsideWork(t *testing.T) {
 	}
 }
 
-func TestControlledWorkResumesMeterAfterForm(t *testing.T) {
+func TestControlledWorkResumesPulseAfterForm(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
 		Command:     "YCY",
 		FormCatalog: []ConsoleFormStep{{ID: "step", Name: "Step"}},
@@ -292,8 +292,8 @@ func TestControlledWorkResumesMeterAfterForm(t *testing.T) {
 	}
 	_, resume := model.Update(richFormSubmittedMsg{id: 1})
 	<-response
-	if model.mode != richTrackMode || resume == nil || model.spin.View() != spinner.Meter.Frames[0] {
-		t.Fatalf("controlled Work did not restart Meter: mode=%v command=%v view=%q", model.mode, resume, model.spin.View())
+	if model.mode != richTrackMode || resume == nil || model.spin.View() != spinner.Pulse.Frames[0] {
+		t.Fatalf("controlled Work did not restart Pulse: mode=%v command=%v view=%q", model.mode, resume, model.spin.View())
 	}
 }
 
@@ -308,20 +308,15 @@ func TestConsoleInitialFormCatalogIsCompleteAndOrdered(t *testing.T) {
 		},
 	})
 
-	if len(model.formRows) != 3 || len(model.statusRows) != 3 {
-		t.Fatalf("initial catalog rows = (%d form, %d status), want three each", len(model.formRows), len(model.statusRows))
-	}
-	if model.formRows[0].state != PhaseActive || model.formRows[1].state != PhasePending || model.formRows[2].state != PhasePending {
-		t.Fatalf("initial catalog states = %#v, want active then pending", model.formRows)
-	}
-	if model.formRows[1].detail != "[redacted]" {
-		t.Fatalf("sensitive catalog detail = %q, want redacted", model.formRows[1].detail)
-	}
-
 	view := model.View().Content
-	for _, needle := range []string{"Workspace", "choose project", "Access token", "[redacted]", "Confirm", "apply changes", "◆ ACTIVE", "○ PENDING"} {
+	for _, needle := range []string{"◆ Workspace", "○ Access token", "○ Confirm"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("initial catalog view missing %q: %q", needle, view)
+		}
+	}
+	for _, hidden := range []string{"choose project", "[redacted]", "apply changes", "STEPS", "PENDING"} {
+		if strings.Contains(view, hidden) {
+			t.Fatalf("initial catalog leaked body detail %q: %q", hidden, view)
 		}
 	}
 	workspace := strings.Index(view, "Workspace")
@@ -349,16 +344,13 @@ func TestConsoleCatalogAskReusesExistingRows(t *testing.T) {
 		response: response,
 		ack:      make(chan struct{}),
 	})
-	if len(model.formRows) != 2 || len(model.statusRows) != 2 {
-		t.Fatalf("catalog rows after Ask = (%d form, %d status), want two each", len(model.formRows), len(model.statusRows))
-	}
-	if model.statusRows[0].state != PhaseActive || model.statusRows[1].state != PhasePending {
-		t.Fatalf("catalog states after Ask = %#v", model.statusRows)
+	if view := model.View().Content; !strings.Contains(view, "◆ Workspace  →  ○ Access token") {
+		t.Fatalf("catalog did not expose active form in trail: %q", view)
 	}
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-response
-	if model.statusRows[0].state != PhaseCompleted || !strings.Contains(model.View().Content, "Access token") {
-		t.Fatalf("catalog row was not retained after completion: %#v\n%s", model.statusRows, model.View().Content)
+	if view := model.View().Content; !strings.Contains(view, "✓ Workspace  →  ○ Access token") {
+		t.Fatalf("catalog did not retain completed form in trail: %q", view)
 	}
 }
 
@@ -381,14 +373,8 @@ func TestConsoleTrackReplacesFormCatalogWithWorkCatalog(t *testing.T) {
 		ack:           make(chan struct{}),
 	})
 
-	if len(model.formRows) != 0 || len(model.statusRows) != 2 {
-		t.Fatalf("work replacement rows = (%d form, %d status), want no form and two work rows", len(model.formRows), len(model.statusRows))
-	}
-	if model.statusRows[0].phase != "Validate" || model.statusRows[1].phase != "Write" || model.statusRows[0].state != PhasePending || model.statusRows[1].state != PhasePending {
-		t.Fatalf("work catalog = %#v", model.statusRows)
-	}
 	view := model.View().Content
-	if strings.Contains(view, "Workspace") || strings.Contains(view, "Confirm") || !strings.Contains(view, "Validate") || !strings.Contains(view, "Write") {
+	if strings.Contains(view, "Workspace") || strings.Contains(view, "Confirm") || !strings.Contains(view, "○ Validate  →  ○ Write") {
 		t.Fatalf("form/work rows mixed in view: %q", view)
 	}
 }
@@ -414,11 +400,8 @@ func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *tes
 		retainFormCatalog: true,
 		ack:               make(chan struct{}),
 	})
-	if len(model.formRows) != 2 || len(model.statusRows) != 4 {
-		t.Fatalf("initial controlled catalogs = (%d form, %d work rows)", len(model.formRows), len(model.statusRows))
-	}
 	workView := model.View().Content
-	if strings.Contains(workView, "Select date range") || strings.Contains(workView, "Filter by authors") || !strings.Contains(workView, "Scan repositories") || !strings.Contains(workView, "Build commit tree") {
+	if strings.Contains(workView, "Select date range") || strings.Contains(workView, "Filter by authors") || !strings.Contains(workView, "○ Prepare workspace  →  ○ Scan repositories  →  ○ Fetch commits") {
 		t.Fatalf("initial controlled Work view mixed catalogs: %q", workView)
 	}
 
@@ -441,8 +424,8 @@ func TestConsoleControlledWorkAlternatesDeclaredCatalogsWithoutMixingRows(t *tes
 	}
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-dateResponse
-	if model.mode != richTrackMode || len(model.formRows) != 2 || len(model.statusRows) != 4 {
-		t.Fatalf("date completion did not restore Work catalog: mode=%d form=%d work=%d", model.mode, len(model.formRows), len(model.statusRows))
+	if model.mode != richTrackMode || !strings.Contains(model.View().Content, "✓ Scan repositories  →  ○ Fetch commits  →  ○ Build commit tree") {
+		t.Fatalf("date completion did not restore Work trail: mode=%d view=%q", model.mode, model.View().Content)
 	}
 
 	_, _ = model.Update(richTrackPhaseMsg{phase: OperationPhase{ID: "fetch", State: PhaseActive, Detail: "Reading repositories"}, ack: make(chan struct{})})
@@ -499,7 +482,7 @@ func TestConsoleNormalizedProjectionKeepsMetadataWithinWidth(t *testing.T) {
 
 }
 
-func TestConsoleModelUsesBPaletteAndNoColorRemovesSGR(t *testing.T) {
+func TestConsoleModelUsesFocusPaletteAndNoColorRemovesSGR(t *testing.T) {
 	console := ConsoleDescriptor{
 		Command:  "YCY CONFIG",
 		Target:   "profile demo",
@@ -512,13 +495,13 @@ func TestConsoleModelUsesBPaletteAndNoColorRemovesSGR(t *testing.T) {
 		{Name: "Active phase", State: PhaseActive, Detail: "working"},
 	}}
 	coloredView := colored.View().Content
-	for _, colorCode := range []string{"38;2;255;180;84", "38;2;90;247;142"} {
+	for _, colorCode := range []string{"38;2;79;227;177", "38;2;90;247;142"} {
 		if !strings.Contains(coloredView, colorCode) {
-			t.Fatalf("colored B view missing palette code %q: %q", colorCode, coloredView)
+			t.Fatalf("colored Focus view missing palette code %q: %q", colorCode, coloredView)
 		}
 	}
 	if strings.Contains(ansi.Strip(coloredView), "[done]") || strings.Contains(ansi.Strip(coloredView), "[active]") {
-		t.Fatalf("colored B view retained generic state prefix: %q", coloredView)
+		t.Fatalf("colored Focus view retained generic state prefix: %q", coloredView)
 	}
 
 	plain := newRichRootModelWithConsole(96, 30, false, console)
@@ -526,16 +509,16 @@ func TestConsoleModelUsesBPaletteAndNoColorRemovesSGR(t *testing.T) {
 	plain.track = colored.track
 	plainView := plain.View().Content
 	if strings.Contains(plainView, "\x1b[") {
-		t.Fatalf("NO_COLOR B view contains SGR/control styling: %q", plainView)
+		t.Fatalf("NO_COLOR Focus view contains SGR/control styling: %q", plainView)
 	}
-	for _, text := range []string{"STATE", "Done phase", "Active phase", "✓ DONE", "◆ ACTIVE"} {
+	for _, text := range []string{"✓ Done phase  →  ◆ Active phase", "Active phase", "working"} {
 		if !strings.Contains(plainView, text) {
-			t.Fatalf("NO_COLOR B view missing %q: %q", text, plainView)
+			t.Fatalf("NO_COLOR Focus view missing %q: %q", text, plainView)
 		}
 	}
 }
 
-func TestConsoleNoticeHistoryRemainsAvailableBelowTable(t *testing.T) {
+func TestConsoleNoticeHistoryRemainsAvailableBeforeActiveWork(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
 	model.mode = richTrackMode
 	model.track = &trackedState{label: "Work", phases: []OperationPhase{{Name: "Phase", State: PhaseActive, Detail: "working"}}}
@@ -547,18 +530,17 @@ func TestConsoleNoticeHistoryRemainsAvailableBelowTable(t *testing.T) {
 	if !strings.Contains(view, "latest context") || !strings.Contains(view, "old context") {
 		t.Fatalf("notice context = %q", view)
 	}
-	stateRow := strings.Index(view, "◆ ACTIVE    Phase")
-	active := strings.LastIndex(view, "\n Work")
+	active := strings.LastIndex(view, model.spin.View()+" Phase")
 	context := strings.Index(view, "latest context")
-	if stateRow < 0 || active < 0 || context < stateRow || context > active {
-		t.Fatalf("notice context displaced table or active region: %q", view)
+	if active < 0 || context < 0 || context > active {
+		t.Fatalf("notice context displaced active region: %q", view)
 	}
 }
 
-func TestBThemeUsesBottomFocusAndApprovedPalette(t *testing.T) {
-	theme := bHuhTheme(true).Theme(true)
-	if !theme.Focused.Base.GetBorderBottom() || theme.Focused.Base.GetBorderLeft() {
-		t.Fatalf("focused Huh border = bottom:%t left:%t; want bottom-only", theme.Focused.Base.GetBorderBottom(), theme.Focused.Base.GetBorderLeft())
+func TestFocusThemeUsesFlushAlignmentAndApprovedPalette(t *testing.T) {
+	theme := focusHuhTheme(true).Theme(true)
+	if theme.Focused.Base.GetBorderBottom() || theme.Focused.Base.GetBorderLeft() || theme.Focused.Base.GetPaddingLeft() != 0 {
+		t.Fatalf("focused Huh field must be borderless and flush left: %#v", theme.Focused.Base)
 	}
 	if got := ansi.Strip(theme.Focused.SelectSelector.String()); got != "◆ " {
 		t.Fatalf("select selector = %q, want paired active symbol", got)
@@ -569,13 +551,16 @@ func TestBThemeUsesBottomFocusAndApprovedPalette(t *testing.T) {
 	if got := ansi.Strip(theme.Focused.UnselectedPrefix.String()); got != "○ " {
 		t.Fatalf("unselected prefix = %q, want paired pending symbol", got)
 	}
-	if got := theme.Focused.Title.GetForeground(); got == nil {
-		t.Fatal("focused title has no B primary color")
+	if got := theme.Focused.Title.GetForeground(); got != lipgloss.Color(focusText) {
+		t.Fatalf("focused title color = %v, want body text color", got)
+	}
+	if got := theme.Focused.SelectSelector.GetForeground(); got != lipgloss.Color(focusAccent) {
+		t.Fatalf("focused selector color = %v, want accent", got)
 	}
 }
 
-func TestBThemeCanRenderWithoutColor(t *testing.T) {
-	theme := bHuhTheme(false).Theme(true)
+func TestFocusThemeCanRenderWithoutColor(t *testing.T) {
+	theme := focusHuhTheme(false).Theme(true)
 	for _, style := range []struct {
 		name  string
 		value string
@@ -613,24 +598,16 @@ func TestConsoleFormRowsRetainReachedOrderAndRedactedStepDetail(t *testing.T) {
 	_, _ = model.Update(richFormSubmittedMsg{id: 1})
 	<-response
 	show(2, InteractionRequest{Kind: InteractionSecret, Message: "Access token", ConsoleStepID: "token", TranscriptLabel: "Access token", Sensitive: true})
-	if len(model.formRows) != 2 || len(model.statusRows) != 2 {
-		t.Fatalf("declared form rows = (%d form, %d status), want two each", len(model.formRows), len(model.statusRows))
-	}
-
 	view := model.View().Content
-	completed := strings.Index(view, "✓ DONE")
-	workspace := strings.Index(view, "Workspace")
-	active := strings.Index(view, "◆ ACTIVE")
-	token := strings.Index(view, "Access token")
-	if completed < 0 || workspace < completed || active < workspace || token < active || !strings.Contains(view, "answer captured") || !strings.Contains(view, "redacted input") {
-		t.Fatalf("form rows = %q", view)
+	if !strings.Contains(view, "✓ Workspace  →  ◆ Access token") || strings.Contains(view, "answer captured") || strings.Contains(view, "redacted input") {
+		t.Fatalf("active form trail or body = %q", view)
 	}
 
 	_, _ = model.Update(richFormCancelledMsg{id: 2})
 	<-response
 	view = model.View().Content
-	if !strings.Contains(view, "⊘ CANCELLED") || !strings.Contains(view, "Access token") || !strings.Contains(view, "cancelled") {
-		t.Fatalf("cancelled form row = %q", view)
+	if !strings.Contains(view, "✓ Workspace  →  ⊘ Access token") || strings.Contains(view, "cancelled") {
+		t.Fatalf("cancelled form trail = %q", view)
 	}
 }
 
@@ -647,8 +624,8 @@ func TestConsoleDoesNotAppendUndeclaredFormRows(t *testing.T) {
 		response: make(chan richAskResult, 1),
 		ack:      make(chan struct{}),
 	})
-	if len(model.formRows) != 1 || len(model.statusRows) != 1 || model.formRows[0].catalogID != "workspace" {
-		t.Fatalf("undeclared form appended rows: form=%#v status=%#v", model.formRows, model.statusRows)
+	if len(model.formRows) != 1 || model.formRows[0].catalogID != "workspace" {
+		t.Fatalf("undeclared form appended rows: form=%#v", model.formRows)
 	}
 }
 
@@ -667,7 +644,7 @@ func TestRichConsoleRequiresDeclaredFormCatalogEntry(t *testing.T) {
 	}
 }
 
-func TestConsoleTrackRowsRetainCatalogOrderAndFinalDetailsAfterActiveRegionChanges(t *testing.T) {
+func TestConsoleCompletedTrackLeavesHistoryToTranscript(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, defaultConsoleDescriptor())
 	start := func() {
 		_, _ = model.Update(richStartTrackMsg{
@@ -696,23 +673,17 @@ func TestConsoleTrackRowsRetainCatalogOrderAndFinalDetailsAfterActiveRegionChang
 	})
 
 	view := model.View().Content
-	if got := strings.Count(view, "Validate source"); got != 1 {
-		t.Fatalf("Validate source count = %d, want 1: %q", got, view)
+	if !strings.Contains(view, "Follow-up context") {
+		t.Fatalf("replacement notice missing: %q", view)
 	}
-	if got := strings.Count(view, "Write profile"); got != 1 {
-		t.Fatalf("Write profile count = %d, want 1: %q", got, view)
-	}
-	validate := strings.Index(view, "Validate source")
-	write := strings.Index(view, "Write profile")
-	if validate < 0 || write < validate || !strings.Contains(view, "configuration validated") || !strings.Contains(view, "profile persisted") {
-		t.Fatalf("track catalog rows lost order or final detail: %q", view)
-	}
-	if !strings.Contains(view, "✓ DONE") || !strings.Contains(view, "Follow-up context") {
-		t.Fatalf("track table or replacement active region missing: %q", view)
+	for _, history := range []string{"Validate source", "Write profile", "configuration validated", "profile persisted", "STEPS"} {
+		if strings.Contains(view, history) {
+			t.Fatalf("completed track history %q remained in live body: %q", history, view)
+		}
 	}
 }
 
-func TestConsoleOutcomeRetainsWorkRowsAndRendersBoundedSummary(t *testing.T) {
+func TestConsoleOutcomeRendersOnlyBoundedSummary(t *testing.T) {
 	model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
 		Command: "YCY CONFIG",
 		Target:  "profile demo",
@@ -736,13 +707,15 @@ func TestConsoleOutcomeRetainsWorkRowsAndRendersBoundedSummary(t *testing.T) {
 	if model.mode != richOutcomeMode {
 		t.Fatalf("outcome mode = %v, want richOutcomeMode", model.mode)
 	}
-	if len(model.statusRows) != 2 || model.statusRows[0].phase != "Validate" || model.statusRows[1].phase != "Write" {
-		t.Fatalf("final Work rows = %#v, want both rows retained", model.statusRows)
-	}
 	view := model.View().Content
-	for _, needle := range []string{"✓ SUCCEEDED", "Location: profile demo", "Profile applied", "Validate", "Write", "✓ DONE"} {
+	for _, needle := range []string{"SUCCEEDED", "Location: profile demo", "Profile applied"} {
 		if !strings.Contains(view, needle) {
 			t.Fatalf("Outcome view missing %q: %q", needle, view)
+		}
+	}
+	for _, history := range []string{"Validate", "Write", "DONE"} {
+		if strings.Contains(view, history) {
+			t.Fatalf("Outcome retained Work history %q: %q", history, view)
 		}
 	}
 
@@ -762,12 +735,11 @@ func TestConsoleOutcomeProjectsFailureAndCancellation(t *testing.T) {
 		name       string
 		outcome    FinishOutcome
 		phaseState PhaseState
-		glyph      string
 		location   string
 		summary    string
 	}{
-		{name: "failed", outcome: Failed, phaseState: PhaseFailed, glyph: "✕ FAILED", location: "write profile", summary: "profile could not be saved"},
-		{name: "cancelled", outcome: Cancelled, phaseState: PhaseCancelled, glyph: "⊘ CANCELLED", location: "confirm profile", summary: "profile update cancelled"},
+		{name: "failed", outcome: Failed, phaseState: PhaseFailed, location: "write profile", summary: "profile could not be saved"},
+		{name: "cancelled", outcome: Cancelled, phaseState: PhaseCancelled, location: "confirm profile", summary: "profile update cancelled"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			model := newRichRootModelWithConsole(96, 30, false, ConsoleDescriptor{
@@ -790,10 +762,13 @@ func TestConsoleOutcomeProjectsFailureAndCancellation(t *testing.T) {
 			})
 
 			view := model.View().Content
-			for _, needle := range []string{testCase.glyph, "Location: " + testCase.location, testCase.summary, "Write"} {
+			for _, needle := range []string{strings.ToUpper(testCase.outcome.String()), "Location: " + testCase.location, testCase.summary} {
 				if !strings.Contains(view, needle) {
 					t.Fatalf("%s Outcome view missing %q: %q", testCase.name, needle, view)
 				}
+			}
+			if strings.Contains(view, "Write") {
+				t.Fatalf("%s Outcome retained Work history: %q", testCase.name, view)
 			}
 			_, _ = model.Update(richTrackPhaseMsg{
 				phase: OperationPhase{ID: "write", Name: "Late write", State: PhaseCompleted, Detail: "must be ignored"},

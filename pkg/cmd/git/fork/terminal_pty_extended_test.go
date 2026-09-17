@@ -222,7 +222,7 @@ func assertGitForkOverwritePTYOutput(t *testing.T, output string, color, wide bo
 		t.Fatalf("git fork overwrite %s did not restore primary screen: %q", mode, output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	for _, expected := range []string{"YCY / git fork", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git fork"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git fork overwrite %s live Console missing %q: %q", mode, expected, output)
 		}
@@ -256,7 +256,7 @@ func assertGitForkOverwritePTYOutput(t *testing.T, output string, color, wide bo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git fork overwrite %s output contains %q: %q", mode, prefix, output)
 			}
 		}
@@ -399,7 +399,7 @@ func assertGitForkFailurePTYOutput(t *testing.T, output string, color, wide bool
 		t.Fatalf("git fork failure did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	for _, expected := range []string{"YCY / git fork", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git fork"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git fork failure live Console missing %q: %q", expected, output)
 		}
@@ -410,8 +410,8 @@ func assertGitForkFailurePTYOutput(t *testing.T, output string, color, wide bool
 				t.Fatalf("wide git fork failure live Outcome missing %q: %q", expected, output)
 			}
 		}
-	} else if !strings.Contains(live, "FAILED") || !strings.Contains(live, "Download archive") {
-		t.Fatalf("compact git fork failure live phase missing: %q", output)
+	} else if !strings.Contains(live, "FAILED") || !strings.Contains(live, "Project acquisition failed") {
+		t.Fatalf("compact git fork failure live outcome missing: %q", output)
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
 	if strings.Contains(live, "Project acquired") || strings.Contains(transcript, "Project acquired") || strings.Contains(transcript, "Done! Project created") {
@@ -430,7 +430,7 @@ func assertGitForkFailurePTYOutput(t *testing.T, output string, color, wide bool
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git fork failure output contains %q: %q", prefix, output)
 			}
 		}
@@ -446,17 +446,14 @@ func assertGitForkFallbackPTYOutput(t *testing.T, output string, color, wide boo
 		t.Fatalf("git fork fallback did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	rowExpected := []string{"YCY / git fork", "STATE", "PHASE", "DETAIL", "Resolve repository"}
-	if wide {
-		rowExpected = append(rowExpected, "Download archive")
-	}
+	rowExpected := []string{"YCY / git fork"}
 	for _, expected := range rowExpected {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git fork fallback live Console missing %q: %q", expected, output)
 		}
 	}
 	if wide {
-		for _, expected := range []string{"Clone fallback", "Remove Git metadata", "archive first; git clone fallback"} {
+		for _, expected := range []string{"archive first; git clone fallback"} {
 			if !strings.Contains(live, expected) {
 				t.Fatalf("wide git fork fallback omitted %q: %q", expected, output)
 			}
@@ -481,7 +478,7 @@ func assertGitForkFallbackPTYOutput(t *testing.T, output string, color, wide boo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git fork fallback output contains %q: %q", prefix, output)
 			}
 		}
@@ -561,10 +558,7 @@ func assertGitForkArchivePTYOutput(t *testing.T, output string, color, wide bool
 		t.Fatalf("git fork Rich PTY did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	rowExpected := []string{"YCY / git fork", "STATE", "PHASE", "DETAIL", "Resolve repository", "Inspect destination"}
-	if wide {
-		rowExpected = append(rowExpected, "Download archive")
-	}
+	rowExpected := []string{"YCY / git fork"}
 	for _, expected := range rowExpected {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git fork Rich PTY live Console missing %q: %q", expected, output)
@@ -607,7 +601,7 @@ func assertGitForkArchivePTYOutput(t *testing.T, output string, color, wide bool
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git fork Rich PTY output contains %q: %q", prefix, output)
 			}
 		}

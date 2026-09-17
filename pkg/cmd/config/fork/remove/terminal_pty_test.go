@@ -67,7 +67,7 @@ func TestRunForkRemoveRichPTYSafelyCancelsAndFails(t *testing.T) {
 		steps         []forkRemovePTYStep
 	}{
 		{name: "empty configuration", scenario: "empty", width: 120, height: 40, color: false},
-		{name: "selection cancellation", scenario: "selection-cancel", width: 40, height: 15, color: false, steps: []forkRemovePTYStep{{needle: "single selection", input: "\x03"}}},
+		{name: "selection cancellation", scenario: "selection-cancel", width: 40, height: 15, color: false, steps: []forkRemovePTYStep{{needle: "Select instance to remove", input: "\x03"}}},
 		{name: "confirmation cancellation", scenario: "confirmation-cancel", width: 120, height: 40, color: false, steps: []forkRemovePTYStep{{needle: "Select instance to remove", input: "\r"}, {needle: `Remove instance "work"?`, input: "\x03"}}},
 		{name: "confirmation decline", scenario: "declined", width: 120, height: 40, color: true, steps: []forkRemovePTYStep{{needle: "Select instance to remove", input: "\r"}, {needle: `Remove instance "work"?`, input: "\r"}}},
 		{name: "load failure", scenario: "load-failure", width: 120, height: 40, color: false},
@@ -246,9 +246,7 @@ func runForkRemovePTYProcess(t *testing.T, command *exec.Cmd, width, height uint
 	firstNeedle := "Select instance to remove"
 	secondNeedle := `Remove instance "work"?`
 	if width < 70 {
-		// The compact live view bounds the prompt label; wait for its stable
-		// semantic context before submitting the default selection.
-		firstNeedle = "single selection"
+		firstNeedle = "Select instance to remove"
 		secondNeedle = `"work"?`
 	}
 	for _, step := range []struct {
@@ -342,7 +340,7 @@ func assertForkRemoveRichPTYOutput(t *testing.T, output string, color, wide bool
 			`Remove instance "work": confirmed`,
 		)
 	} else {
-		expected = append(expected, "STATE", "PHASE", "DETAIL", "single selection", "Remove instance", `"work"?`)
+		expected = append(expected, "Remove instance", `"work"?`)
 	}
 	for _, expected := range expected {
 		if !forkRemovePTYContains(visible, expected) {
@@ -383,7 +381,7 @@ func assertForkRemoveRichPTYOutput(t *testing.T, output string, color, wide bool
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
@@ -495,7 +493,7 @@ func assertForkRemoveRichPTYScenario(t *testing.T, output, scenario string, colo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY scenario %q contains %q: %q", scenario, prefix, output)
 			}
 		}

@@ -157,10 +157,8 @@ func assertRunSelectionPTYOutput(t *testing.T, output string, color, wide bool, 
 		t.Fatalf("Run selection PTY did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	expected := []string{"YCY / run", "STATE", "PHASE", "DETAIL", "Resolve project", "Resolve package manager"}
-	if wide {
-		expected = append(expected, "Prepare child command")
-	} else {
+	expected := []string{"YCY / run"}
+	if !wide {
 		expected = append(expected, "Select a package")
 	}
 	for _, expected := range expected {
@@ -399,10 +397,8 @@ func assertRunHandoffPTYOutput(t *testing.T, output string, color, wide bool, ar
 		t.Fatalf("Run handoff did not release primary screen before child: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	expected := []string{"YCY / run", "STATE", "PHASE", "DETAIL", "Resolve project", "Resolve package manager"}
-	if wide {
-		expected = append(expected, "Prepare child command")
-	} else {
+	expected := []string{"YCY / run"}
+	if !wide {
 		expected = append(expected, "Select a package")
 	}
 	for _, expected := range expected {
@@ -422,7 +418,7 @@ func assertRunHandoffPTYOutput(t *testing.T, output string, color, wide bool, ar
 			t.Fatalf("Run handoff child output missing %q: %q", expected, output)
 		}
 	}
-	for _, forbidden := range []string{"YCY / run", "STATE", "PHASE", "DETAIL", "Terminal released", "succeeded", "completed", "Operation cancelled", "\x1b["} {
+	for _, forbidden := range []string{"YCY / run", "Terminal released", "succeeded", "completed", "Operation cancelled", "\x1b["} {
 		if strings.Contains(childOutput, forbidden) {
 			t.Fatalf("Run handoff parent decoration after child startup %q: %q", forbidden, output)
 		}

@@ -94,7 +94,7 @@ func TestWriteRichStylesInlineSpansWithoutChangingVisibleContent(t *testing.T) {
 	if got, want := ansi.Strip(colored.String()), terminal.RenderPlain(document); got != want {
 		t.Fatalf("colored visible content = %q, want %q", got, want)
 	}
-	for _, sequence := range []string{"\x1b[2;", "\x1b[1;"} {
+	for _, sequence := range []string{"38;2;154;164;181", "1;38;2;199;146;234"} {
 		if !strings.Contains(colored.String(), sequence) {
 			t.Fatalf("colored inline document missing semantic style %q: %q", sequence, colored.String())
 		}
@@ -159,7 +159,7 @@ func TestWriteRichNoColorContainsNoStyleBytes(t *testing.T) {
 	}
 }
 
-func TestWriteRichUsesBDurableHierarchyWithoutChangingDocumentOrTerminalMode(t *testing.T) {
+func TestWriteRichUsesFocusDurableHierarchyWithoutChangingDocumentOrTerminalMode(t *testing.T) {
 	document := terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{
 		{Role: terminal.VisualRoleTitle, Text: "YCY CONFIG"},
 		{Role: terminal.VisualRoleMuted, Text: "workspace repo"},
@@ -182,7 +182,7 @@ func TestWriteRichUsesBDurableHierarchyWithoutChangingDocumentOrTerminalMode(t *
 		}
 	}
 	if !strings.Contains(output, "\x1b[") {
-		t.Fatalf("durable Rich output has no B hierarchy styling: %q", output)
+		t.Fatalf("durable Rich output has no Focus hierarchy styling: %q", output)
 	}
 }
 

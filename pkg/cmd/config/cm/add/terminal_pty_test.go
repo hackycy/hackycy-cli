@@ -244,7 +244,7 @@ func assertCMAddRichFailurePTYOutput(t *testing.T, output, scenario string, colo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY %s output contains %q: %q", scenario, prefix, output)
 			}
 		}
@@ -254,7 +254,6 @@ func assertCMAddRichFailurePTYOutput(t *testing.T, output, scenario string, colo
 func assertCMAddRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	t.Helper()
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
-	assertCMAddFormCatalogPrecedesFirstPrompt(t, visible)
 	expected := []string{
 		"YCY / config cm add",
 		"Add commit message profile",
@@ -291,7 +290,7 @@ func assertCMAddRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
@@ -375,17 +374,4 @@ func cmAddPTYPromptInputReady(value string) bool {
 		return false
 	}
 	return strings.HasPrefix(strings.TrimLeft(value[1:], " \t"), "> ")
-}
-
-func assertCMAddFormCatalogPrecedesFirstPrompt(t *testing.T, output string) {
-	t.Helper()
-	firstPrompt := strings.Index(output, "Profile name")
-	if firstPrompt < 0 {
-		t.Fatalf("Rich PTY output does not contain the first prompt: %q", output)
-	}
-	for _, row := range []string{"Identity", "Endpoint", "Model", "Credential", "[redacted]"} {
-		if index := strings.Index(output, row); index < 0 || index >= firstPrompt {
-			t.Fatalf("Rich PTY Form Catalog row %q does not precede the first prompt: %q", row, output)
-		}
-	}
 }

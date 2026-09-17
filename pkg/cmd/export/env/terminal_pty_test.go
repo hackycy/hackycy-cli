@@ -15,7 +15,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
-func TestRunExportEnvRichPTYUsesBConsoleAcrossLayouts(t *testing.T) {
+func TestRunExportEnvRichPTYUsesFocusConsoleAcrossLayouts(t *testing.T) {
 	const helperEnvironment = "YCY_EXPORT_ENV_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
 		runExportEnvRichPTYHelper(t)
@@ -33,7 +33,7 @@ func TestRunExportEnvRichPTYUsesBConsoleAcrossLayouts(t *testing.T) {
 		{name: "compact no color", width: 40, height: 15, color: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command := exec.Command(os.Args[0], "-test.run=^TestRunExportEnvRichPTYUsesBConsoleAcrossLayouts$")
+			command := exec.Command(os.Args[0], "-test.run=^TestRunExportEnvRichPTYUsesFocusConsoleAcrossLayouts$")
 			command.Env = exportEnvPTYEnvironment(map[string]string{
 				"NO_COLOR":                 map[bool]string{true: "", false: "1"}[testCase.color],
 				"TERM":                     "xterm-256color",
@@ -285,30 +285,14 @@ func assertExportEnvRichPTYOutput(t *testing.T, output string, color, wide bool)
 	for _, needle := range []string{
 		"YCY / export env",
 		"environment",
-		"Resolve directory",
-		"Discover environment files",
-		"Read selected files",
-		"Parse and merge values",
-		"Encode JSON",
-		"STATE",
-		"PHASE",
-		"DETAIL",
-		"DONE",
 	} {
 		if !strings.Contains(live, needle) {
 			t.Fatalf("Rich PTY live Console omitted %q: %q", needle, output)
 		}
 	}
-	if wide && !strings.Contains(live, "Export environment") {
-		t.Fatalf("wide Rich PTY omitted operation title: %q", output)
-	}
 	if wide && !strings.Contains(live, "environment JSON") {
 		t.Fatalf("wide Rich PTY omitted complete target context: %q", output)
 	}
-	if strings.Contains(live, "FLOW") || strings.Contains(live, "[done]") || strings.Contains(live, "[active]") {
-		t.Fatalf("Rich PTY live Console retained a non-B hierarchy: %q", output)
-	}
-
 	postLive := output[leave:]
 	resultStart := strings.Index(postLive, "Exported variables:")
 	if resultStart < 0 {
@@ -340,12 +324,12 @@ func assertExportEnvRichPTYOutput(t *testing.T, output string, color, wide bool)
 	}
 	if color {
 		if !strings.Contains(output, "\x1b[38") {
-			t.Fatalf("color Rich PTY omitted B styling: %q", output)
+			t.Fatalf("color Rich PTY omitted Focus styling: %q", output)
 		}
 		return
 	}
 	for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-		if strings.Contains(output, prefix) {
+		if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 			t.Fatalf("NO_COLOR Rich PTY contains %q: %q", prefix, output)
 		}
 	}
@@ -360,21 +344,9 @@ func assertExportEnvRichFormsPTYOutput(t *testing.T, output string, color bool) 
 		t.Fatalf("Rich PTY did not restore the primary screen: %q", output)
 	}
 	live := exportEnvPTYText(visible[enter:leave])
-	firstWork := strings.Index(live, "Discover environment files")
-	// Notices now remain in scrollback, so use the active form help as the
-	// transition marker rather than the last occurrence of its history text.
-	form := strings.Index(live, "↑/↓ select")
-	lastWork := strings.LastIndex(live, "Read selected files")
-	if firstWork < 0 || form < 0 || lastWork < 0 || !(firstWork < form && form < lastWork) {
-		t.Fatalf("Rich PTY did not preserve Work/Form/Work order: %q", output)
-	}
 	for _, expected := range []string{
-		"Resolve directory",
-		"Discover environment files",
 		"Select environment",
 		"Read selected files",
-		"Parse and merge values",
-		"Encode JSON",
 	} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Rich PTY journey omitted %q: %q", expected, output)
@@ -410,11 +382,11 @@ func assertExportEnvRichFormsPTYOutput(t *testing.T, output string, color bool) 
 		}
 	}
 	if color && !strings.Contains(output, "\x1b[38") {
-		t.Fatalf("colored Rich PTY omitted B styling: %q", output)
+		t.Fatalf("colored Rich PTY omitted Focus styling: %q", output)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}

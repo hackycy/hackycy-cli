@@ -135,14 +135,14 @@ func TestRichRuntimeKeepsUIOnStderrWhenStdoutIsRedirected(t *testing.T) {
 	writeRichPTYInput(t, process, "\r")
 	finishRichPTYTest(t, process, readDone, output)
 
-	if got := durable.String(); !strings.HasPrefix(got, "redirected-result\n") || strings.Contains(got, "stderr notice") || strings.Contains(got, "Continue?") || containsMeterFrame(got) {
+	if got := durable.String(); !strings.HasPrefix(got, "redirected-result\n") || strings.Contains(got, "stderr notice") || strings.Contains(got, "Continue?") || containsPulseFrame(got) {
 		t.Fatalf("redirected stdout = %q", got)
 	}
 	if terminaltest.ContainsTerminalControl(durable.Bytes()) {
 		t.Fatalf("redirected stdout contains terminal control: %q", durable.String())
 	}
 	text := output.String()
-	if !strings.Contains(text, "stderr notice") || !strings.Contains(text, "deferred diagnostic") || !containsMeterFrame(text) {
+	if !strings.Contains(text, "stderr notice") || !strings.Contains(text, "deferred diagnostic") || !containsPulseFrame(text) {
 		t.Fatalf("Rich stderr omitted UI or deferred diagnostics: %q", text)
 	}
 	if strings.Contains(text, "redirected-result") {
@@ -411,7 +411,7 @@ func runRichRedirectHelper(t *testing.T) {
 	updates := make(chan terminal.OperationPhase)
 	go func() {
 		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseActive}
-		time.Sleep(spinner.Meter.FPS + 50*time.Millisecond)
+		time.Sleep(spinner.Pulse.FPS + 50*time.Millisecond)
 		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseCompleted}
 		close(updates)
 	}()

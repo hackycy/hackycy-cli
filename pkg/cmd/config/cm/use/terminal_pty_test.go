@@ -16,7 +16,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
-func TestRunCMUseRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
+func TestRunCMUseRichPTYUsesFocusConsoleAndRestoresPrimaryScreen(t *testing.T) {
 	const helperEnvironment = "YCY_CONFIG_CM_USE_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
 		runCMUseRichPTYHelper(t)
@@ -34,7 +34,7 @@ func TestRunCMUseRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
 		{name: "compact no color", width: 40, height: 15, color: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command := exec.Command(os.Args[0], "-test.run=^TestRunCMUseRichPTYUsesBConsoleAndRestoresPrimaryScreen$")
+			command := exec.Command(os.Args[0], "-test.run=^TestRunCMUseRichPTYUsesFocusConsoleAndRestoresPrimaryScreen$")
 			command.Env = cmUseEnvironmentWith(map[string]string{
 				"NO_COLOR":                    map[bool]string{true: "", false: "1"}[testCase.color],
 				"TERM":                        "xterm-256color",
@@ -135,11 +135,7 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	expected := []string{
 		"YCY / config cm use",
 		"scope commit message configuration",
-		"Set default CM profile",
-		"Checking profile and saving selection",
 		"Profile: work",
-		"DONE",
-		"SUCCEEDED",
 	}
 	if wide {
 		expected = append(expected, "profile selection", "Default CM profile set")
@@ -151,13 +147,6 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 			t.Fatalf("Rich PTY live Console omitted %q: %q", needle, output)
 		}
 	}
-	state := strings.Index(live, "STATE")
-	phase := strings.Index(live, "PHASE")
-	detail := strings.Index(live, "DETAIL")
-	if state < 0 || phase < state || detail < phase {
-		t.Fatalf("Rich PTY B table heading order = %q", output)
-	}
-
 	postLive := output[leave:]
 	resultStart := strings.Index(postLive, "YCY / config cm use")
 	if resultStart < 0 {
@@ -182,12 +171,12 @@ func assertCMUseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if color {
 		if !strings.Contains(output, "\x1b[38") {
-			t.Fatalf("color Rich PTY omitted B styling: %q", output)
+			t.Fatalf("color Rich PTY omitted Focus styling: %q", output)
 		}
 		return
 	}
 	for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-		if strings.Contains(output, prefix) {
+		if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 			t.Fatalf("NO_COLOR Rich PTY contains %q: %q", prefix, output)
 		}
 	}

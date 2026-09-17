@@ -203,9 +203,9 @@ func runRichConsoleLifecyclePTYHelper(t *testing.T, outcome terminal.FinishOutco
 	updates := make(chan terminal.OperationPhase)
 	go func() {
 		updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseActive, Detail: "validate request"}
-		// Keep real work active for one Meter cycle so the PTY captures a live
+		// Keep real work active for one Pulse cycle so the PTY captures a live
 		// frame rather than a scheduler-coalesced final screen.
-		time.Sleep(spinner.Meter.FPS + 50*time.Millisecond)
+		time.Sleep(spinner.Pulse.FPS + 50*time.Millisecond)
 		updates <- terminal.OperationPhase{ID: "validate", State: terminal.PhaseCompleted, Detail: "request validated"}
 		updates <- terminal.OperationPhase{ID: "write", State: terminal.PhaseActive, Detail: "write projection"}
 		updates <- terminal.OperationPhase{ID: "write", State: finalState, Detail: finalDetail}
@@ -285,7 +285,7 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 	plain := strings.Join(strings.Fields(ansi.Strip(output)), " ")
 	for _, needle := range []string{
 		"YCY / G0 matrix", "safe target", "Source catalog", "Approval catalog", "Configure source", "Confirm execution",
-		"Validate request", "Write projection", "DONE", strings.ToUpper(outcome.String()), summary,
+		"Validate request", "Write projection", strings.ToUpper(outcome.String()), summary,
 		"ANSWERS", "WORK", "AT " + location, "OUTCOME " + outcome.String() + ": " + summary,
 	} {
 		if !strings.Contains(plain, needle) {
@@ -297,15 +297,15 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 	if lastFormCatalog < 0 || firstWorkCatalog < 0 || lastFormCatalog >= firstWorkCatalog {
 		t.Fatalf("Form Catalog was not replaced before Work Catalog in PTY output: %q", output)
 	}
-	if !containsMeterFrame(output) {
-		t.Fatalf("Console lifecycle did not render a Meter frame: %q", output)
+	if !containsPulseFrame(output) {
+		t.Fatalf("Console lifecycle did not render a Pulse frame: %q", output)
 	}
-	if color && !strings.Contains(output, "\x1b[38;") {
+	if color && !strings.Contains(terminaltest.StyleSequences(output), "\x1b[38;") {
 		t.Fatalf("colored Console lifecycle lacks a color style: %q", output)
 	}
 	if !color {
 		for _, colorPrefix := range []string{"\x1b[3m", "\x1b[9m", "\x1b[38;"} {
-			if strings.Contains(output, colorPrefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), colorPrefix) {
 				t.Fatalf("NO_COLOR Console lifecycle contains %q: %q", colorPrefix, output)
 			}
 		}
@@ -319,8 +319,8 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 		}
 	}
 	plainTranscript := ansi.Strip(transcript)
-	if containsMeterFrame(plainTranscript) {
-		t.Fatalf("Transcript replay retained a transient Meter frame: %q", transcript)
+	if containsPulseFrame(plainTranscript) {
+		t.Fatalf("Transcript replay retained a transient Pulse frame: %q", transcript)
 	}
 	answers := strings.Index(plainTranscript, "ANSWERS")
 	work := strings.Index(plainTranscript, "WORK")
@@ -332,8 +332,8 @@ func assertRichConsoleLifecyclePTY(t *testing.T, output string, outcome terminal
 	}
 }
 
-func containsMeterFrame(value string) bool {
-	for _, frame := range []string{"▱▱▱", "▰▱▱", "▰▰▱", "▰▰▰"} {
+func containsPulseFrame(value string) bool {
+	for _, frame := range spinner.Pulse.Frames {
 		if strings.Contains(value, frame) {
 			return true
 		}

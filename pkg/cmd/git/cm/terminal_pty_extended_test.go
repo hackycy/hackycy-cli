@@ -196,13 +196,10 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("git cm push did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	for _, expected := range []string{"YCY / git cm", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git cm"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git cm push live Console missing %q: %q", expected, output)
 		}
-	}
-	if wide && !strings.Contains(live, "Push commit") {
-		t.Fatalf("wide git cm push live Console omitted push phase: %q", output)
 	}
 	for _, expected := range []string{"feat: rich push", "GIT_CM_PUSH_OK", "Commit created and pushed"} {
 		if !strings.Contains(visible, expected) {
@@ -223,7 +220,7 @@ func assertGitCMPushPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git cm push output contains %q: %q", prefix, output)
 			}
 		}
@@ -443,7 +440,7 @@ func assertGitCMScenarioPTYOutput(t *testing.T, output, scenario string, color, 
 		t.Fatalf("Git CM scenario did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	for _, expected := range []string{"YCY / git cm", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git cm"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Git CM scenario live Console missing %q: %q", expected, output)
 		}
@@ -505,7 +502,7 @@ func assertGitCMScenarioPTYOutput(t *testing.T, output, scenario string, color, 
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR Git CM scenario output contains %q: %q", prefix, output)
 			}
 		}
@@ -574,13 +571,13 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 		t.Fatalf("git cm Rich PTY did not restore primary screen: %q", output)
 	}
 	live := strings.Join(strings.Fields(terminaltest.StripANSI(visible[enter:leave])), " ")
-	for _, expected := range []string{"YCY / git cm", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git cm"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("git cm live Console missing %q: %q", expected, output)
 		}
 	}
 	if wide {
-		for _, expected := range []string{"Generate and optionally create a commit", "stage and commit", "Inspect changes", "Capture commit evidence", "Generate commit message", "Verify unchanged scope", "Create commit"} {
+		for _, expected := range []string{"Generate and optionally create a commit", "stage and commit"} {
 			if !strings.Contains(live, expected) {
 				t.Fatalf("wide git cm live Console missing %q: %q", expected, output)
 			}
@@ -611,7 +608,7 @@ func assertGitCMStageCommitPTYOutput(t *testing.T, output string, color, wide bo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR git cm PTY output contains %q: %q", prefix, output)
 			}
 		}

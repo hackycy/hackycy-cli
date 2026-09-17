@@ -7,24 +7,31 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func TestTrackedTeaModelRetainsOrderedRowsOnNarrowTerminals(t *testing.T) {
+func TestTrackedTeaModelShowsTrailAndCurrentWorkOnNarrowTerminals(t *testing.T) {
 	cancellations := 0
 	model := newRichRootModel(40, 20, false)
 	model.mode = richTrackMode
-	model.track = &trackedState{label: "Git Pulse", requestStop: func() { cancellations++ }}
-	model.track.applyPhase(OperationPhase{Name: "Scanning repositories", Detail: "workspace/project", State: PhaseCompleted})
-	model.track.applyPhase(OperationPhase{Name: "Fetching commits", Detail: "workspace/project", State: PhaseActive})
+	model.track = &trackedState{
+		label:       "Git Pulse",
+		requestStop: func() { cancellations++ },
+		phases: []OperationPhase{
+			{ID: "scan", Name: "Scanning repositories", Detail: "workspace/project", State: PhaseCompleted},
+			{ID: "fetch", Name: "Fetching commits", Detail: "workspace/project", State: PhaseActive},
+		},
+	}
 
 	rendered := model.View()
 	if !rendered.AltScreen || !rendered.DisableBracketedPasteMode {
 		t.Fatalf("v2 rich view terminal mode = %#v", rendered)
 	}
 	view := rendered.Content
-	if !strings.Contains(view, "STATE / PHASE / DETAIL") || !strings.Contains(view, "Git Pulse") || !strings.Contains(view, "Fetching commits") || !strings.Contains(view, "workspace/project") {
+	if !strings.Contains(view, "◆ Fetching commits") || !strings.Contains(view, "workspace/project") {
 		t.Fatalf("narrow view = %q", view)
 	}
-	if !strings.Contains(view, "Scanning repositories") || !strings.Contains(view, "✓ DONE") || !strings.Contains(view, "◆ ACTIVE") {
-		t.Fatalf("narrow view did not retain B state rows: %q", view)
+	for _, duplicate := range []string{"STEPS", "✓ DONE", "◆ ACTIVE", "Git Pulse", "Scanning repositories"} {
+		if strings.Contains(view, duplicate) {
+			t.Fatalf("narrow active-only view retained %q: %q", duplicate, view)
+		}
 	}
 
 	_, _ = model.Update(tea.KeyPressMsg{Code: tea.KeyEsc})

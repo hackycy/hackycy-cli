@@ -17,7 +17,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
-func TestRunCMListRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
+func TestRunCMListRichPTYUsesFocusConsoleAndRestoresPrimaryScreen(t *testing.T) {
 	const helperEnvironment = "YCY_CONFIG_CM_LIST_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
 		runCMListRichPTYHelper(t)
@@ -35,7 +35,7 @@ func TestRunCMListRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
 		{name: "compact no color", width: 40, height: 15, color: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command := exec.Command(os.Args[0], "-test.run=^TestRunCMListRichPTYUsesBConsoleAndRestoresPrimaryScreen$")
+			command := exec.Command(os.Args[0], "-test.run=^TestRunCMListRichPTYUsesFocusConsoleAndRestoresPrimaryScreen$")
 			command.Env = cmListEnvironmentWith(map[string]string{
 				"NO_COLOR":                     map[bool]string{true: "", false: "1"}[testCase.color],
 				"TERM":                         "xterm-256color",
@@ -111,6 +111,7 @@ func runCMListPTYProcess(t *testing.T, command *exec.Cmd, width, height uint16) 
 	if _, err := process.Terminal().Write([]byte("x\n")); err != nil {
 		t.Fatalf("release PTY helper after sizing: %v", err)
 	}
+	terminaltest.ReviewConsole(t, process, &output)
 	if err := process.Wait(); err != nil {
 		t.Fatalf("wait PTY helper: %v\n%s", err, output.String())
 	}
@@ -137,10 +138,6 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	expected := []string{
 		"YCY / config cm list",
 		"scope commit message configuration",
-		"Load CM profiles",
-		"Loading CM profiles",
-		"DONE",
-		"SUCCEEDED",
 		"Default profile: personal",
 	}
 	if wide {
@@ -153,16 +150,6 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 			t.Fatalf("Rich PTY live Console omitted %q: %q", needle, output)
 		}
 	}
-	state := strings.Index(live, "STATE")
-	phase := strings.Index(live, "PHASE")
-	detail := strings.Index(live, "DETAIL")
-	if state < 0 || phase < state || detail < phase {
-		t.Fatalf("Rich PTY B table heading order = %q", output)
-	}
-	if wide && !strings.Contains(live, "✓ DONE") {
-		t.Fatalf("Rich PTY wide phase row omitted completed marker: %q", output)
-	}
-
 	postLive := output[leave:]
 	resultStart := strings.Index(postLive, "YCY / config cm list")
 	if resultStart < 0 {
@@ -197,12 +184,12 @@ func assertCMListRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if color {
 		if !strings.Contains(output, "\x1b[38") {
-			t.Fatalf("color Rich PTY omitted B styling: %q", output)
+			t.Fatalf("color Rich PTY omitted Focus styling: %q", output)
 		}
 		return
 	}
 	for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-		if strings.Contains(output, prefix) {
+		if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 			t.Fatalf("NO_COLOR Rich PTY contains %q: %q", prefix, output)
 		}
 	}

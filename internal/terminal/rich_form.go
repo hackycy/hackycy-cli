@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -29,7 +30,7 @@ func newRichForm(handler *InteractionHandler, request InteractionRequest, id uin
 	// the first Enter commits filtering and the next Enter submits the answer.
 	keyMap.Select.SetFilter.SetKeys("enter", "esc")
 	form.WithKeyMap(keyMap)
-	form.WithTheme(bHuhTheme(handler.capabilities.Stderr.Color))
+	form.WithTheme(focusHuhTheme(handler.capabilities.Stderr.Color))
 	form.SubmitCmd = func() tea.Msg { return richFormSubmittedMsg{id: id} }
 	form.CancelCmd = func() tea.Msg { return richFormCancelledMsg{id: id} }
 	return &richHuhForm{form: form, selectionOrder: selectionOrder, request: request, color: handler.capabilities.Stderr.Color}, func() InteractionAnswer {
@@ -82,17 +83,21 @@ func (form *richHuhForm) configure(width int) {
 	form.form.WithWidth(width).WithShowHelp(false)
 	field := form.form.GetFocusedField()
 	field.WithHeight(0)
+	if confirm, ok := field.(*huh.Confirm); ok {
+		confirm.WithButtonAlignment(lipgloss.Left)
+	}
+	contentWidth := max(width, 1)
 	if form.request.Kind == InteractionMultiSelect {
 		// Huh's unbounded MultiSelect subtracts its header from the option
 		// height, so explicitly budget every wrapped option plus the header.
 		height := 0
 		for _, text := range []string{form.request.Message, form.request.Description} {
 			if text != "" {
-				height += lineCount(ansi.Hardwrap(stripTerminalControl(text), width, true))
+				height += lineCount(ansi.Hardwrap(stripTerminalControl(text), contentWidth, true))
 			}
 		}
 		for _, option := range huhOptions(form.request.Options) {
-			height += lineCount(ansi.Hardwrap(option.Key, max(width-4, 1), true))
+			height += lineCount(ansi.Hardwrap(option.Key, max(contentWidth-4, 1), true))
 		}
 		field.WithHeight(max(height, 1))
 	}
@@ -105,14 +110,13 @@ func (form *richHuhForm) focusLine() int {
 	}
 	if form.request.Kind == InteractionSelect || form.request.Kind == InteractionMultiSelect {
 		for index, line := range lines {
-			if strings.HasPrefix(line, "◆ ") {
+			if strings.HasPrefix(strings.TrimLeft(line, " "), "◆ ") {
 				return index
 			}
 		}
 		return 0
 	}
-	// The input or confirmation buttons are below the title and description,
-	// above the theme's trailing padding and bottom rule.
+	// The input or confirmation buttons follow the title and description.
 	for index := len(lines) - 1; index >= 0; index-- {
 		if strings.Trim(lines[index], " ─│╰╯") != "" {
 			return index

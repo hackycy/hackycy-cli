@@ -12,7 +12,6 @@ import (
 
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
@@ -388,9 +387,6 @@ type richRootModel struct {
 	trackRetainsForm bool
 	outcome          FinishRequest
 	formRows         []consoleFormStep
-	statusRows       []consoleStatusRow
-	trackRowStart    int
-	trackRowsSynced  bool
 	spin             spinner.Model
 	scroll           consoleScroll
 	outcomeReading   bool
@@ -407,34 +403,32 @@ func newRichRootModelWithConsole(width, height int, color bool, console ConsoleD
 		height:  height,
 		color:   color,
 		console: console,
-		spin:    newRichMeter(color),
+		spin:    newRichPulse(color),
 		scroll:  newConsoleScroll(),
 	}
 	model.initializeFormCatalog()
 	return model
 }
 
-func newRichMeter(color bool) spinner.Model {
+func newRichPulse(color bool) spinner.Model {
 	return spinner.New(
-		spinner.WithSpinner(spinner.Meter),
+		spinner.WithSpinner(spinner.Pulse),
 		spinner.WithStyle(richStyles(color)[VisualRoleActive]),
 	)
 }
 
-func (model *richRootModel) startMeter() tea.Cmd {
-	model.spin = newRichMeter(model.color)
+func (model *richRootModel) startPulse() tea.Cmd {
+	model.spin = newRichPulse(model.color)
 	return model.spin.Tick
 }
 
-// initializeFormCatalog materializes the complete pre-work table before any
-// interaction message arrives. The first step is the current active region;
-// all later steps remain visible as pending rows.
+// initializeFormCatalog materializes the ordered trail before any interaction
+// message arrives. The first step is active and later steps are pending.
 func (model *richRootModel) initializeFormCatalog() {
 	if len(model.console.FormCatalog) == 0 {
 		return
 	}
 	model.formRows = make([]consoleFormStep, 0, len(model.console.FormCatalog))
-	model.statusRows = make([]consoleStatusRow, 0, len(model.console.FormCatalog))
 	for index, catalogStep := range model.console.FormCatalog {
 		state := PhasePending
 		if index == 0 {
@@ -449,14 +443,8 @@ func (model *richRootModel) initializeFormCatalog() {
 			name:      catalogStep.Name,
 			detail:    detail,
 			state:     state,
-			row:       index,
 		}
 		model.formRows = append(model.formRows, step)
-		model.statusRows = append(model.statusRows, consoleStatusRow{
-			state:  state,
-			phase:  step.name,
-			detail: step.detail,
-		})
 	}
 }
 
@@ -491,7 +479,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		if model.track == nil || !model.trackRetainsForm {
-			model.preserveTrack()
+			model.clearTrack()
 			model.mode = richNoticeMode
 		}
 		if len(value.document.Blocks) > 0 {
@@ -508,7 +496,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		if model.track == nil || !model.trackRetainsForm {
-			model.preserveTrack()
+			model.clearTrack()
 			model.mode = richNoticeMode
 		}
 		if len(value.document.Blocks) > 0 {
@@ -524,10 +512,8 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
-		if model.track != nil && model.trackRetainsForm {
-			model.showFormCatalog()
-		} else {
-			model.preserveTrack()
+		if model.track == nil || !model.trackRetainsForm {
+			model.clearTrack()
 		}
 		model.mode = richFormMode
 		model.scroll.following = false
@@ -538,15 +524,9 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.response = value.response
 		step := value.step
 		if row := model.formCatalogRow(step.catalogID); row >= 0 {
-			step.row = row
 			model.formRows[row].id = step.id
 			model.formRows[row].state = PhaseActive
 			model.formRows[row].detail = step.detail
-			model.statusRows[row] = consoleStatusRow{
-				state:  PhaseActive,
-				phase:  model.formRows[row].name,
-				detail: step.detail,
-			}
 		}
 		model.configureForm()
 		close(value.ack)
@@ -589,18 +569,13 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.formID = 0
 			model.answer = nil
 			model.response = nil
-			model.statusRows = nil
-			model.trackRowStart = 0
 		} else if len(model.formRows) > 0 {
-			model.track = nil
+			model.clearTrack()
 			model.form = nil
 			model.formRows = nil
-			model.statusRows = nil
-			model.trackRowStart = 0
 		} else {
-			model.preserveTrack()
+			model.clearTrack()
 		}
-		model.trackRowsSynced = true
 		model.trackRetainsForm = value.retainFormCatalog
 		model.mode = richTrackMode
 		model.scroll.following = true
@@ -612,10 +587,8 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				_ = value.requestCancel()
 			},
 		}
-		model.trackRowStart = len(model.statusRows)
-		model.syncTrackRows()
 		close(value.ack)
-		return model, model.startMeter()
+		return model, model.startPulse()
 	case richTrackPhaseMsg:
 		if model.mode == richOutcomeMode {
 			close(value.ack)
@@ -623,9 +596,6 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if model.track != nil {
 			model.track.applyPhase(value.phase)
-			if model.mode == richTrackMode {
-				model.syncTrackRows()
-			}
 		}
 		close(value.ack)
 		return model, nil
@@ -655,16 +625,8 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		readingHistory := model.form == nil && !model.scroll.following
-		// Preserve the final Work rows in the stable table before dropping the
-		// mutable tracker. Outcome is a terminal projection, so later form/work
-		// messages are acknowledged but cannot replace it.
-		if model.track != nil {
-			if model.trackRetainsForm {
-				model.showWorkCatalog()
-			} else {
-				model.syncTrackRows()
-			}
-		}
+		// Outcome is a terminal projection, so later form/work messages are
+		// acknowledged but cannot replace it.
 		model.track = nil
 		model.trackRetainsForm = false
 		model.form = nil
@@ -786,46 +748,12 @@ func (model *richRootModel) View() tea.View {
 	styles := richStyles(model.color)
 	body := model.scroll.viewport.View()
 	footer := styles[VisualRoleMuted].Render(model.scrollFooter())
-	content := model.consoleCompactBar(styles, model.formWidth()) + "\n" + body + "\n" + footer
-	view.Content = lipgloss.NewStyle().Padding(0, 1).Render(content)
+	content := model.focusHeader() + "\n" + body + "\n" + footer
+	view.Content = content
 	if !model.mouseDisabled {
 		view.MouseMode = tea.MouseModeCellMotion
 	}
 	return view
-}
-
-// Wide surfaces use wrapped table columns; smaller surfaces stack each row.
-// Both layouts share the same scroll region.
-func (model *richRootModel) consoleWideLayout() bool {
-	return model.width >= 70 && model.height >= 20
-}
-
-func (model *richRootModel) consoleCompactBar(styles map[VisualRole]lipgloss.Style, width int) string {
-	command := model.consoleCommand()
-	if command == "" {
-		command = "YCY"
-	}
-	target := model.console.Target
-	if target == "" {
-		target = "terminal session"
-	}
-	status := styles[VisualRoleActive].Render(consoleTruncate(model.consoleStatusLabel(), width/2))
-	identity := styles[VisualRoleActive].Render(stripTerminalControl(command)) +
-		styles[VisualRoleMuted].Render(" · ") + styles[VisualRolePlain].Render(stripTerminalControl(target))
-	return consoleTruncate(identity, max(width-lipgloss.Width(status)-3, 1)) + styles[VisualRoleMuted].Render(" · ") + status
-}
-
-func (model *richRootModel) consoleCompactRow(row consoleStatusRow, width int, styles map[VisualRole]lipgloss.Style) string {
-	glyph, label := consoleStateLabel(row.state)
-	state := glyph + " " + label
-	phase := stripTerminalControl(row.phase)
-	detail := stripTerminalControl(row.detail)
-	line := state + " · " + phase
-	if detail != "" {
-		line += " · " + detail
-	}
-	line = wrapText(line, width)
-	return styles[consoleStateRole(row.state)].Render(line)
 }
 
 func (model *richRootModel) consoleCommand() string {
@@ -845,19 +773,12 @@ func (model *richRootModel) consoleStatusLabel() string {
 	return "READY"
 }
 
-type consoleStatusRow struct {
-	state  PhaseState
-	phase  string
-	detail string
-}
-
 type consoleFormStep struct {
 	id        uint64
 	catalogID string
 	name      string
 	detail    string
 	state     PhaseState
-	row       int
 }
 
 func newConsoleFormStep(id uint64, request InteractionRequest) consoleFormStep {
@@ -896,69 +817,9 @@ func (model *richRootModel) finishFormRow(id uint64, state PhaseState, detail st
 		if model.formRows[index].id == id {
 			model.formRows[index].state = state
 			model.formRows[index].detail = detail
-			row := model.formRows[index].row
-			if row >= 0 && row < len(model.statusRows) {
-				model.statusRows[row].state = state
-				model.statusRows[row].detail = detail
-			}
 			return
 		}
 	}
-}
-
-func (model *richRootModel) consoleRows() []consoleStatusRow {
-	rows := append([]consoleStatusRow(nil), model.statusRows...)
-	if model.mode == richTrackMode && model.track != nil && !model.trackRowsSynced {
-		for _, phase := range model.track.phases {
-			rows = append(rows, consoleStatusRow{state: phase.State, phase: phase.Name, detail: phase.Detail})
-		}
-	}
-	if model.mode == richTrackMode && model.track != nil && len(model.track.phases) == 0 {
-		return append(rows, consoleStatusRow{state: PhaseActive, phase: model.trackLabel(), detail: "working"})
-	}
-	if len(rows) > 0 {
-		return rows
-	}
-	if len(model.notices) > 0 {
-		return []consoleStatusRow{{state: PhaseActive, phase: "Context", detail: "active command context"}}
-	}
-	return []consoleStatusRow{{state: PhasePending, phase: "Ready", detail: "awaiting command input"}}
-}
-
-// syncTrackRows keeps the one ordered Console table as the visible projection
-// of the active Track catalog. A completed Track stays in that table when the
-// next form or Notice replaces the active region.
-func (model *richRootModel) syncTrackRows() {
-	if model.track == nil {
-		return
-	}
-	for index, phase := range model.track.phases {
-		row := consoleStatusRow{state: phase.State, phase: phase.Name, detail: phase.Detail}
-		rowIndex := model.trackRowStart + index
-		if rowIndex < len(model.statusRows) {
-			model.statusRows[rowIndex] = row
-			continue
-		}
-		model.statusRows = append(model.statusRows, row)
-	}
-}
-
-func (model *richRootModel) showFormCatalog() {
-	model.statusRows = make([]consoleStatusRow, 0, len(model.formRows))
-	for _, step := range model.formRows {
-		model.statusRows = append(model.statusRows, consoleStatusRow{
-			state:  step.state,
-			phase:  step.name,
-			detail: step.detail,
-		})
-	}
-}
-
-func (model *richRootModel) showWorkCatalog() {
-	model.statusRows = nil
-	model.trackRowStart = 0
-	model.trackRowsSynced = true
-	model.syncTrackRows()
 }
 
 func (model *richRootModel) trackLabel() string {
@@ -983,13 +844,9 @@ func (model *richRootModel) consoleActiveView(width int) string {
 			if phaseName == "" {
 				phaseName = stripTerminalControl(model.trackLabel())
 			}
-			parts := make([]string, 0, 4)
-			if label := stripTerminalControl(model.trackLabel()); label != "" && label != phaseName {
-				parts = append(parts, label)
-			}
-			parts = append(parts, styles[VisualRoleActive].Render(model.spin.View()+" "+phaseName))
+			parts := []string{styles[VisualRoleActive].Render(model.spin.View() + " " + phaseName)}
 			if detail := stripTerminalControl(phase.Detail); detail != "" {
-				parts = append(parts, detail)
+				parts = append(parts, styles[VisualRoleMuted].Render(detail))
 			}
 			if model.track.cancelArmed && !model.track.cancellationState {
 				parts = append(parts, "Press Esc again to cancel")
@@ -1007,17 +864,7 @@ func (model *richRootModel) consoleActiveView(width int) string {
 
 func (model *richRootModel) consoleOutcomeView(width int) string {
 	styles := richStyles(model.color)
-	role := VisualRoleSuccess
-	glyph := "✓"
-	switch model.outcome.Outcome {
-	case Cancelled:
-		role = VisualRoleWarning
-		glyph = "⊘"
-	case Failed:
-		role = VisualRoleError
-		glyph = "✕"
-	}
-	parts := []string{styles[role].Render(glyph + " " + strings.ToUpper(model.outcome.Outcome.String()))}
+	var parts []string
 	if location := stripTerminalControl(model.outcome.Location); location != "" {
 		parts = append(parts, styles[VisualRoleMuted].Render("Location: ")+styles[VisualRolePlain].Render(location))
 	}
@@ -1031,14 +878,6 @@ func (model *richRootModel) consoleOutcomeView(width int) string {
 		}
 	}
 	return strings.Join(parts, "\n")
-}
-
-func consolePad(value string, width int) string {
-	missing := width - lipgloss.Width(value)
-	if missing <= 0 {
-		return value
-	}
-	return value + strings.Repeat(" ", missing)
 }
 
 func consoleTruncate(value string, width int) string {
@@ -1085,7 +924,7 @@ func (model *richRootModel) configureForm() {
 }
 
 func (model *richRootModel) formWidth() int {
-	return max(model.width-2, 1)
+	return max(model.width, 1)
 }
 
 func lineCount(value string) int {
@@ -1095,11 +934,9 @@ func lineCount(value string) int {
 	return len(strings.Split(value, "\n"))
 }
 
-func (model *richRootModel) preserveTrack() {
+func (model *richRootModel) clearTrack() {
 	model.track = nil
 	model.trackRetainsForm = false
-	model.trackRowStart = len(model.statusRows)
-	model.trackRowsSynced = false
 }
 
 func (model *richRootModel) clearForm() tea.Cmd {
@@ -1111,8 +948,7 @@ func (model *richRootModel) clearForm() tea.Cmd {
 		model.form = nil
 		model.answer = nil
 		model.response = nil
-		model.showWorkCatalog()
-		return model.startMeter()
+		return model.startPulse()
 	}
 	model.mode = richNoticeMode
 	model.formID = 0

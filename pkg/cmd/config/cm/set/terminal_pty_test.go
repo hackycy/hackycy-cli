@@ -196,7 +196,7 @@ func assertCMSetRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
 	live := cmSetPTYText(visible[enter:leave])
-	expected := []string{"YCY / config cm set", "work", "apiKey", "STATE", "PHASE", "DETAIL", "Update CM profile", "Validating setting and saving", "CM_SET_WRITE_OK"}
+	expected := []string{"YCY / config cm set", "work", "apiKey", "CM_SET_WRITE_OK"}
 	if wide {
 		expected = append(expected, "commit message profile update")
 	} else {
@@ -230,7 +230,7 @@ func assertCMSetRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
@@ -249,7 +249,7 @@ func assertCMSetRichPTYFailureOutput(t *testing.T, output string, color bool) {
 		t.Fatalf("Rich PTY failure screen bounds are invalid: %q", output)
 	}
 	live := cmSetPTYText(visible[enter:leave])
-	for _, expected := range []string{"Update CM profile", "Validating setting and saving", "CM_SET_WRITE_ATTEMPT"} {
+	for _, expected := range []string{"YCY / config cm set", "CM_SET_WRITE_ATTEMPT"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Rich PTY failure Live View missing %q: %q", expected, output)
 		}
@@ -269,7 +269,7 @@ func assertCMSetRichPTYFailureOutput(t *testing.T, output string, color bool) {
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR Rich PTY failure output contains %q: %q", prefix, output)
 			}
 		}

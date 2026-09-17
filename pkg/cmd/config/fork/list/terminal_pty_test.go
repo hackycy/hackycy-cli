@@ -16,7 +16,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
 )
 
-func TestRunForkListRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
+func TestRunForkListRichPTYUsesFocusConsoleAndRestoresPrimaryScreen(t *testing.T) {
 	const helperEnvironment = "YCY_CONFIG_FORK_LIST_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
 		runForkListRichPTYHelper(t)
@@ -34,7 +34,7 @@ func TestRunForkListRichPTYUsesBConsoleAndRestoresPrimaryScreen(t *testing.T) {
 		{name: "compact no color", width: 40, height: 15, color: false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			command := exec.Command(os.Args[0], "-test.run=^TestRunForkListRichPTYUsesBConsoleAndRestoresPrimaryScreen$")
+			command := exec.Command(os.Args[0], "-test.run=^TestRunForkListRichPTYUsesFocusConsoleAndRestoresPrimaryScreen$")
 			command.Env = environmentWith(map[string]string{
 				"NO_COLOR":                       map[bool]string{true: "", false: "1"}[testCase.color],
 				"TERM":                           "xterm-256color",
@@ -138,10 +138,6 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 	expected := []string{
 		"YCY / config fork list",
 		"scope git fork configuration",
-		"Load fork provider instances",
-		"Loading fork provider instances",
-		"DONE",
-		"SUCCEEDED",
 		"Loaded 1 fork provider instance",
 	}
 	if wide {
@@ -156,16 +152,6 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 			t.Fatalf("Rich PTY live Console omitted %q: %q", expected, output)
 		}
 	}
-	state := strings.Index(live, "STATE")
-	phase := strings.Index(live, "PHASE")
-	detail := strings.Index(live, "DETAIL")
-	if state < 0 || phase < state || detail < phase {
-		t.Fatalf("Rich PTY B table heading order = %q", output)
-	}
-	if strings.Contains(live, "FLOW") || strings.Contains(live, "[done]") || strings.Contains(live, "[active]") {
-		t.Fatalf("Rich PTY live Console retained a non-B hierarchy: %q", output)
-	}
-
 	postLive := output[leave:]
 	resultStart := strings.Index(postLive, "YCY / config fork list")
 	if resultStart < 0 {
@@ -196,12 +182,12 @@ func assertForkListRichPTYOutput(t *testing.T, output string, color, wide bool) 
 	}
 	if color {
 		if !strings.Contains(output, "\x1b[38") {
-			t.Fatalf("color Rich PTY omitted B styling: %q", output)
+			t.Fatalf("color Rich PTY omitted Focus styling: %q", output)
 		}
 		return
 	}
 	for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-		if strings.Contains(output, prefix) {
+		if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 			t.Fatalf("NO_COLOR Rich PTY contains %q: %q", prefix, output)
 		}
 	}

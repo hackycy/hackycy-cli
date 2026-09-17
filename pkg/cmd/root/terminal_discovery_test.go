@@ -55,7 +55,7 @@ func TestTerminalDiscoveryPresenterTranslatesAndClosesOneExperienceRun(t *testin
 	}
 }
 
-func TestTerminalDiscoveryDocumentUsesBDurableHierarchyWithoutChangingContent(t *testing.T) {
+func TestTerminalDiscoveryDocumentUsesFocusDurableHierarchyWithoutChangingContent(t *testing.T) {
 	document := terminalDiscoveryDocument(DiscoveryDocument{
 		CommandPath: "ycy config",
 		Summary:     "Manage ycy configuration",
@@ -74,7 +74,7 @@ func TestTerminalDiscoveryDocumentUsesBDurableHierarchyWithoutChangingContent(t 
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	if !strings.Contains(colored.String(), "\x1b[") {
-		t.Fatalf("colored durable document omitted B hierarchy styling: %q", colored.String())
+		t.Fatalf("colored durable document omitted Focus hierarchy styling: %q", colored.String())
 	}
 	for _, field := range []string{"ycy config", "Manage ycy configuration", "Usage:", "ycy config [flags]", "Commands:", "cm", "Manage CM profiles", "Flags:", "--log-level", "Log level", "Examples:", "ycy config --help"} {
 		if !strings.Contains(terminaltest.StripANSI(colored.String()), field) {

@@ -109,7 +109,7 @@ func assertRMExtendedMutationOutput(t *testing.T, output string, color, wide boo
 		t.Fatalf("rm Rich PTY did not restore primary screen: %q", output)
 	}
 	live := rmExtendedPTYText(visible[enter:leave])
-	for _, expected := range []string{"YCY / rm", "Resolve explicit targets", "Delete selected paths", "STATE", "PHASE", "DETAIL", "RM_DELETE_ENTER"} {
+	for _, expected := range []string{"YCY / rm", "RM_DELETE_ENTER"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("rm Rich PTY live Console missing %q: %q", expected, output)
 		}
@@ -156,7 +156,7 @@ func assertRMExtendedMutationOutput(t *testing.T, output string, color, wide boo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR rm Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
@@ -291,7 +291,7 @@ func assertRMExtendedPartialDeletionOutput(t *testing.T, output string, color bo
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR rm Rich PTY partial deletion contains %q: %q", prefix, output)
 			}
 		}
@@ -356,7 +356,7 @@ func assertRMExtendedCancellationOutput(t *testing.T, output string, color bool)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("NO_COLOR rm Rich PTY cancellation contains %q: %q", prefix, output)
 			}
 		}

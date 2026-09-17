@@ -267,7 +267,7 @@ func assertPulseRichFormsPTYOutput(t *testing.T, output string, color bool) {
 		t.Fatalf("Rich PTY did not restore the primary screen: %q", output)
 	}
 	live := pulsePTYText(visible[enter:leave])
-	for _, expected := range []string{"Prepare workspace", "Scan repositories", "Select date range:", "Fetch commits", "Filter by authors", "Build commit tree"} {
+	for _, expected := range []string{"YCY / git pulse", "Select date range:", "Filter by authors"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Rich PTY journey omitted %q: %q", expected, output)
 		}
@@ -290,11 +290,11 @@ func assertPulseRichFormsPTYOutput(t *testing.T, output string, color bool) {
 		}
 	}
 	if color && !strings.Contains(output, "\x1b[38") {
-		t.Fatalf("colored Rich PTY omitted B styling: %q", output)
+		t.Fatalf("colored Rich PTY omitted Focus styling: %q", output)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
@@ -310,7 +310,7 @@ func assertPulseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
 	live := pulsePTYText(visible[enter:leave])
-	for _, expected := range []string{"YCY / git pulse", "Prepare workspace", "Scan repositories", "Fetch commits", "Build commit tree", "STATE", "PHASE", "DETAIL"} {
+	for _, expected := range []string{"YCY / git pulse"} {
 		if !strings.Contains(live, expected) {
 			t.Fatalf("Rich PTY live Console missing %q: %q", expected, output)
 		}
@@ -320,9 +320,6 @@ func assertPulseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 	}
 	if !wide && !strings.Contains(live, "workspace") {
 		t.Fatalf("compact Rich PTY omitted bounded target context: %q", output)
-	}
-	if strings.Contains(live, "FLOW") || strings.Contains(live, "[done]") || strings.Contains(live, "[active]") {
-		t.Fatalf("Rich PTY live Console retained a non-B hierarchy: %q", output)
 	}
 	postLive := visible[leave:]
 	resultStart := strings.LastIndex(postLive, "YCY / git pulse")
@@ -343,11 +340,11 @@ func assertPulseRichPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("Rich PTY Transcript leaked report subject: %q", output)
 	}
 	if color && !strings.Contains(output, "\x1b[38") {
-		t.Fatalf("color Rich PTY omitted B styling: %q", output)
+		t.Fatalf("color Rich PTY omitted Focus styling: %q", output)
 	}
 	if !color {
 		for _, prefix := range []string{"\x1b[38;", "\x1b[3m", "\x1b[9m"} {
-			if strings.Contains(output, prefix) {
+			if strings.Contains(terminaltest.StyleSequences(output), prefix) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}

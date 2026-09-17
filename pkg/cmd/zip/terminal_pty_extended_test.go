@@ -371,15 +371,8 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 	t.Helper()
 	visible := strings.ReplaceAll(output, "\r\n", "\n")
 	for _, form := range []string{"Workspace package", "Source directory", "File patterns", "Output name"} {
-		index := strings.Index(visible, form)
-		if wide && index < 0 {
-			t.Fatalf("zip Rich PTY Form Catalog did not render %q: %q", form, output)
-		}
-		if wide {
-			firstPrompt := strings.Index(visible, "Select a package to zip:")
-			if firstPrompt < 0 || index >= firstPrompt {
-				t.Fatalf("zip Rich PTY Form Catalog did not render %q before the first interaction: %q", form, output)
-			}
+		if wide && !strings.Contains(visible, form) {
+			t.Fatalf("zip Rich PTY journey did not render %q: %q", form, output)
 		}
 	}
 	enter := strings.Index(visible, "\x1b[?1049h")
@@ -388,12 +381,8 @@ func assertZIPExtendedPTYOutput(t *testing.T, output string, color, wide bool) {
 		t.Fatalf("zip Rich PTY did not restore primary screen: %q", output)
 	}
 	live := zipExtendedPTYText(visible[enter:leave])
-	liveExpected := []string{"YCY / zip", "STATE", "PHASE", "DETAIL"}
-	if wide {
-		liveExpected = append(liveExpected,
-			"Discover workspace", "Select source", "Select patterns", "Prepare archive",
-			"Collect files", "Compress files", "Write archive", "Reveal archive")
-	} else {
+	liveExpected := []string{"YCY / zip"}
+	if !wide {
 		liveExpected = append(liveExpected, "Select a package", "Select a directory", "Select file patterns", "Enter the name")
 	}
 	for _, expected := range liveExpected {

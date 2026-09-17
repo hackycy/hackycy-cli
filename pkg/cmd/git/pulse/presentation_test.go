@@ -83,7 +83,7 @@ func TestTerminalPulseRichDocumentUsesSemanticFieldHierarchyAndRepositorySpacing
 	if !strings.Contains(colored.String(), "\x1b[") {
 		t.Fatalf("colored report omitted semantic styles: %q", colored.String())
 	}
-	for _, color := range []string{"38;2;76;201;240", "38;2;255;180;84"} {
+	for _, color := range []string{"38;2;199;146;234", "38;2;79;227;177"} {
 		if !strings.Contains(colored.String(), color) {
 			t.Fatalf("colored report omitted expected repository/author color %q: %q", color, colored.String())
 		}

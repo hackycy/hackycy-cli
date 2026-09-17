@@ -50,6 +50,35 @@ func TestConsoleScrollPausesAndResumesFollow(t *testing.T) {
 	}
 }
 
+func TestConsoleFooterShowsPagerOnlyWhenUseful(t *testing.T) {
+	model := newRichRootModel(80, 24, false)
+	model.View()
+	footer := model.scrollFooter()
+	for _, unwanted := range []string{"1–", "wheel", "following"} {
+		if strings.Contains(footer, unwanted) {
+			t.Fatalf("fitting footer retained %q: %q", unwanted, footer)
+		}
+	}
+	if !strings.Contains(footer, "ctrl+g copy") {
+		t.Fatalf("fitting footer omitted copy toggle: %q", footer)
+	}
+
+	model.notices = []PresentationDocument{{Blocks: []PresentationBlock{{Text: strings.Repeat("history\n", 60)}}}}
+	model.View()
+	footer = model.scrollFooter()
+	for _, expected := range []string{"/", "wheel", "following", "ctrl+g copy"} {
+		if !strings.Contains(footer, expected) {
+			t.Fatalf("overflowing footer omitted %q: %q", expected, footer)
+		}
+	}
+
+	model.Update(tea.KeyPressMsg{Code: 'g', Mod: tea.ModCtrl})
+	footer = model.scrollFooter()
+	if strings.Contains(footer, "wheel") || !strings.Contains(footer, "ctrl+g mouse") {
+		t.Fatalf("copy-mode footer advertises unavailable input: %q", footer)
+	}
+}
+
 func scrollTestForm(t *testing.T, kind InteractionKind, width, height int) (*richRootModel, *richHuhForm) {
 	t.Helper()
 	options := make([]InteractionOption, 100)
@@ -204,6 +233,12 @@ func TestConsoleScrollInputAndValidationRemainVisible(t *testing.T) {
 	if !strings.Contains(view, "invalid path") || !strings.Contains(view, "existing directory") || !model.scroll.focusVisible() {
 		t.Fatalf("input/error hidden: %s", view)
 	}
+	plain := ansi.Strip(view)
+	for _, message := range []string{"invalid path", "choose an existing directory"} {
+		if !hasLinePrefix(plain, message) {
+			t.Fatalf("validation message is not flush left: %q", plain)
+		}
+	}
 	t.Logf("60x15 input with validation:\n%s", view)
 }
 
@@ -226,8 +261,8 @@ func TestConsoleScrollMouseModeCanBeReleasedForCopy(t *testing.T) {
 }
 
 func TestConsoleScrollFramesFitAtBoundarySizes(t *testing.T) {
-	for _, size := range [][2]int{{120, 40}, {80, 24}, {60, 15}, {30, 10}} {
-		for _, kind := range []InteractionKind{InteractionText, InteractionConfirm, InteractionSelect, InteractionMultiSelect} {
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {70, 20}, {69, 19}, {60, 15}, {30, 10}} {
+		for _, kind := range []InteractionKind{InteractionText, InteractionSecret, InteractionConfirm, InteractionSelect, InteractionMultiSelect} {
 			model, _ := scrollTestForm(t, kind, size[0], size[1])
 			view := model.View().Content
 			if lineCount(view) != size[1] {

@@ -30,7 +30,7 @@ func TestRichTrackLeavesInlineFinalPhaseBeforeDeferredDiagnosticsAndResult(t *te
 		if err := process.Resize(40, 15); err != nil {
 			t.Fatalf("resize narrow PTY: %v", err)
 		}
-		waitForTrackedPromptAfter(t, output, compactStart, "STATE / PHASE / DETAIL")
+		waitForTrackedPromptAfter(t, output, compactStart, "Scanning repositories")
 		if err := process.Resize(100, 30); err != nil {
 			t.Fatalf("resize wide PTY: %v", err)
 		}
@@ -40,7 +40,7 @@ func TestRichTrackLeavesInlineFinalPhaseBeforeDeferredDiagnosticsAndResult(t *te
 	if countAlternateScreen(output, "h") != 1 || countAlternateScreen(output, "l") != 1 {
 		t.Fatalf("tracked renderer did not own exactly one alternate-screen session: %q", output)
 	}
-	assertBTrackedConsole(t, output, true)
+	assertFocusTrackedConsole(t, output, true)
 	final := strings.LastIndex(output, "Fetching commits")
 	deferred := strings.LastIndex(output, "deferred diagnostic")
 	result := strings.LastIndex(output, "durable-result")
@@ -60,9 +60,9 @@ func TestRichTrackHonorsNoColor(t *testing.T) {
 	})
 
 	assertTrackedPTYCleanup(t, output, "durable-result")
-	assertBTrackedConsole(t, output, false)
+	assertFocusTrackedConsole(t, output, false)
 	for _, colorPrefix := range []string{"\x1b[3m", "\x1b[9m", "\x1b[38;"} {
-		if strings.Contains(output, colorPrefix) {
+		if strings.Contains(terminaltest.StyleSequences(output), colorPrefix) {
 			t.Fatalf("NO_COLOR tracked output contains %q: %q", colorPrefix, output)
 		}
 	}
@@ -259,27 +259,27 @@ func waitForTrackedPromptAfter(t *testing.T, output *promptBuffer, start int, ne
 	t.Fatalf("PTY output did not contain %q: %q", needle, output.String())
 }
 
-func assertBTrackedConsole(t *testing.T, output string, color bool) {
+func assertFocusTrackedConsole(t *testing.T, output string, color bool) {
 	t.Helper()
 	plain := strings.Join(strings.Fields(ansi.Strip(output)), " ")
 	for _, needle := range []string{
-		"YCY", "terminal session", "mode interactive", "STATE", "PHASE", "DETAIL",
-		"Scanning repositories", "workspace/project", "◆ ACTIVE", "✓ DONE",
+		"YCY", "terminal session", "mode interactive",
+		"Scanning repositories", "workspace/project", "Fetching commits",
 	} {
 		if !strings.Contains(plain, needle) {
-			t.Fatalf("B Track PTY output missing %q: %q", needle, plain)
+			t.Fatalf("Focus Track PTY output missing %q: %q", needle, plain)
 		}
 	}
-	for _, generic := range []string{"[active]", "[done]", "│"} {
+	for _, generic := range []string{"STEPS", "◆ ACTIVE", "✓ DONE", "[active]", "[done]", "│"} {
 		if strings.Contains(plain, generic) {
-			t.Fatalf("B Track PTY output retained %q: %q", generic, plain)
+			t.Fatalf("Focus Track PTY output retained %q: %q", generic, plain)
 		}
 	}
-	if color && !strings.Contains(output, "\x1b[38;") {
-		t.Fatalf("colored B Track PTY output has no color style: %q", output)
+	if color && !strings.Contains(terminaltest.StyleSequences(output), "\x1b[38;") {
+		t.Fatalf("colored Focus Track PTY output has no color style: %q", output)
 	}
-	if !color && strings.Contains(output, "\x1b[38;") {
-		t.Fatalf("NO_COLOR B Track PTY output contains a color style: %q", output)
+	if !color && strings.Contains(terminaltest.StyleSequences(output), "\x1b[38;") {
+		t.Fatalf("NO_COLOR Focus Track PTY output contains a color style: %q", output)
 	}
 }
 

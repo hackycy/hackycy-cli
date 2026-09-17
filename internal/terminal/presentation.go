@@ -151,17 +151,15 @@ func wrapStyledText(value string, width int) string {
 	return ansi.Hardwrap(ansi.Wordwrap(value, width, ""), width, true)
 }
 
-// durableRichStyles projects command-owned documents with the same B palette
-// as the Live View without introducing Console layout or terminal-mode control.
-// Cyan distinguishes document section/active hierarchy from the amber Console
-// bar and live state marker.
+// Durable documents share the Focus palette without live layout or terminal
+// control. The accent distinguishes document sections from live work.
 func durableRichStyles(color bool) map[VisualRole]lipgloss.Style {
 	styles := richStyles(color)
 	if color {
 		// Keep ordinary document text on the terminal's default foreground so
 		// adjacent result blocks retain their established byte-level layout.
 		styles[VisualRolePlain] = lipgloss.NewStyle()
-		styles[VisualRoleActive] = lipgloss.NewStyle().Foreground(lipgloss.Color(bConsoleAccent)).Bold(true)
+		styles[VisualRoleActive] = lipgloss.NewStyle().Foreground(lipgloss.Color(focusAccent)).Bold(true)
 	}
 	return styles
 }
@@ -182,14 +180,14 @@ func richStyles(color bool) map[VisualRole]lipgloss.Style {
 		return styles
 	}
 
-	styles[VisualRolePlain] = plain.Foreground(lipgloss.Color(bConsoleText))
-	styles[VisualRoleTitle] = plain.Foreground(lipgloss.Color(bConsolePrimary)).Bold(true)
-	styles[VisualRoleActive] = plain.Foreground(lipgloss.Color(bConsolePrimary)).Bold(true)
-	styles[VisualRoleSuccess] = plain.Foreground(lipgloss.Color(bConsoleSuccess)).Bold(true)
-	styles[VisualRoleWarning] = plain.Foreground(lipgloss.Color(bConsoleWarning)).Bold(true)
-	styles[VisualRoleError] = plain.Foreground(lipgloss.Color(bConsoleError)).Bold(true)
-	styles[VisualRoleMuted] = plain.Foreground(lipgloss.Color(bConsoleMuted)).Faint(true)
-	styles[VisualRoleIdentity] = plain.Foreground(lipgloss.Color(bConsolePrimary)).Bold(true)
+	styles[VisualRolePlain] = plain.Foreground(lipgloss.Color(focusText))
+	styles[VisualRoleTitle] = plain.Foreground(lipgloss.Color(focusPrimary)).Bold(true)
+	styles[VisualRoleActive] = plain.Foreground(lipgloss.Color(focusPrimary)).Bold(true)
+	styles[VisualRoleSuccess] = plain.Foreground(lipgloss.Color(focusSuccess)).Bold(true)
+	styles[VisualRoleWarning] = plain.Foreground(lipgloss.Color(focusWarning)).Bold(true)
+	styles[VisualRoleError] = plain.Foreground(lipgloss.Color(focusError)).Bold(true)
+	styles[VisualRoleMuted] = plain.Foreground(lipgloss.Color(focusMuted))
+	styles[VisualRoleIdentity] = plain.Foreground(lipgloss.Color(focusPrimary)).Bold(true)
 	return styles
 }
 

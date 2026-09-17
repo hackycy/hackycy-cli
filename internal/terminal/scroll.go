@@ -6,7 +6,6 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -106,27 +105,35 @@ func (model *richRootModel) scrollHelp() string {
 
 func (model *richRootModel) scrollFooter() string {
 	v := &model.scroll.viewport
-	up, down := "─", "─"
-	if !v.AtTop() {
-		up = "↑"
-	}
-	if !v.AtBottom() {
-		down = "↓"
-	}
-	status := fmt.Sprintf("%s %d–%d/%d %s · wheel", up, v.YOffset()+1, min(v.YOffset()+v.Height(), v.TotalLineCount()), v.TotalLineCount(), down)
-	if model.form == nil && model.mode != richOutcomeMode {
-		if model.scroll.following {
-			status += " · following"
-		} else {
-			status += fmt.Sprintf(" · +%d new · End follow", model.scroll.unread)
-		}
-	}
+	toggle := "ctrl+g copy"
 	if model.mouseDisabled {
-		status += " · ctrl+g mouse"
-	} else {
-		status += " · ctrl+g copy"
+		toggle = "ctrl+g mouse"
 	}
-	return ansi.Wrap(status+"\n"+model.scrollHelp(), model.formWidth(), "")
+	lines := []string{model.scrollHelp() + " · " + toggle}
+	overflow := v.TotalLineCount() > v.Height()
+	paused := model.form == nil && model.mode != richOutcomeMode && !model.scroll.following
+	if overflow || paused || model.scroll.unread > 0 {
+		up, down := "─", "─"
+		if !v.AtTop() {
+			up = "↑"
+		}
+		if !v.AtBottom() {
+			down = "↓"
+		}
+		status := fmt.Sprintf("%s %d–%d/%d %s", up, v.YOffset()+1, min(v.YOffset()+v.Height(), v.TotalLineCount()), v.TotalLineCount(), down)
+		if overflow && !model.mouseDisabled {
+			status += " · wheel"
+		}
+		if model.form == nil && model.mode != richOutcomeMode {
+			if model.scroll.following {
+				status += " · following"
+			} else {
+				status += fmt.Sprintf(" · +%d new · End follow", model.scroll.unread)
+			}
+		}
+		lines = append([]string{status}, lines...)
+	}
+	return ansi.Wrap(strings.Join(lines, "\n"), model.formWidth(), "")
 }
 
 func (model *richRootModel) prepareScroll() {
@@ -134,14 +141,15 @@ func (model *richRootModel) prepareScroll() {
 		return
 	}
 	width := model.formWidth()
+	headerHeight := lineCount(model.focusHeader())
 	// Reserve the footer's actual wrapped height. The longest status includes
 	// paused-follow information, so it cannot push the input out of the view.
-	footerHeight := max(lineCount(model.scrollFooter()), 2)
-	height := max(model.height-1-footerHeight, 1)
+	footerHeight := max(lineCount(model.scrollFooter()), 1)
+	height := max(model.height-headerHeight-footerHeight, 1)
 	blocks := model.scrollBlocks(width)
 	model.scroll.setContent(blocks, width, height)
 	// A change in digit count or follow state can add one footer line.
-	height = max(model.height-1-lineCount(model.scrollFooter()), 1)
+	height = max(model.height-headerHeight-lineCount(model.scrollFooter()), 1)
 	model.scroll.viewport.SetHeight(height)
 	if model.scroll.following {
 		model.scroll.viewport.GotoBottom()
@@ -181,25 +189,12 @@ func (model *richRootModel) prepareScroll() {
 func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 	styles := richStyles(model.color)
 	var blocks []scrollBlock
-	// The full command target remains accessible even when the fixed bar is
-	// abbreviated. Metadata and status rows share the body's scroll position.
-	if ansi.StringWidth(stripTerminalControl(model.consoleCommand()+" | "+model.console.Target+" | "+model.consoleStatusLabel())) > width {
+	// Keep the full command target accessible when the fixed header abbreviates it.
+	if ansi.StringWidth(stripTerminalControl("◆ "+model.consoleCommand()+"  "+model.console.Target+"  "+model.consoleStatusLabel())) > width {
 		blocks = append(blocks, scrollBlock{"identity", stripTerminalControl(model.consoleCommand() + " · " + model.console.Target)})
 	}
 	for i, field := range model.console.Metadata {
 		blocks = append(blocks, scrollBlock{fmt.Sprintf("metadata-%d", i), styles[VisualRoleMuted].Render(stripTerminalControl(field.Label)+" ") + stripTerminalControl(field.Value)})
-	}
-	if model.consoleWideLayout() {
-		// Retain the established table on wide terminals, wrapping each cell.
-		blocks = append(blocks, scrollBlock{"heading", styles[VisualRoleTitle].Render(consolePad("STATE", 12) + consolePad("PHASE", 27) + "DETAIL")})
-		for i, row := range model.consoleRows() {
-			blocks = append(blocks, scrollBlock{fmt.Sprintf("row-%d", i), consoleWrappedRow(row, width, styles)})
-		}
-	} else {
-		blocks = append(blocks, scrollBlock{"heading", styles[VisualRoleTitle].Render("STATE / PHASE / DETAIL")})
-		for i, row := range model.consoleRows() {
-			blocks = append(blocks, scrollBlock{fmt.Sprintf("row-%d", i), model.consoleCompactRow(row, 0, styles)})
-		}
 	}
 	for i, document := range model.notices {
 		if text := strings.TrimSuffix(renderRich(document, RichOptions{Color: model.color}), "\n"); text != "" {
@@ -217,7 +212,8 @@ func (model *richRootModel) handleScroll(message tea.Msg) bool {
 	handled := false
 	switch value := message.(type) {
 	case tea.MouseWheelMsg:
-		if model.mouseDisabled || value.X < 1 || value.X >= model.width-1 || value.Y < 1 || value.Y >= 1+v.Height() {
+		top := lineCount(model.focusHeader())
+		if model.mouseDisabled || value.X < 0 || value.X >= model.width || value.Y < top || value.Y >= top+v.Height() {
 			return true
 		}
 		switch value.Button {
@@ -270,26 +266,6 @@ func (model *richRootModel) handleScroll(message tea.Msg) bool {
 		}
 	}
 	return handled
-}
-
-func consoleWrappedRow(row consoleStatusRow, width int, styles map[VisualRole]lipgloss.Style) string {
-	glyph, label := consoleStateLabel(row.state)
-	state := styles[consoleStateRole(row.state)].Render(consolePad(glyph+" "+label, 12))
-	phase := strings.Split(ansi.Hardwrap(stripTerminalControl(row.phase), 26, true), "\n")
-	detail := strings.Split(ansi.Hardwrap(stripTerminalControl(row.detail), max(width-39, 1), true), "\n")
-	var lines []string
-	for i := 0; i < max(len(phase), len(detail)); i++ {
-		left, right := "", ""
-		if i < len(phase) {
-			left = phase[i]
-		}
-		if i < len(detail) {
-			right = detail[i]
-		}
-		lines = append(lines, state+styles[VisualRolePlain].Render(consolePad(left, 27))+styles[VisualRoleMuted].Render(right))
-		state = strings.Repeat(" ", 12)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func (model *richRootModel) outcomeOverflows() bool {
