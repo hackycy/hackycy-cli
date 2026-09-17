@@ -5,7 +5,7 @@ import { z } from 'zod'
 const valueRowSchema = z.object({ value: z.string() })
 const keyValueRowSchema = z.object({ name: z.string(), value: z.string() })
 
-export type TunnelEditorSection = 'basics' | 'transport' | 'health' | 'http'
+export type TunnelEditorSection = 'general' | 'transport' | 'health' | 'http'
 
 const baseTunnelSchema = z.object({
   label: z.string().max(100, 'Display name must be 100 characters or fewer'),
@@ -39,6 +39,47 @@ const baseTunnelSchema = z.object({
 })
 
 export type TunnelFormValues = z.infer<typeof baseTunnelSchema>
+
+const tunnelFieldsBySection = {
+  general: ['label', 'protocol', 'customDomains', 'location', 'serverPort', 'localHost', 'localPort', 'enabled'],
+  transport: ['useEncryption', 'useCompression', 'bandwidthEnabled', 'bandwidthValue', 'bandwidthUnit', 'bandwidthMode', 'proxyProtocolVersion'],
+  health: ['healthEnabled', 'healthType', 'healthInterval', 'healthTimeout', 'healthMaxFailed', 'healthPath', 'healthHeaders'],
+  http: ['authEnabled', 'authUsername', 'authPassword', 'hostHeaderRewrite', 'requestHeaders', 'responseHeaders'],
+} as const satisfies Record<TunnelEditorSection, readonly (keyof TunnelFormValues)[]>
+
+const tunnelSectionOrder: readonly TunnelEditorSection[] = ['general', 'transport', 'health', 'http']
+
+const focusFieldOverrides: Partial<Record<keyof TunnelFormValues, string>> = {
+  customDomains: 'customDomains.0.value',
+  healthHeaders: 'healthHeaders.0.name',
+  requestHeaders: 'requestHeaders.0.name',
+  responseHeaders: 'responseHeaders.0.name',
+}
+
+export function availableTunnelEditorSections(protocol: TunnelFormValues['protocol']): readonly TunnelEditorSection[] {
+  return protocol === 'http' ? tunnelSectionOrder : tunnelSectionOrder.filter(section => section !== 'http')
+}
+
+export function activeTunnelEditorSection(section: TunnelEditorSection, protocol: TunnelFormValues['protocol']): TunnelEditorSection {
+  return section === 'http' && protocol !== 'http' ? 'general' : section
+}
+
+export function tunnelEditorSectionErrorCounts(errors: unknown): Record<TunnelEditorSection, number> {
+  const errorMap = errors && typeof errors === 'object' ? errors as Record<string, unknown> : {}
+  return Object.fromEntries(tunnelSectionOrder.map(section => [
+    section,
+    tunnelFieldsBySection[section].filter(field => errorMap[field] != null).length,
+  ])) as Record<TunnelEditorSection, number>
+}
+
+export function firstTunnelError(errors: unknown): { section: TunnelEditorSection, field: string } | undefined {
+  const errorMap = errors && typeof errors === 'object' ? errors as Record<string, unknown> : {}
+  for (const section of tunnelSectionOrder) {
+    const field = tunnelFieldsBySection[section].find(candidate => errorMap[candidate] != null)
+    if (field)
+      return { section, field: focusFieldOverrides[field] ?? field }
+  }
+}
 
 function positiveInteger(value: string): boolean {
   const number = Number(value)
@@ -192,11 +233,5 @@ export function buildTunnelPayload(values: TunnelFormValues): {
 }
 
 export function sectionForTunnelField(field: string): TunnelEditorSection {
-  if (['useEncryption', 'useCompression', 'bandwidthEnabled', 'bandwidthValue', 'bandwidthUnit', 'bandwidthMode', 'proxyProtocolVersion'].includes(field))
-    return 'transport'
-  if (['healthEnabled', 'healthType', 'healthInterval', 'healthTimeout', 'healthMaxFailed', 'healthPath', 'healthHeaders'].includes(field))
-    return 'health'
-  if (['authEnabled', 'authUsername', 'authPassword', 'hostHeaderRewrite', 'requestHeaders', 'responseHeaders'].includes(field))
-    return 'http'
-  return 'basics'
+  return tunnelSectionOrder.find(section => (tunnelFieldsBySection[section] as readonly string[]).includes(field)) ?? 'general'
 }

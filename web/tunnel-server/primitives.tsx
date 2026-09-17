@@ -153,10 +153,10 @@ export { Tabs }
 
 export function FormScrollArea({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <ScrollArea.Root className="tunnel-step-scroll">
-      <ScrollArea.Viewport className="tunnel-step-viewport">{children}</ScrollArea.Viewport>
-      <ScrollArea.Scrollbar className="tunnel-step-scrollbar" orientation="vertical">
-        <ScrollArea.Thumb className="tunnel-step-scroll-thumb" />
+    <ScrollArea.Root className="form-scroll-area">
+      <ScrollArea.Viewport className="form-scroll-viewport">{children}</ScrollArea.Viewport>
+      <ScrollArea.Scrollbar className="form-scrollbar" orientation="vertical">
+        <ScrollArea.Thumb className="form-scroll-thumb" />
       </ScrollArea.Scrollbar>
     </ScrollArea.Root>
   )

@@ -9,8 +9,8 @@ import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { apiJson, jsonRequest } from './api'
 import { FormError, FormField, FormMessage } from './form'
-import { DialogShell, FormScrollArea, SegmentedControl, Select } from './primitives'
-import { buildTunnelPayload, createTunnelSchema, draftToTunnelForm, sectionForTunnelField } from './tunnel-form'
+import { DialogShell, FormScrollArea, SegmentedControl, Select, Tabs } from './primitives'
+import { activeTunnelEditorSection, availableTunnelEditorSections, buildTunnelPayload, createTunnelSchema, draftToTunnelForm, firstTunnelError, tunnelEditorSectionErrorCounts } from './tunnel-form'
 import { ConfirmationDialog, EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, RowActionMenu, Spinner, Status, Switch, Token, useFeedback } from './ui'
 
 const clientRemarkSchema = z.object({ remark: z.string().max(100, 'Client remark must be 100 characters or fewer') })
@@ -261,13 +261,21 @@ function KeyValueFieldRows({ label, name, fields, register, error, onAdd, onRemo
   )
 }
 
+const tunnelSectionLabels: Record<TunnelEditorSection, string> = {
+  general: 'General',
+  transport: 'Transport',
+  health: 'Health',
+  http: 'HTTP',
+}
+
 function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: string, initial?: TunnelView, onClose: () => void, onSaved: () => void }): React.JSX.Element {
   const form = useForm<TunnelFormValues>({
     resolver: zodResolver(createTunnelSchema({ hasExistingBasicAuth: Boolean(initial?.options.http?.basicAuth) })),
     defaultValues: draftToTunnelForm(initial),
+    shouldFocusError: false,
     shouldUnregister: false,
   })
-  const [openSections, setOpenSections] = useState<Set<TunnelEditorSection>>(() => new Set(['basics']))
+  const [activeSection, setActiveSection] = useState<TunnelEditorSection>('general')
   const { notify } = useFeedback()
   const protocol = useWatch({ control: form.control, name: 'protocol' })
   const customDomains = useFieldArray({ control: form.control, name: 'customDomains' })
@@ -275,11 +283,9 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
   const requestHeaders = useFieldArray({ control: form.control, name: 'requestHeaders' })
   const responseHeaders = useFieldArray({ control: form.control, name: 'responseHeaders' })
   const saving = form.formState.isSubmitting
-  const setSectionOpen = (section: TunnelEditorSection, open: boolean): void => setOpenSections((value) => {
-    const next = new Set(value)
-    open ? next.add(section) : next.delete(section)
-    return next
-  })
+  const availableSections = availableTunnelEditorSections(protocol)
+  const sectionErrorCounts = tunnelEditorSectionErrorCounts(form.formState.errors)
+  useEffect(() => setActiveSection(section => activeTunnelEditorSection(section, protocol)), [protocol])
   const submit = form.handleSubmit(async (values) => {
     form.clearErrors('root.server')
     try {
@@ -291,9 +297,11 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
       form.setError('root.server', { message: message(cause) })
     }
   }, (errors) => {
-    const sections = Object.keys(errors).map(sectionForTunnelField)
-    if (sections.length)
-      setOpenSections(value => new Set([...value, ...sections]))
+    const error = firstTunnelError(errors)
+    if (!error)
+      return
+    setActiveSection(error.section)
+    requestAnimationFrame(() => form.setFocus(error.field as Path<TunnelFormValues>))
   })
   const focusNewField = (name: Path<TunnelFormValues>): void => {
     requestAnimationFrame(() => form.setFocus(name))
@@ -301,19 +309,30 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
 
   return (
     <DialogShell open title={initial ? 'Edit Tunnel Definition' : 'New Tunnel Definition'} className="tunnel-modal" busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
-      <FormScrollArea>
-        <div className="tunnel-form-sections">
-          <details className="tunnel-form-section" open={openSections.has('basics')} onToggle={event => setSectionOpen('basics', event.currentTarget.open)}>
-            <summary>
-              <span className="section-heading">
-                <span className="section-index">01</span>
-                <strong>Basics</strong>
-              </span>
-              <ChevronDown className="section-chevron" size={16} aria-hidden="true" />
-            </summary>
+      <Tabs.Root className="tunnel-form-tabs" value={activeSection} onValueChange={value => setActiveSection(value as TunnelEditorSection)}>
+        <Tabs.List className="tunnel-tab-list" aria-label="Tunnel configuration sections" data-tab-count={availableSections.length}>
+          {availableSections.map((section) => {
+            const errorCount = sectionErrorCounts[section]
+            const label = tunnelSectionLabels[section]
+            return (
+              <Tabs.Trigger
+                className="tunnel-tab"
+                key={section}
+                value={section}
+                disabled={saving}
+                aria-label={errorCount ? `${label}, ${errorCount} ${errorCount === 1 ? 'error' : 'errors'}` : label}
+              >
+                <span>{label}</span>
+                {errorCount > 0 && <span className="tunnel-tab-error" aria-hidden="true" />}
+              </Tabs.Trigger>
+            )
+          })}
+        </Tabs.List>
+        <FormScrollArea>
+          <Tabs.Content className="tunnel-tab-panel" value="general">
             <div className="tunnel-section-body">
               <FormField label="Display name" error={form.formState.errors.label}>
-                <input {...form.register('label')} maxLength={100} autoFocus aria-invalid={Boolean(form.formState.errors.label)} />
+                <input {...form.register('label')} maxLength={100} aria-invalid={Boolean(form.formState.errors.label)} />
               </FormField>
               <Controller name="protocol" control={form.control} render={({ field }) => <SegmentedControl label="Tunnel protocol" value={field.value} disabled={saving} onChange={field.onChange} options={[{ value: 'http', label: 'HTTP' }, { value: 'tcp', label: 'TCP' }, { value: 'udp', label: 'UDP' }]} />} />
               {protocol === 'http'
@@ -356,16 +375,9 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
                 <Controller name="enabled" control={form.control} render={({ field }) => <Switch label="Enable Tunnel Definition" checked={field.value} disabled={saving} onChange={field.onChange} />} />
               </div>
             </div>
-          </details>
+          </Tabs.Content>
 
-          <details className="tunnel-form-section" open={openSections.has('transport')} onToggle={event => setSectionOpen('transport', event.currentTarget.open)}>
-            <summary>
-              <span className="section-heading">
-                <span className="section-index">02</span>
-                <strong>Transport</strong>
-              </span>
-              <ChevronDown className="section-chevron" size={16} aria-hidden="true" />
-            </summary>
+          <Tabs.Content className="tunnel-tab-panel" value="transport">
             <div className="tunnel-section-body">
               <div className="setting-row">
                 <span>Encryption</span>
@@ -396,16 +408,9 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
                 <Controller name="proxyProtocolVersion" control={form.control} render={({ field }) => <Select label="Proxy Protocol" value={field.value} disabled={saving} onChange={field.onChange} options={[{ value: '', label: 'Off' }, { value: 'v1', label: 'v1' }, { value: 'v2', label: 'v2' }]} />} />
               </FormField>
             </div>
-          </details>
+          </Tabs.Content>
 
-          <details className="tunnel-form-section" open={openSections.has('health')} onToggle={event => setSectionOpen('health', event.currentTarget.open)}>
-            <summary>
-              <span className="section-heading">
-                <span className="section-index">03</span>
-                <strong>Health check</strong>
-              </span>
-              <ChevronDown className="section-chevron" size={16} aria-hidden="true" />
-            </summary>
+          <Tabs.Content className="tunnel-tab-panel" value="health">
             <div className="tunnel-section-body">
               <div className="setting-row">
                 <span>Health check</span>
@@ -447,17 +452,10 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
                 </>
               )}
             </div>
-          </details>
+          </Tabs.Content>
 
           {protocol === 'http' && (
-            <details className="tunnel-form-section" open={openSections.has('http')} onToggle={event => setSectionOpen('http', event.currentTarget.open)}>
-              <summary>
-                <span className="section-heading">
-                  <span className="section-index">04</span>
-                  <strong>HTTP</strong>
-                </span>
-                <ChevronDown className="section-chevron" size={16} aria-hidden="true" />
-              </summary>
+            <Tabs.Content className="tunnel-tab-panel" value="http">
               <div className="tunnel-section-body">
                 <div className="setting-row">
                   <span>Basic Auth</span>
@@ -501,10 +499,10 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
                   onRemove={responseHeaders.remove}
                 />
               </div>
-            </details>
+            </Tabs.Content>
           )}
-        </div>
-      </FormScrollArea>
+        </FormScrollArea>
+      </Tabs.Root>
 
       <FormError error={form.formState.errors.root?.server} />
       <div className="modal-actions">

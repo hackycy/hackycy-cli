@@ -1,6 +1,6 @@
 import type { TunnelView } from './api'
 import { describe, expect, it } from 'vitest'
-import { buildTunnelPayload, createTunnelSchema, draftToTunnelForm } from './tunnel-form'
+import { activeTunnelEditorSection, availableTunnelEditorSections, buildTunnelPayload, createTunnelSchema, draftToTunnelForm, firstTunnelError, sectionForTunnelField, tunnelEditorSectionErrorCounts } from './tunnel-form'
 
 function validValues(): ReturnType<typeof draftToTunnelForm> {
   return {
@@ -77,6 +77,34 @@ describe('tunnel form schema', () => {
     expect(result.success).toBe(false)
     if (!result.success)
       expect(result.error.issues.map(issue => issue.path[0])).toEqual(expect.arrayContaining(['healthInterval', 'healthPath']))
+  })
+})
+
+describe('tunnel editor navigation', () => {
+  it('maps fields to their domain tabs', () => {
+    expect(sectionForTunnelField('localPort')).toBe('general')
+    expect(sectionForTunnelField('bandwidthValue')).toBe('transport')
+    expect(sectionForTunnelField('healthPath')).toBe('health')
+    expect(sectionForTunnelField('requestHeaders')).toBe('http')
+  })
+
+  it('shows HTTP only for HTTP tunnels and falls back when it becomes unavailable', () => {
+    expect(availableTunnelEditorSections('http')).toEqual(['general', 'transport', 'health', 'http'])
+    expect(availableTunnelEditorSections('tcp')).toEqual(['general', 'transport', 'health'])
+    expect(activeTunnelEditorSection('http', 'udp')).toBe('general')
+    expect(activeTunnelEditorSection('health', 'udp')).toBe('health')
+  })
+
+  it('counts errors by tab and locates the first field in visual order', () => {
+    const errors = {
+      authPassword: { message: 'Required' },
+      healthPath: { message: 'Invalid path' },
+      localPort: { message: 'Invalid port' },
+    }
+
+    expect(tunnelEditorSectionErrorCounts(errors)).toEqual({ general: 1, transport: 0, health: 1, http: 1 })
+    expect(firstTunnelError(errors)).toEqual({ section: 'general', field: 'localPort' })
+    expect(firstTunnelError({ customDomains: { message: 'Required' } })).toEqual({ section: 'general', field: 'customDomains.0.value' })
   })
 })
 
