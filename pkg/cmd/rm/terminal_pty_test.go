@@ -99,6 +99,9 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
+	if !strings.Contains(terminaltest.StripANSI(visible[enter:leave]), "── Confirmation") {
+		t.Fatalf("Rich PTY live confirmation has no action heading: %q", output)
+	}
 	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{
 		"ANSWERS",
@@ -126,6 +129,42 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 				t.Fatalf("no-color Rich PTY output contains %q: %q", prefix, output)
 			}
 		}
+	}
+}
+
+func TestRMExplicitRichConfirmationKeepsRiskOnlyInInformation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	experience := terminaltest.NewRecordingExperience(terminaltest.SemanticAnswer{Value: terminalexperience.InteractionAnswer{Confirmed: false}})
+	run := experience.Open(context.Background())
+	caps := terminalexperience.Capabilities{Interaction: terminalexperience.RichInteractive}
+	remover := &recordingRemover{}
+	sink := newRMPhaseSink(run, caps, true)
+	err := runRMExplicitTerminal(context.Background(), caps, sink, newTerminalRMAdapter(run), remover, root, Input{Paths: []string{"target"}}, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var information string
+	var confirmation *terminalexperience.InteractionRequest
+	for _, operation := range experience.Run.Operations() {
+		switch operation.Kind {
+		case terminaltest.MilestoneOperation:
+			information += terminalexperience.RenderPlain(operation.Value.(terminalexperience.PresentationDocument))
+		case terminaltest.AskOperation:
+			request := operation.Value.(terminalexperience.InteractionRequest)
+			confirmation = &request
+		}
+	}
+	if !strings.Contains(information, "Targets: target") || !strings.Contains(information, "Recursive deletion removes all contents.") {
+		t.Fatalf("information omitted targets or deletion risk: %q", information)
+	}
+	if confirmation == nil || confirmation.Description != "" || confirmation.Message != "Delete 1 item?" || !confirmation.HasDefault || confirmation.Default.Confirmed {
+		t.Fatalf("confirmation repeated information or changed its default: %#v", confirmation)
+	}
+	if calls := remover.callsSnapshot(); len(calls) != 0 {
+		t.Fatalf("declined deletion mutated targets: %#v", calls)
 	}
 }
 
@@ -349,6 +388,12 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 	leave := strings.LastIndex(visible, "\x1b[?1049l")
 	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
+	}
+	live := terminaltest.StripANSI(visible[enter:leave])
+	for _, heading := range []string{"── Clean action", "── Cleanup targets"} {
+		if !strings.Contains(live, heading) {
+			t.Fatalf("Rich PTY live selection missing %q: %q", heading, output)
+		}
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{

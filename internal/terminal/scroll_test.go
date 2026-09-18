@@ -50,6 +50,108 @@ func TestConsoleScrollPausesAndResumesFollow(t *testing.T) {
 	}
 }
 
+func TestConsoleScrollSeparatesInformationFromEachInteraction(t *testing.T) {
+	for _, kind := range []InteractionKind{InteractionSelect, InteractionMultiSelect, InteractionConfirm} {
+		for _, color := range []bool{false, true} {
+			request := InteractionRequest{Kind: kind, Message: "Choose", Options: []InteractionOption{{Label: "One", Value: "one"}}}
+			form, answer, err := newRichForm(NewInteractionHandler(InteractionOptions{}), request, 7)
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := newRichRootModelWithConsole(60, 15, color, ConsoleDescriptor{
+				Command: "YCY", Metadata: []ConsoleMetadata{{Label: "route", Value: "explicit"}},
+				FormCatalog: []ConsoleFormStep{{ID: "choice", Name: "Confirmation"}},
+			})
+			model.Update(richNoticeMsg{document: PresentationDocument{Blocks: []PresentationBlock{{Text: "First detail\nSecond detail"}}}, ack: make(chan struct{})})
+			model.Update(richNoticeMsg{document: PresentationDocument{Blocks: []PresentationBlock{{Text: "Last detail"}}}, ack: make(chan struct{})})
+			model.Update(richShowFormMsg{id: 7, form: form, answer: answer, response: make(chan richAskResult, 1), step: consoleFormStep{id: 7, catalogID: "choice"}, ack: make(chan struct{})})
+			blocks := model.scrollBlocks(60)
+			wantIDs := []string{"metadata", "before-notice-0", "notice-0", "before-notice-1", "notice-1", "before-current", "current-heading", "form"}
+			if len(blocks) != len(wantIDs) {
+				t.Fatalf("kind=%d color=%t blocks = %#v", kind, color, blocks)
+			}
+			for i, id := range wantIDs {
+				if blocks[i].id != id {
+					t.Fatalf("kind=%d color=%t block %d = %q, want %q", kind, color, i, blocks[i].id, id)
+				}
+			}
+			heading := "── Confirmation "
+			if blocks[2].text != "First detail\nSecond detail" || blocks[5].text != "" || ansi.Strip(blocks[6].text) != heading+strings.Repeat("─", 60-ansi.StringWidth(heading)) {
+				t.Fatalf("kind=%d color=%t layout = %#v", kind, color, blocks)
+			}
+			if color && !strings.Contains(blocks[6].text, "\x1b[") || !color && strings.Contains(blocks[6].text, "\x1b[") {
+				t.Fatalf("kind=%d color=%t heading styling = %q", kind, color, blocks[6].text)
+			}
+			model.View()
+			if !model.scroll.focusVisible() {
+				t.Fatalf("kind=%d color=%t heading hid the focused control", kind, color)
+			}
+		}
+	}
+}
+
+func TestConsoleScrollLabelsCurrentStateWithoutInformation(t *testing.T) {
+	model := newRichRootModelWithConsole(40, 15, false, ConsoleDescriptor{Command: "YCY"})
+	model.mode = richFormMode
+	model.form = consoleTestForm{}
+	blocks := model.scrollBlocks(40)
+	if len(blocks) != 2 || blocks[0].id != "current-heading" || !strings.Contains(blocks[0].text, "Input") || blocks[1].id != "form" {
+		t.Fatalf("catalog-free form blocks = %#v", blocks)
+	}
+	model.form = nil
+	model.mode = richTrackMode
+	model.track = &trackedState{phases: []OperationPhase{{Name: "Scanning", State: PhaseActive}}}
+	blocks = model.scrollBlocks(40)
+	if len(blocks) != 2 || !strings.Contains(blocks[0].text, "Work") {
+		t.Fatalf("work blocks = %#v", blocks)
+	}
+	model.track = nil
+	model.mode = richOutcomeMode
+	model.outcome = FinishRequest{Outcome: Succeeded, Summary: PresentationDocument{Blocks: []PresentationBlock{{Text: "Done"}}}}
+	blocks = model.scrollBlocks(40)
+	if len(blocks) != 2 || !strings.Contains(blocks[0].text, "Result") {
+		t.Fatalf("result blocks = %#v", blocks)
+	}
+}
+
+func TestConsoleScrollSectionAnchorsSurviveResizeAndLongInformation(t *testing.T) {
+	model := newRichRootModelWithConsole(60, 15, false, ConsoleDescriptor{
+		Command: "YCY", Metadata: []ConsoleMetadata{{Label: "directory", Value: strings.Repeat("long-directory/", 8)}},
+	})
+	model.Update(richNoticeMsg{document: PresentationDocument{Blocks: []PresentationBlock{{Text: strings.Repeat("中文长路径/", 30)}}}, ack: make(chan struct{})})
+	model.View()
+	model.scroll.following = false
+	for index, anchor := range model.scroll.anchors {
+		if anchor.block == "notice-0" {
+			model.scroll.viewport.SetYOffset(index)
+			break
+		}
+	}
+	before := model.scroll.anchors[model.scroll.viewport.YOffset()]
+	model.Update(tea.WindowSizeMsg{Width: 30, Height: 10})
+	model.View()
+	after := model.scroll.anchors[model.scroll.viewport.YOffset()]
+	if before.block != after.block || before.line != after.line || after.column > before.column {
+		t.Fatalf("resize moved logical history position from %#v to %#v", before, after)
+	}
+	form, answer, err := newRichForm(NewInteractionHandler(InteractionOptions{}), InteractionRequest{
+		Kind: InteractionConfirm, Message: "Delete 1 item?",
+	}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Update(richShowFormMsg{id: 1, form: form, answer: answer, response: make(chan richAskResult, 1), ack: make(chan struct{})})
+	view := model.View().Content
+	if !model.scroll.focusVisible() || lineCount(view) != 10 {
+		t.Fatalf("30x10 long information hid the confirmation: %q", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if ansi.StringWidth(line) > 30 {
+			t.Fatalf("30x10 section exceeded width: %q", line)
+		}
+	}
+}
+
 func TestConsoleFooterShowsPagerOnlyWhenUseful(t *testing.T) {
 	model := newRichRootModel(80, 24, false)
 	model.View()

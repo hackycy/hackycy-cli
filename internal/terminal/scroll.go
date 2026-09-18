@@ -199,13 +199,40 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 	}
 	for i, document := range model.notices {
 		if text := strings.TrimSuffix(renderRich(document, RichOptions{Color: model.color}), "\n"); text != "" {
+			if len(blocks) > 0 {
+				blocks = append(blocks, scrollBlock{fmt.Sprintf("before-notice-%d", i), ""})
+			}
 			blocks = append(blocks, scrollBlock{fmt.Sprintf("notice-%d", i), text})
 		}
 	}
 	if active := model.consoleActiveView(0); active != "" {
+		if len(blocks) > 0 {
+			blocks = append(blocks, scrollBlock{"before-current", ""})
+		}
+		blocks = append(blocks, scrollBlock{"current-heading", model.currentHeading(width)})
 		blocks = append(blocks, scrollBlock{"form", active})
 	}
 	return blocks
+}
+
+func (model *richRootModel) currentHeading(width int) string {
+	name := "Input"
+	switch model.mode {
+	case richFormMode:
+		for _, step := range model.formRows {
+			if step.id == model.formID && step.name != "" {
+				name = step.name
+				break
+			}
+		}
+	case richTrackMode:
+		name = "Work"
+	case richOutcomeMode:
+		name = "Result"
+	}
+	label := ansi.Truncate("── "+stripTerminalControl(name)+" ", width, "…")
+	line := label + strings.Repeat("─", max(width-ansi.StringWidth(label), 0))
+	return focusThemeEmphasis(focusThemeStyle(model.color, focusAccent), model.color).Render(line)
 }
 
 func consoleMetadataText(fields []ConsoleMetadata, width int, muted lipgloss.Style) string {

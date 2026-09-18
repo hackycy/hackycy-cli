@@ -99,11 +99,9 @@ func runRMExplicitTerminal(
 		if err := presentRMExplicitTargets(caps, run, workingDirectory, plan.existing); err != nil {
 			return finishRMAt(run, sink, terminalexperience.Failed, rmResolvePhaseName, nil, err)
 		}
-		description := "Recursive deletion removes all contents. Targets: " + rmPathSummary(workingDirectory, plan.existing)
 		confirmed, cancelled, promptErr := adapter.ConfirmExplicit(ExplicitConfirmationPrompt{
-			Message:     fmt.Sprintf("Delete %d item%s?", len(plan.existing), rmPlural(len(plan.existing))),
-			Initial:     false,
-			Description: description,
+			Message: fmt.Sprintf("Delete %d item%s?", len(plan.existing), rmPlural(len(plan.existing))),
+			Initial: false,
 		})
 		if promptErr != nil {
 			return finishRMInteractionError(run, sink, rmResolvePhaseName, promptErr)
