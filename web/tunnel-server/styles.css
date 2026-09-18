@@ -1430,6 +1430,8 @@ th:last-child {
 
   .detail-grid dt,
   .detail-grid dd {
+    display: flex;
+    align-items: center;
     padding: 11px 0;
   }
 
