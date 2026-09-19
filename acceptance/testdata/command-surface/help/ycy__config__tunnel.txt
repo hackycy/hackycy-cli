@@ -1,13 +1,12 @@
-ycy config
-Manage ycy configuration
+ycy config tunnel
+Manage remembered Tunnel connections
 Usage:
-  ycy config [flags]
+  ycy config tunnel [flags]
 Commands:
-  cm	Manage CM profiles
-  fork	Manage git fork provider instances
-  tunnel	Manage remembered Tunnel connections
+  list	List remembered Tunnel connections
+  remove	Remove a locally remembered Tunnel connection
 Flags:
-  -h, --help	help for config
+  -h, --help	help for tunnel
   --log-format	Diagnostic format: text or json
   --log-level	Log level: debug, info, warn, or error
   --quiet	Only emit error diagnostics (short form: -q)

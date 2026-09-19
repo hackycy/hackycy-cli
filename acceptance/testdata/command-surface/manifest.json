@@ -832,6 +832,146 @@
       ]
     },
     {
+      "path": "ycy config tunnel",
+      "use": "tunnel",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config tunnel list",
+      "use": "list",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy config tunnel remove",
+      "use": "remove [connection-id]",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "force",
+          "shorthand": "f",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
       "path": "ycy diff",
       "use": "diff \u003cbaseline-directory\u003e \u003ctarget-directory\u003e",
       "aliases": [],

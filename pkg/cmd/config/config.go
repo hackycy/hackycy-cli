@@ -3,6 +3,7 @@ package config
 import (
 	cmcommand "github.com/hackycy/hackycy-cli/pkg/cmd/config/cm"
 	"github.com/hackycy/hackycy-cli/pkg/cmd/config/fork"
+	tunnelcommand "github.com/hackycy/hackycy-cli/pkg/cmd/config/tunnel"
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 	"github.com/spf13/cobra"
 )
@@ -23,6 +24,7 @@ func NewCmdConfig(factory *cmdutil.Factory) *cobra.Command {
 	command.AddCommand(
 		fork.NewCmdFork(factory),
 		cmcommand.NewCmdCM(factory),
+		tunnelcommand.NewCmdTunnel(factory),
 	)
 	return command
 }

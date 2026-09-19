@@ -2,6 +2,7 @@ package appconfig
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -520,6 +521,69 @@ func TestTunnelCatalogEncryptsSortsCapsAndSkipsCorruptEntries(t *testing.T) {
 	connections, err = store.ReadTunnelConnections()
 	if err != nil || len(connections) != 31 {
 		t.Fatalf("ReadTunnelConnections() after corruption = (%#v, %v)", connections, err)
+	}
+}
+
+func TestTunnelConnectionSummariesAndRemovalPreserveUnrelatedConfiguration(t *testing.T) {
+	store := semanticStore(t, nil)
+	if err := store.SaveForkInstance("work", ForkInput{Host: "github.example", Type: "github", Token: "fork-secret"}); err != nil {
+		t.Fatalf("SaveForkInstance() error = %v", err)
+	}
+	server, err := url.Parse("https://tunnel.example")
+	if err != nil {
+		t.Fatalf("parse tunnel server: %v", err)
+	}
+	for index, token := range []string{"older-token", "newer-token"} {
+		if err := store.RememberTunnelConnection(server, token, time.Date(2026, time.September, 18+index, 0, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("RememberTunnelConnection(%q) error = %v", token, err)
+		}
+	}
+
+	summaries, err := store.ListTunnelConnections()
+	if err != nil || len(summaries) != 2 {
+		t.Fatalf("ListTunnelConnections() = (%#v, %v)", summaries, err)
+	}
+	if summaries[0].LastAuthenticatedAt != "2026-09-19T00:00:00.000Z" || summaries[1].LastAuthenticatedAt != "2026-09-18T00:00:00.000Z" {
+		t.Fatalf("summary order = %#v", summaries)
+	}
+	if summaries[0].ID == "" || summaries[0].Server != server.String() {
+		t.Fatalf("newest summary = %#v", summaries[0])
+	}
+
+	removed, err := store.RemoveTunnelConnection(summaries[0].ID)
+	if err != nil || !removed {
+		t.Fatalf("RemoveTunnelConnection() = (%t, %v)", removed, err)
+	}
+	remaining, err := store.ListTunnelConnections()
+	if err != nil || len(remaining) != 1 || remaining[0].ID != summaries[1].ID {
+		t.Fatalf("remaining connections = (%#v, %v)", remaining, err)
+	}
+	if instance, found, err := store.ForkInstance("work"); err != nil || !found || instance.Token != "fork-secret" {
+		t.Fatalf("preserved Fork instance = (%#v, %t, %v)", instance, found, err)
+	}
+
+	removed, err = store.RemoveTunnelConnection(summaries[1].ID)
+	if err != nil || !removed {
+		t.Fatalf("RemoveTunnelConnection(last) = (%t, %v)", removed, err)
+	}
+	document, _, err := store.readDocument()
+	if err != nil || document.Tunnel == nil || len(document.Tunnel.Connections) != 0 {
+		t.Fatalf("empty Tunnel document = (%#v, %v)", document.Tunnel, err)
+	}
+	removed, err = store.RemoveTunnelConnection(summaries[1].ID)
+	if err != nil || removed {
+		t.Fatalf("RemoveTunnelConnection(missing) = (%t, %v)", removed, err)
+	}
+}
+
+func TestListTunnelConnectionsDoesNotCreateEmptyConfiguration(t *testing.T) {
+	store := semanticStore(t, nil)
+	summaries, err := store.ListTunnelConnections()
+	if err != nil || len(summaries) != 0 {
+		t.Fatalf("ListTunnelConnections() = (%#v, %v)", summaries, err)
+	}
+	if _, err := os.Stat(store.configPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ListTunnelConnections() created empty configuration: %v", err)
 	}
 }
 

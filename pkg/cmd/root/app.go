@@ -171,7 +171,8 @@ func (app *App) rootCommandWithPresentationError(controls diagnosticControls, ca
 			"ycy git heat", "ycy git pulse", "ycy git fork", "ycy git cm",
 			"ycy config fork list", "ycy config fork add", "ycy config fork remove",
 			"ycy config cm list", "ycy config cm add", "ycy config cm use",
-			"ycy config cm set", "ycy config cm remove", "ycy config cm test":
+			"ycy config cm set", "ycy config cm remove", "ycy config cm test",
+			"ycy config tunnel list", "ycy config tunnel remove":
 			return configureDiagnostics()
 		}
 		return nil

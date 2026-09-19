@@ -29,6 +29,14 @@ type TunnelConnection struct {
 	LastAuthenticatedAt string
 }
 
+// TunnelConnectionSummary is the secret-safe projection used by configuration
+// management commands.
+type TunnelConnectionSummary struct {
+	ID                  string
+	Server              string
+	LastAuthenticatedAt string
+}
+
 type validTunnelConnection struct {
 	TunnelConnection
 	stored tunnelDocumentConnection
@@ -50,6 +58,32 @@ func (store *Store) ReadTunnelConnections() ([]TunnelConnection, error) {
 		connections = append(connections, connection.TunnelConnection)
 	}
 	return connections, nil
+}
+
+// ListTunnelConnections returns remembered connections without exposing their
+// Client Tokens.
+func (store *Store) ListTunnelConnections() ([]TunnelConnectionSummary, error) {
+	document, _, err := store.readDocument()
+	if err != nil {
+		return nil, err
+	}
+	if document.Tunnel == nil || len(document.Tunnel.Connections) == 0 {
+		return nil, nil
+	}
+	key, err := store.keyForSalt(document.Salt)
+	if err != nil {
+		return nil, err
+	}
+	connections := validTunnelConnections(document, key)
+	summaries := make([]TunnelConnectionSummary, len(connections))
+	for index, connection := range connections {
+		summaries[index] = TunnelConnectionSummary{
+			ID:                  connection.ID,
+			Server:              connection.Server,
+			LastAuthenticatedAt: connection.LastAuthenticatedAt,
+		}
+	}
+	return summaries, nil
 }
 
 // TunnelInstanceID derives the opaque stable directory identifier for one connection.
@@ -112,6 +146,25 @@ func (store *Store) RememberTunnelConnection(server *url.URL, token string, auth
 		}
 		return nil
 	})
+}
+
+// RemoveTunnelConnection removes one remembered connection and reports whether
+// it existed.
+func (store *Store) RemoveTunnelConnection(id string) (bool, error) {
+	removed := false
+	err := store.updateDocument(func(document *document) error {
+		if document.Tunnel == nil {
+			return nil
+		}
+		if _, exists := document.Tunnel.Connections[id]; !exists {
+			return nil
+		}
+		delete(document.Tunnel.Connections, id)
+		document.Tunnel.order = removeOrderedName(document.Tunnel.order, id)
+		removed = true
+		return nil
+	})
+	return removed, err
 }
 
 func validTunnelConnections(document document, key []byte) []validTunnelConnection {

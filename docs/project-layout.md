@@ -31,9 +31,10 @@ the process-composition package.
 | Path | Responsibility |
 | --- | --- |
 | `pkg/cmd/root` | Global flags, diagnostics, discovery, command registration, and exit/error normalization. |
-| `pkg/cmd/config` | The `config` parent and its `fork` and `cm` child groups. |
+| `pkg/cmd/config` | The `config` parent and its `fork`, `cm`, and `tunnel` child groups. |
 | `pkg/cmd/config/fork/*` | `config fork` leaves: `list`, `add`, and `remove`. |
 | `pkg/cmd/config/cm/*` | `config cm` leaves: `list`, `add`, `use`, `set`, `remove`, and `test`. |
+| `pkg/cmd/config/tunnel/*` | `config tunnel` leaves: `list` and `remove`, managing only locally remembered Tunnel connections. |
 | `pkg/cmd/export` | The `export` parent. |
 | `pkg/cmd/export/env` | The `export env` leaf. |
 | `pkg/cmd/git` | The `git` parent. |

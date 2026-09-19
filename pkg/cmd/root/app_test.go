@@ -324,6 +324,24 @@ func TestConfigParentExposesMigratedForkGroup(t *testing.T) {
 	}
 }
 
+func TestConfigParentExposesTunnelConnectionManagement(t *testing.T) {
+	app, output, errors, _ := testApp(t, nil)
+
+	if outcome := app.Execute(context.Background(), []string{"config", "--help"}); outcome.Code != 0 || !strings.Contains(output.String(), "tunnel") || errors.Len() != 0 {
+		t.Fatalf("config help outcome = %#v, stdout = %q, stderr = %q", outcome, output.String(), errors.String())
+	}
+	output.Reset()
+	errors.Reset()
+	if outcome := app.Execute(context.Background(), []string{"config", "tunnel", "--help"}); outcome.Code != 0 || !strings.Contains(output.String(), "list") || !strings.Contains(output.String(), "remove") || errors.Len() != 0 {
+		t.Fatalf("config tunnel help outcome = %#v, stdout = %q, stderr = %q", outcome, output.String(), errors.String())
+	}
+	output.Reset()
+	errors.Reset()
+	if outcome := app.Execute(context.Background(), []string{"config", "tunnel", "remove", "--help"}); outcome.Code != 0 || !strings.Contains(output.String(), "[connection-id]") || !strings.Contains(output.String(), "--force") || errors.Len() != 0 {
+		t.Fatalf("config tunnel remove help outcome = %#v, stdout = %q, stderr = %q", outcome, output.String(), errors.String())
+	}
+}
+
 func TestFSLeafIsAlwaysRegistered(t *testing.T) {
 	app, output, errors, _ := testApp(t, nil)
 
