@@ -99,7 +99,7 @@ func assertRMExplicitRichPTYOutput(t *testing.T, output string, color bool) {
 	if strings.Count(visible, "\x1b[?1049h") != 1 || strings.Count(visible, "\x1b[?1049l") != 1 || enter < 0 || leave < enter || !strings.Contains(visible, "\x1b[?25h") {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
-	if !strings.Contains(terminaltest.StripANSI(visible[enter:leave]), "── Confirmation") {
+	if !strings.Contains(terminaltest.StripANSI(visible[enter:leave]), "└─ INPUT") {
 		t.Fatalf("Rich PTY live confirmation has no action heading: %q", output)
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
@@ -390,10 +390,8 @@ func assertRMSmartRichPTYOutput(t *testing.T, output string, color bool) {
 		t.Fatalf("Rich PTY output did not restore the primary screen: %q", output)
 	}
 	live := terminaltest.StripANSI(visible[enter:leave])
-	for _, heading := range []string{"── Clean action", "── Cleanup targets"} {
-		if !strings.Contains(live, heading) {
-			t.Fatalf("Rich PTY live selection missing %q: %q", heading, output)
-		}
+	if !strings.Contains(live, "└─ INPUT") {
+		t.Fatalf("Rich PTY live selection missing fixed input heading: %q", output)
 	}
 	transcript := terminaltest.StripANSI(visible[leave:])
 	ordered := []string{

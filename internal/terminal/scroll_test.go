@@ -75,11 +75,11 @@ func TestConsoleScrollSeparatesInformationFromEachInteraction(t *testing.T) {
 					t.Fatalf("kind=%d color=%t block %d = %q, want %q", kind, color, i, blocks[i].id, id)
 				}
 			}
-			heading := "── Confirmation "
-			if blocks[2].text != "First detail\nSecond detail" || blocks[5].text != "" || ansi.Strip(blocks[6].text) != heading+strings.Repeat("─", 60-ansi.StringWidth(heading)) {
+			heading := "└─ INPUT"
+			if blocks[2].text != "First detail\nSecond detail" || blocks[5].text != "" || ansi.Strip(blocks[6].text) != heading {
 				t.Fatalf("kind=%d color=%t layout = %#v", kind, color, blocks)
 			}
-			if color && !strings.Contains(blocks[6].text, "\x1b[") || !color && strings.Contains(blocks[6].text, "\x1b[") {
+			if color && (!strings.Contains(blocks[6].text, "\x1b[") || strings.Contains(blocks[6].text, "38;2;199;146;234") || strings.Contains(blocks[6].text, "38;2;79;227;177") || !strings.Contains(blocks[6].text, "38;2;139;233;253")) || !color && strings.Contains(blocks[6].text, "\x1b[") {
 				t.Fatalf("kind=%d color=%t heading styling = %q", kind, color, blocks[6].text)
 			}
 			model.View()
@@ -95,21 +95,21 @@ func TestConsoleScrollLabelsCurrentStateWithoutInformation(t *testing.T) {
 	model.mode = richFormMode
 	model.form = consoleTestForm{}
 	blocks := model.scrollBlocks(40)
-	if len(blocks) != 2 || blocks[0].id != "current-heading" || !strings.Contains(blocks[0].text, "Input") || blocks[1].id != "form" {
+	if len(blocks) != 2 || blocks[0].id != "current-heading" || ansi.Strip(blocks[0].text) != "└─ INPUT" || blocks[1].id != "form" {
 		t.Fatalf("catalog-free form blocks = %#v", blocks)
 	}
 	model.form = nil
 	model.mode = richTrackMode
 	model.track = &trackedState{phases: []OperationPhase{{Name: "Scanning", State: PhaseActive}}}
 	blocks = model.scrollBlocks(40)
-	if len(blocks) != 2 || !strings.Contains(blocks[0].text, "Work") {
+	if len(blocks) != 2 || ansi.Strip(blocks[0].text) != "└─ WORK" {
 		t.Fatalf("work blocks = %#v", blocks)
 	}
 	model.track = nil
 	model.mode = richOutcomeMode
 	model.outcome = FinishRequest{Outcome: Succeeded, Summary: PresentationDocument{Blocks: []PresentationBlock{{Text: "Done"}}}}
 	blocks = model.scrollBlocks(40)
-	if len(blocks) != 2 || !strings.Contains(blocks[0].text, "Result") {
+	if len(blocks) != 2 || ansi.Strip(blocks[0].text) != "└─ RESULT" {
 		t.Fatalf("result blocks = %#v", blocks)
 	}
 }

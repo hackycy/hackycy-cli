@@ -8,6 +8,7 @@ import (
 const (
 	focusPrimary = "#4FE3B1"
 	focusAccent  = "#C792EA"
+	focusHeading = "#8BE9FD"
 	focusSuccess = "#5AF78E"
 	focusWarning = "#FFD75F"
 	focusError   = "#FF5F6D"

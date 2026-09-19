@@ -216,23 +216,24 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 }
 
 func (model *richRootModel) currentHeading(width int) string {
-	name := "Input"
+	name := "INPUT"
 	switch model.mode {
-	case richFormMode:
-		for _, step := range model.formRows {
-			if step.id == model.formID && step.name != "" {
-				name = step.name
-				break
-			}
-		}
 	case richTrackMode:
-		name = "Work"
+		name = "WORK"
 	case richOutcomeMode:
-		name = "Result"
+		name = "RESULT"
 	}
-	label := ansi.Truncate("── "+stripTerminalControl(name)+" ", width, "…")
-	line := label + strings.Repeat("─", max(width-ansi.StringWidth(label), 0))
-	return focusThemeEmphasis(focusThemeStyle(model.color, focusAccent), model.color).Render(line)
+	prefix := "└─ "
+	if width <= 0 {
+		return ""
+	}
+	if width <= ansi.StringWidth(prefix) {
+		return focusThemeStyle(model.color, focusMuted).Render(ansi.Truncate(prefix, width, "…"))
+	}
+	label := ansi.Truncate(stripTerminalControl(name), width-ansi.StringWidth(prefix), "…")
+	marker := focusThemeStyle(model.color, focusMuted).Render(prefix)
+	title := focusThemeEmphasis(focusThemeStyle(model.color, focusHeading), model.color).Render(label)
+	return marker + title
 }
 
 func consoleMetadataText(fields []ConsoleMetadata, width int, muted lipgloss.Style) string {
