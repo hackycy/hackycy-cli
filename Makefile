@@ -7,13 +7,10 @@ RELEASE_DIR := release/$(CURRENT_VERSION)
 
 GO_FIND = find acceptance cmd internal pkg tools/hookctl tools/release tools/release-artifacts tools/prepare-frp-runtime tools/web-browser-harness web -path '*/node_modules' -prune -o -type f -name '*.go'
 
-.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all prototype-terminal
+.PHONY: help bootstrap hooks-install hooks-doctor hooks-uninstall fmt check check-web check-go check-locks check-terminal acceptance acceptance-web acceptance-terminal command-surface command-surface-update build cross-build release release-clean release-candidate release-untracked web-browser-harness ensure-web-deps ensure-web-dist prepare-7zip prepare-7zip-all
 
 help:
-	@printf '%s\n' 'Targets: bootstrap, hooks-install, hooks-doctor, hooks-uninstall, fmt, check, check-terminal, acceptance, acceptance-web, acceptance-terminal, command-surface, command-surface-update, build, cross-build, release, release-candidate, web-browser-harness, prototype-terminal'
-
-prototype-terminal:
-	@cd internal/terminal/prototype-vivid && GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off $(GO) run . $(PROTOTYPE_ARGS)
+	@printf '%s\n' 'Targets: bootstrap, hooks-install, hooks-doctor, hooks-uninstall, fmt, check, check-terminal, acceptance, acceptance-web, acceptance-terminal, command-surface, command-surface-update, build, cross-build, release, release-candidate, web-browser-harness'
 
 bootstrap:
 	@GOTOOLCHAIN=$(GO_TOOLCHAIN) $(GO) version

@@ -36,9 +36,8 @@ test-results/
 *.tgz
 *.zip
 
-# Generated terminal acceptance and prototype binaries
+# Generated terminal acceptance binary
 /.scratch/terminal-experience-modernization/g2-acceptance/ycy
-/internal/terminal/prototype-vivid/prototype-vivid
 
 # Workspace-local tooling state
 skills-lock.json

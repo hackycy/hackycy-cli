@@ -102,7 +102,7 @@ func TestActiveArchitecture(t *testing.T) {
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
 			switch relative {
-			case ".git", "legacy", ".scratch", "mock", "node_modules", "web/node_modules", "web/dist", "tools", "internal/terminal/prototype-vivid":
+			case ".git", "legacy", ".scratch", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
 				return filepath.SkipDir
 			}
 			return nil
@@ -230,7 +230,7 @@ func TestLogV2RemainsPrivateToLogging(t *testing.T) {
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
 			switch relative {
-			case ".git", ".scratch", "legacy", "mock", "node_modules", "web/node_modules", "web/dist", "tools", "internal/terminal/prototype-vivid":
+			case ".git", ".scratch", "legacy", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
 				return filepath.SkipDir
 			}
 			return nil
