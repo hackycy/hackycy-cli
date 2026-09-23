@@ -1,17 +1,19 @@
 package tunnelruntime
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
+	"sort"
 )
 
-const TunnelProtocolVersion = 4
+const TunnelProtocolVersion = 5
 
 var ErrUnsupportedPlatform = errors.New("unsupported Tunnel platform")
 
-// WirePlatform and WireArchitecture retain the protocol-v4 vocabulary rather
+// WirePlatform and WireArchitecture retain the protocol-v5 vocabulary rather
 // than exposing raw GOOS and GOARCH values to a peer.
 type WirePlatform string
 type WireArchitecture string
@@ -25,13 +27,13 @@ const (
 	WireArchitectureARM64 WireArchitecture = "arm64"
 )
 
-// WireTarget identifies one protocol-v4 and FRP target.
+// WireTarget identifies one protocol-v5 and FRP target.
 type WireTarget struct {
 	Platform     WirePlatform
 	Architecture WireArchitecture
 }
 
-// WireTargetForGo maps one Go target to the protocol-v4 wire vocabulary.
+// WireTargetForGo maps one Go target to the protocol-v5 wire vocabulary.
 func WireTargetForGo(goos, goarch string) (WireTarget, error) {
 	platform, found := map[string]WirePlatform{
 		"darwin":  WirePlatformDarwin,
@@ -51,7 +53,7 @@ func WireTargetForGo(goos, goarch string) (WireTarget, error) {
 	return WireTarget{Platform: platform, Architecture: architecture}, nil
 }
 
-// GoTarget maps a protocol-v4 target back to its Go target.
+// GoTarget maps a protocol-v5 target back to its Go target.
 func (target WireTarget) GoTarget() (string, string, error) {
 	goos, found := map[WirePlatform]string{
 		WirePlatformDarwin: "darwin",
@@ -71,7 +73,7 @@ func (target WireTarget) GoTarget() (string, string, error) {
 	return goos, goarch, nil
 }
 
-// CurrentWireTarget reports the current executable's protocol-v4 target.
+// CurrentWireTarget reports the current executable's protocol-v5 target.
 func CurrentWireTarget() (WireTarget, error) {
 	return WireTargetForGo(runtime.GOOS, runtime.GOARCH)
 }
@@ -138,7 +140,7 @@ type TunnelOptions struct {
 	HTTP        *TunnelHTTPOptions     `json:"http"`
 }
 
-// TunnelDefinition is the protocol-v4 snapshot shape. Validation and database
+// TunnelDefinition is the protocol-v5 snapshot shape. Validation and database
 // ownership remain with the later server-domain slice.
 type TunnelDefinition struct {
 	ID            string         `json:"id"`
@@ -192,6 +194,56 @@ type TunnelSnapshot struct {
 	Tunnels   []TunnelDefinition `json:"tunnels"`
 }
 
+// ClientRuntime is the complete authenticated Client runtime contract. The
+// same object is carried by welcome and desired_state; Digest is calculated
+// from every field except Revision and Digest itself.
+type ClientRuntime struct {
+	Revision          int64              `json:"revision"`
+	Digest            string             `json:"digest"`
+	NodeID            string             `json:"nodeId"`
+	AdvertisedFRPHost string             `json:"advertisedFrpHost"`
+	AdvertisedFRPPort int64              `json:"advertisedFrpPort"`
+	FRPToken          string             `json:"frpToken"`
+	ClientKey         string             `json:"clientKey"`
+	Tunnels           []TunnelDefinition `json:"tunnels"`
+}
+
+type ClientRuntimeReference struct {
+	Revision int64  `json:"revision"`
+	NodeID   string `json:"nodeId"`
+	Digest   string `json:"digest"`
+}
+
+// RuntimeDigest returns the canonical SHA-256 digest used for v5 idempotency.
+// Tunnels are copied and sorted by stable ID so database row order cannot
+// change the wire identity of an otherwise identical runtime.
+func RuntimeDigest(runtime ClientRuntime) (string, error) {
+	tunnels := append([]TunnelDefinition(nil), runtime.Tunnels...)
+	sort.SliceStable(tunnels, func(i, j int) bool { return tunnels[i].ID < tunnels[j].ID })
+	canonical := struct {
+		NodeID            string             `json:"nodeId"`
+		AdvertisedFRPHost string             `json:"advertisedFrpHost"`
+		AdvertisedFRPPort int64              `json:"advertisedFrpPort"`
+		FRPToken          string             `json:"frpToken"`
+		ClientKey         string             `json:"clientKey"`
+		Tunnels           []TunnelDefinition `json:"tunnels"`
+	}{
+		NodeID: runtime.NodeID, AdvertisedFRPHost: runtime.AdvertisedFRPHost,
+		AdvertisedFRPPort: runtime.AdvertisedFRPPort, FRPToken: runtime.FRPToken,
+		ClientKey: runtime.ClientKey, Tunnels: tunnels,
+	}
+	encoded, err := json.Marshal(canonical)
+	if err != nil {
+		return "", fmt.Errorf("encode Client runtime digest: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return fmt.Sprintf("sha256:%x", digest[:]), nil
+}
+
+func (runtime ClientRuntime) Reference() ClientRuntimeReference {
+	return ClientRuntimeReference{Revision: runtime.Revision, NodeID: runtime.NodeID, Digest: runtime.Digest}
+}
+
 type FRPArtifactDescription struct {
 	Version    string `json:"version"`
 	Archive    string `json:"archive"`
@@ -207,13 +259,14 @@ type StructuredRuntimeError struct {
 }
 
 type AgentHello struct {
-	Type                  string         `json:"type"`
-	TunnelProtocolVersion int            `json:"tunnelProtocolVersion"`
-	YCYVersion            string         `json:"ycyVersion"`
-	Platform              string         `json:"platform"`
-	Architecture          string         `json:"architecture"`
-	LastAppliedRevision   int64          `json:"lastAppliedRevision"`
-	LastRestartResult     *RestartResult `json:"lastRestartResult,omitempty"`
+	Type                  string                 `json:"type"`
+	TunnelProtocolVersion int                    `json:"tunnelProtocolVersion"`
+	YCYVersion            string                 `json:"ycyVersion"`
+	Platform              string                 `json:"platform"`
+	Architecture          string                 `json:"architecture"`
+	LastAccepted          ClientRuntimeReference `json:"lastAccepted"`
+	LastApplied           ClientRuntimeReference `json:"lastApplied"`
+	LastRestartResult     *RestartResult         `json:"lastRestartResult,omitempty"`
 }
 
 type AgentWelcome struct {
@@ -221,33 +274,55 @@ type AgentWelcome struct {
 	TunnelProtocolVersion    int                    `json:"tunnelProtocolVersion"`
 	RequiredFRPVersion       string                 `json:"requiredFrpVersion"`
 	Artifact                 FRPArtifactDescription `json:"artifact"`
-	AdvertisedFRPHost        string                 `json:"advertisedFrpHost"`
-	AdvertisedFRPPort        int64                  `json:"advertisedFrpPort"`
-	InternalFRPToken         string                 `json:"internalFrpToken"`
-	Snapshot                 TunnelSnapshot         `json:"snapshot"`
+	Runtime                  ClientRuntime          `json:"runtime"`
 	DesiredRestartGeneration int64                  `json:"desiredRestartGeneration"`
 }
 
 type DesiredState struct {
-	Type                     string         `json:"type"`
-	TunnelProtocolVersion    int            `json:"tunnelProtocolVersion"`
-	Snapshot                 TunnelSnapshot `json:"snapshot"`
-	DesiredRestartGeneration int64          `json:"desiredRestartGeneration"`
+	Type                     string        `json:"type"`
+	TunnelProtocolVersion    int           `json:"tunnelProtocolVersion"`
+	Runtime                  ClientRuntime `json:"runtime"`
+	DesiredRestartGeneration int64         `json:"desiredRestartGeneration"`
 }
 
 type ApplyResult struct {
 	Type                  string                  `json:"type"`
 	TunnelProtocolVersion int                     `json:"tunnelProtocolVersion"`
 	Revision              int64                   `json:"revision"`
+	NodeID                string                  `json:"nodeId"`
+	Digest                string                  `json:"digest"`
 	Success               bool                    `json:"success"`
+	LocalState            string                  `json:"localState,omitempty"`
 	Error                 *StructuredRuntimeError `json:"error,omitempty"`
 }
 
 type ProcessState struct {
 	Type                  string                  `json:"type"`
 	TunnelProtocolVersion int                     `json:"tunnelProtocolVersion"`
+	Revision              int64                   `json:"revision"`
+	NodeID                string                  `json:"nodeId"`
+	Digest                string                  `json:"digest"`
 	State                 FRPProcessState         `json:"state"`
 	Error                 *StructuredRuntimeError `json:"error,omitempty"`
+}
+
+type FRPCStatus struct {
+	Type                  string                  `json:"type"`
+	TunnelProtocolVersion int                     `json:"tunnelProtocolVersion"`
+	Revision              int64                   `json:"revision"`
+	NodeID                string                  `json:"nodeId"`
+	Digest                string                  `json:"digest"`
+	ProcessGeneration     string                  `json:"processGeneration"`
+	Process               FRPProcessState         `json:"process"`
+	Connection            string                  `json:"connection"`
+	Proxies               []ProxyState            `json:"proxies"`
+	Error                 *StructuredRuntimeError `json:"error,omitempty"`
+}
+
+type ProxyState struct {
+	TunnelID  string `json:"tunnelId"`
+	State     string `json:"state"`
+	ErrorCode string `json:"errorCode,omitempty"`
 }
 
 type RestartResult struct {

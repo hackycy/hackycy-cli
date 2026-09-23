@@ -45,7 +45,7 @@ func TestWireTargetRejectsUnsupportedValues(t *testing.T) {
 	}
 }
 
-func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
+func TestProtocolV5MessagesRetainRestartRecoveryFields(t *testing.T) {
 	httpDefinition := TunnelDefinition{
 		ID: "tunnel-id", Label: "HTTP", Protocol: TunnelProtocolHTTP,
 		CustomDomains: []string{"example.test"}, LocalHost: "127.0.0.1", LocalPort: 3000,
@@ -53,8 +53,8 @@ func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
 	}
 	welcome := AgentWelcome{
 		Type: "welcome", TunnelProtocolVersion: TunnelProtocolVersion, RequiredFRPVersion: "0.70.1",
-		Artifact:          FRPArtifactDescription{Version: "0.70.1", Archive: "frp.tar.gz", URL: "https://example.test/frp.tar.gz", SHA256: strings.Repeat("a", 64), FRPCSHA256: strings.Repeat("b", 64)},
-		AdvertisedFRPHost: "tunnel.example", AdvertisedFRPPort: 7000, InternalFRPToken: "secret", Snapshot: TunnelSnapshot{ClientKey: "client-id", Revision: 2, Tunnels: []TunnelDefinition{httpDefinition}},
+		Artifact:                 FRPArtifactDescription{Version: "0.70.1", Archive: "frp.tar.gz", URL: "https://example.test/frp.tar.gz", SHA256: strings.Repeat("a", 64), FRPCSHA256: strings.Repeat("b", 64)},
+		Runtime:                  ClientRuntime{NodeID: "local", AdvertisedFRPHost: "tunnel.example", AdvertisedFRPPort: 7000, FRPToken: "secret", ClientKey: "client-id", Revision: 2, Tunnels: []TunnelDefinition{httpDefinition}},
 		DesiredRestartGeneration: 7,
 	}
 	encoded, err := json.Marshal(welcome)
@@ -65,7 +65,7 @@ func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
 	if err := json.Unmarshal(encoded, &message); err != nil {
 		t.Fatalf("unmarshal welcome map: %v", err)
 	}
-	for _, field := range []string{"type", "tunnelProtocolVersion", "requiredFrpVersion", "artifact", "advertisedFrpHost", "advertisedFrpPort", "internalFrpToken", "snapshot", "desiredRestartGeneration"} {
+	for _, field := range []string{"type", "tunnelProtocolVersion", "requiredFrpVersion", "artifact", "runtime", "desiredRestartGeneration"} {
 		if _, found := message[field]; !found {
 			t.Fatalf("welcome omitted %q: %s", field, encoded)
 		}
@@ -73,7 +73,7 @@ func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
 	var snapshot struct {
 		Tunnels []map[string]json.RawMessage `json:"tunnels"`
 	}
-	if err := json.Unmarshal(message["snapshot"], &snapshot); err != nil || len(snapshot.Tunnels) != 1 {
+	if err := json.Unmarshal(message["runtime"], &snapshot); err != nil || len(snapshot.Tunnels) != 1 {
 		t.Fatalf("decode snapshot = (%#v, %v)", snapshot, err)
 	}
 	if string(snapshot.Tunnels[0]["location"]) != "null" || string(snapshot.Tunnels[0]["serverPort"]) != "null" {
@@ -84,10 +84,10 @@ func TestProtocolV4MessagesRetainRestartRecoveryFields(t *testing.T) {
 	}
 }
 
-func TestProtocolV4HelloCarriesLastRestartResult(t *testing.T) {
+func TestProtocolV5HelloCarriesLastRestartResult(t *testing.T) {
 	hello := AgentHello{
 		Type: "hello", TunnelProtocolVersion: TunnelProtocolVersion, YCYVersion: "0.0.0-dev",
-		Platform: "linux", Architecture: "x64", LastAppliedRevision: 3,
+		Platform: "linux", Architecture: "x64", LastAccepted: ClientRuntimeReference{Revision: 3, NodeID: "local", Digest: "sha256:test"}, LastApplied: ClientRuntimeReference{Revision: 3, NodeID: "local", Digest: "sha256:test"},
 		LastRestartResult: &RestartResult{Generation: 9, Success: false, Error: &StructuredRuntimeError{Code: "CONFIGURATION_FAILED", Message: "invalid local configuration"}},
 	}
 	encoded, err := json.Marshal(hello)
@@ -103,9 +103,9 @@ func TestProtocolV4HelloCarriesLastRestartResult(t *testing.T) {
 	}
 }
 
-func TestProtocolV4ToleratesUnknownFieldsAndOmitsAbsentPortFields(t *testing.T) {
+func TestProtocolV5ToleratesUnknownFieldsAndOmitsAbsentPortFields(t *testing.T) {
 	var hello AgentHello
-	if err := json.Unmarshal([]byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"win32","architecture":"x64","lastAppliedRevision":0,"futureField":true}`), &hello); err != nil {
+	if err := json.Unmarshal([]byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"win32","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""},"futureField":true}`), &hello); err != nil {
 		t.Fatalf("unmarshal hello with future field: %v", err)
 	}
 	if hello.Platform != "win32" || hello.Architecture != "x64" || hello.TunnelProtocolVersion != TunnelProtocolVersion {

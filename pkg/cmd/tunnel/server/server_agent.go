@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hackycy/hackycy-cli/internal/logging"
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
@@ -24,6 +25,7 @@ type ServerAgentFRPSStateProvider interface {
 // ServerAgentWelcomeSettings contains the deployment secret and endpoint that
 // are safe only for an already authenticated agent welcome frame.
 type ServerAgentWelcomeSettings struct {
+	NodeID            string
 	AdvertisedFRPHost string
 	AdvertisedFRPPort int64
 	InternalFRPToken  string
@@ -82,7 +84,11 @@ type serverAgentRuntime struct {
 	lastProcessState    tunnelruntime.FRPProcessState
 	lastProcessCode     string
 	hasProcessState     bool
+	frpcStatus          tunnelruntime.FRPCStatus
+	frpcReceivedAt      time.Time
 }
+
+const serverAgentFRPCObservationTTL = 10 * time.Second
 
 func NewServerAgentGateway(options ServerAgentGatewayOptions) (*ServerAgentGateway, error) {
 	if options.ControlPlane == nil {
@@ -335,6 +341,47 @@ func (gateway *ServerAgentGateway) State(clientID string) ServerClientRuntimeSta
 	return state
 }
 
+// FRPCObservation is independent of the local apply result and process state.
+// A disconnected or stale observation cannot prove current Node connectivity.
+func (gateway *ServerAgentGateway) FRPCObservation(clientID string) tunnelruntime.FRPCStatus {
+	unknown := tunnelruntime.FRPCStatus{Type: "frpc_status", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Connection: "unknown"}
+	if gateway == nil {
+		return unknown
+	}
+	gateway.mu.RLock()
+	slot, active := gateway.slots[clientID]
+	runtime := gateway.runtime[clientID]
+	gateway.mu.RUnlock()
+	if !active || !slot.active || slot.revoking || runtime.frpcReceivedAt.IsZero() || time.Since(runtime.frpcReceivedAt) > serverAgentFRPCObservationTTL {
+		return unknown
+	}
+	client, err := gateway.controlPlane.GetClient(context.Background(), clientID)
+	if err != nil || client.DesiredRevision != runtime.frpcStatus.Revision {
+		return unknown
+	}
+	result := runtime.frpcStatus
+	result.Proxies = append([]tunnelruntime.ProxyState(nil), result.Proxies...)
+	return result
+}
+
+func (gateway *ServerAgentGateway) recordFRPCStatus(clientID string, slot uint64, status tunnelruntime.FRPCStatus) bool {
+	if gateway == nil {
+		return false
+	}
+	gateway.mu.Lock()
+	defer gateway.mu.Unlock()
+	current, found := gateway.slots[clientID]
+	if !found || !current.active || current.revoking || current.generation != slot {
+		return false
+	}
+	runtime := gateway.runtime[clientID]
+	runtime.frpcStatus = status
+	runtime.frpcStatus.Proxies = append([]tunnelruntime.ProxyState(nil), status.Proxies...)
+	runtime.frpcReceivedAt = time.Now()
+	gateway.runtime[clientID] = runtime
+	return true
+}
+
 func (gateway *ServerAgentGateway) recordProcessState(clientID string, slot uint64, processState tunnelruntime.FRPProcessState, lastError *tunnelruntime.StructuredRuntimeError) bool {
 	accepted, _ := gateway.recordProcessStateWithChange(clientID, slot, processState, lastError)
 	return accepted
@@ -508,6 +555,7 @@ type ServerAgentConnection struct {
 	revoked            bool
 	writeFrame         func(any) error
 	closeSocket        func(*ServerAgentProtocolError)
+	presentationHost   string
 }
 
 func (connection *ServerAgentConnection) ClientID() string {
@@ -623,6 +671,10 @@ func (gateway *ServerAgentGateway) activate(clientID string, slot uint64, connec
 	gateway.slots[clientID] = current
 	if _, found := gateway.runtime[clientID]; !found {
 		gateway.runtime[clientID] = serverAgentRuntime{processState: tunnelruntime.FRPProcessStopped}
+	} else {
+		runtime := gateway.runtime[clientID]
+		runtime.frpcReceivedAt = time.Time{}
+		gateway.runtime[clientID] = runtime
 	}
 	return true
 }
@@ -639,6 +691,14 @@ func (gateway *ServerAgentGateway) handleControlPlaneEvent(event ServerControlPl
 	gateway.controlChange(event)
 	switch event.Type {
 	case serverDesiredState, serverClientRestart:
+		if event.Type == serverDesiredState {
+			gateway.mu.Lock()
+			if runtime, found := gateway.runtime[event.ClientID]; found {
+				runtime.frpcReceivedAt = time.Time{}
+				gateway.runtime[event.ClientID] = runtime
+			}
+			gateway.mu.Unlock()
+		}
 		gateway.mu.RLock()
 		slot, found := gateway.slots[event.ClientID]
 		gateway.mu.RUnlock()

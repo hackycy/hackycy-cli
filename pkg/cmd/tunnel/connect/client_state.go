@@ -20,6 +20,7 @@ const (
 	clientInstanceExpiry        = 90 * 24 * time.Hour
 	clientMaximumSafeInteger    = int64(9007199254740991)
 	clientAppliedStateFilename  = "last-applied.json"
+	clientAcceptedStateFilename = "highest-accepted.json"
 	clientRestartResultFilename = "last-restart-result.json"
 	clientFRPCConfigFilename    = "frpc.toml"
 )
@@ -48,12 +49,17 @@ type ClientInstance struct {
 }
 
 // ClientDesiredConfiguration is the complete FRPC configuration received from
-// an authenticated protocol-v4 welcome or desired-state frame.
+// an authenticated protocol-v5 welcome or desired-state frame.
 type ClientDesiredConfiguration struct {
-	AdvertisedFRPHost string                       `json:"advertisedFrpHost"`
-	AdvertisedFRPPort int64                        `json:"advertisedFrpPort"`
-	InternalFRPToken  string                       `json:"internalFrpToken"`
-	Snapshot          tunnelruntime.TunnelSnapshot `json:"snapshot"`
+	Runtime tunnelruntime.ClientRuntime `json:"runtime"`
+}
+
+func (desired ClientDesiredConfiguration) normalizedRuntime() tunnelruntime.ClientRuntime {
+	return desired.Runtime
+}
+
+func clientDesiredConfigurationFromRuntime(runtime tunnelruntime.ClientRuntime) ClientDesiredConfiguration {
+	return ClientDesiredConfiguration{Runtime: runtime}
 }
 
 // ClientAppliedState is the rollback cache. It is never authorization state.
@@ -190,6 +196,10 @@ func clientAppliedStatePath(stateDirectory string) string {
 	return filepath.Join(stateDirectory, clientAppliedStateFilename)
 }
 
+func clientAcceptedStatePath(stateDirectory string) string {
+	return filepath.Join(stateDirectory, clientAcceptedStateFilename)
+}
+
 func clientActiveFRPCConfigPath(stateDirectory string) string {
 	return filepath.Join(stateDirectory, clientFRPCConfigFilename)
 }
@@ -265,8 +275,47 @@ func WriteClientAppliedState(stateDirectory string, state ClientAppliedState) er
 	return writeClientFileAtomically(clientAppliedStatePath(stateDirectory), contents)
 }
 
+// ReadClientAcceptedState returns the highest authenticated runtime target.
+// Unlike last-applied, this high-water mark is written before local FRPC
+// activation so a restart cannot silently revive an older Node target.
+func ReadClientAcceptedState(stateDirectory string) (*ClientAppliedState, bool) {
+	state, found, _ := loadClientAcceptedState(stateDirectory)
+	return state, found
+}
+
+func loadClientAcceptedState(stateDirectory string) (*ClientAppliedState, bool, error) {
+	contents, err := os.ReadFile(clientAcceptedStatePath(stateDirectory))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read highest accepted runtime: %w", err)
+	}
+	var state ClientAppliedState
+	if err := json.Unmarshal(contents, &state); err != nil || !validClientAppliedState(state) {
+		return nil, false, fmt.Errorf("highest accepted runtime is invalid")
+	}
+	return &state, true, nil
+}
+
+func WriteClientAcceptedState(stateDirectory string, state ClientAppliedState) error {
+	if !validClientAppliedState(state) {
+		return fmt.Errorf("Tunnel client accepted state is invalid")
+	}
+	contents, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Tunnel client accepted state: %w", err)
+	}
+	return writeClientFileAtomically(clientAcceptedStatePath(stateDirectory), append(contents, '\n'))
+}
+
 func validClientAppliedState(state ClientAppliedState) bool {
-	return state.Revision >= 0 && state.Revision <= clientMaximumSafeInteger && state.Snapshot.Revision == state.Revision
+	runtime := state.normalizedRuntime()
+	if state.Revision < 0 || state.Revision > clientMaximumSafeInteger || runtime.Revision != state.Revision || runtime.NodeID == "" || runtime.Digest == "" {
+		return false
+	}
+	digest, err := tunnelruntime.RuntimeDigest(runtime)
+	return err == nil && digest == runtime.Digest
 }
 
 func writeClientFileAtomically(path string, contents []byte) (result error) {

@@ -37,6 +37,7 @@ type ClientReconciler struct {
 	stateDirectory string
 	runtime        ClientFRPRuntime
 	logLevel       string
+	status         *clientFRPCStatusEndpoint
 
 	operations sync.Mutex
 	activated  bool
@@ -91,7 +92,13 @@ func NewClientReconciler(options ClientReconcilerOptions) (*ClientReconciler, er
 	if err != nil {
 		return nil, fmt.Errorf("resolve Tunnel client state directory: %w", err)
 	}
-	return &ClientReconciler{stateDirectory: stateDirectory, runtime: options.Runtime, logLevel: options.LogLevel}, nil
+	reconciler := &ClientReconciler{stateDirectory: stateDirectory, runtime: options.Runtime, logLevel: options.LogLevel}
+	if provider, ok := options.Runtime.(interface {
+		FRPCStatusEndpoint() *clientFRPCStatusEndpoint
+	}); ok {
+		reconciler.status = provider.FRPCStatusEndpoint()
+	}
+	return reconciler, nil
 }
 
 // Apply reconciles one complete desired snapshot. It never starts a cached
@@ -116,32 +123,49 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 	if err := validateClientDesiredConfiguration(desired); err != nil {
 		return result, clientReconciliationError("CONFIGURATION_FAILED", err)
 	}
+	desired = clientDesiredConfigurationFromRuntime(desired.normalizedRuntime())
 	current, hasCurrent := ReadClientAppliedState(reconciler.stateDirectory)
-	if hasCurrent && desired.Snapshot.Revision < current.Revision {
-		result.Skipped = true
-		result.SkipReason = "older-revision"
-		result = clientApplyResult(current.ClientDesiredConfiguration)
-		result.Skipped = true
-		result.SkipReason = "older-revision"
-		return result, nil
+	if hasCurrent && runtimeIsOlder(desired.normalizedRuntime(), current.normalizedRuntime()) {
+		return result, clientReconciliationError("PROTOCOL_FAILED", fmt.Errorf("desired runtime revision %d is below last applied revision", desired.normalizedRuntime().Revision))
 	}
-	if reconciler.activated && hasCurrent && desired.Snapshot.Revision == current.Revision {
+	highestAccepted, hasHighestAccepted, err := loadClientAcceptedState(reconciler.stateDirectory)
+	if err != nil {
+		return result, clientReconciliationError("STATE_CORRUPT", err)
+	}
+	if hasHighestAccepted && runtimeIsOlder(desired.normalizedRuntime(), highestAccepted.normalizedRuntime()) {
+		return result, clientReconciliationError("PROTOCOL_FAILED", fmt.Errorf("desired runtime revision %d is below highest accepted revision", desired.normalizedRuntime().Revision))
+	}
+	if hasHighestAccepted && desired.normalizedRuntime().Revision == highestAccepted.normalizedRuntime().Revision && !runtimeIsEqual(desired.normalizedRuntime(), highestAccepted.normalizedRuntime()) {
+		return result, clientReconciliationError("PROTOCOL_FAILED", fmt.Errorf("desired runtime digest changed at revision %d", desired.normalizedRuntime().Revision))
+	}
+	if hasCurrent && desired.normalizedRuntime().Revision == current.normalizedRuntime().Revision && !runtimeIsEqual(desired.normalizedRuntime(), current.normalizedRuntime()) {
+		return result, clientReconciliationError("PROTOCOL_FAILED", fmt.Errorf("desired runtime digest changed at revision %d", desired.normalizedRuntime().Revision))
+	}
+	if !hasHighestAccepted || !runtimeIsEqual(desired.normalizedRuntime(), highestAccepted.normalizedRuntime()) {
+		accepted := ClientAppliedState{ClientDesiredConfiguration: desired, Revision: desired.normalizedRuntime().Revision}
+		if err := WriteClientAcceptedState(reconciler.stateDirectory, accepted); err != nil {
+			return result, clientReconciliationError("STATE_FAILED", fmt.Errorf("persist highest accepted runtime: %w", err))
+		}
+	}
+	if reconciler.activated && hasCurrent && runtimeIsEqual(desired.normalizedRuntime(), current.normalizedRuntime()) {
 		result.Skipped = true
 		result.SkipReason = "duplicate-revision"
 		return result, nil
 	}
 
+	runtime := desired.normalizedRuntime()
 	configuration, err := tunnelruntime.RenderFRPCConfig(tunnelruntime.FRPClientConfiguration{
-		AdvertisedFRPHost: desired.AdvertisedFRPHost,
-		AdvertisedFRPPort: desired.AdvertisedFRPPort,
-		InternalFRPToken:  desired.InternalFRPToken,
-		Snapshot:          desired.Snapshot,
+		AdvertisedFRPHost: runtime.AdvertisedFRPHost,
+		AdvertisedFRPPort: runtime.AdvertisedFRPPort,
+		InternalFRPToken:  runtime.FRPToken,
+		Snapshot:          tunnelruntime.TunnelSnapshot{ClientKey: runtime.ClientKey, Revision: runtime.Revision, Tunnels: runtime.Tunnels},
 		LogLevel:          reconciler.logLevel,
+		WebServer:         clientFRPCWebServer(reconciler.status),
 	})
 	if err != nil {
 		return result, clientReconciliationError("CONFIGURATION_FAILED", err)
 	}
-	candidatePath := filepath.Join(reconciler.stateDirectory, fmt.Sprintf("frpc.revision-%d.candidate.toml", desired.Snapshot.Revision))
+	candidatePath := filepath.Join(reconciler.stateDirectory, fmt.Sprintf("frpc.revision-%d.candidate.toml", runtime.Revision))
 	if err := writeClientFileAtomically(candidatePath, []byte(configuration)); err != nil {
 		return result, clientReconciliationError("ACTIVATION_FAILED", err)
 	}
@@ -170,7 +194,7 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 			return result, reconciler.rollbackActivation(current, hasCurrent, previousConfiguration, hasPreviousConfiguration, clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("start frpc: %w", err)))
 		}
 	}
-	state := ClientAppliedState{ClientDesiredConfiguration: desired, Revision: desired.Snapshot.Revision}
+	state := ClientAppliedState{ClientDesiredConfiguration: desired, Revision: runtime.Revision}
 	if err := WriteClientAppliedState(reconciler.stateDirectory, state); err != nil {
 		return result, reconciler.rollbackActivation(current, hasCurrent, previousConfiguration, hasPreviousConfiguration, clientReconciliationError("ACTIVATION_FAILED", err))
 	}
@@ -178,10 +202,19 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 	return result, nil
 }
 
+func clientFRPCWebServer(endpoint *clientFRPCStatusEndpoint) *tunnelruntime.FRPClientWebServer {
+	if endpoint == nil {
+		return nil
+	}
+	configuration := endpoint.config
+	return &configuration
+}
+
 func clientApplyResult(desired ClientDesiredConfiguration) ClientApplyResult {
-	tunnelCount := len(desired.Snapshot.Tunnels)
+	runtime := desired.normalizedRuntime()
+	tunnelCount := len(runtime.Tunnels)
 	enabledCount := 0
-	for _, tunnel := range desired.Snapshot.Tunnels {
+	for _, tunnel := range runtime.Tunnels {
 		if tunnel.Enabled {
 			enabledCount++
 		}
@@ -190,7 +223,7 @@ func clientApplyResult(desired ClientDesiredConfiguration) ClientApplyResult {
 	if enabledCount > 0 {
 		state = tunnelruntime.FRPProcessRunning
 	}
-	return ClientApplyResult{Revision: desired.Snapshot.Revision, TunnelCount: tunnelCount, EnabledCount: enabledCount, State: state, Rollback: "not-required"}
+	return ClientApplyResult{Revision: runtime.Revision, TunnelCount: tunnelCount, EnabledCount: enabledCount, State: state, Rollback: "not-required"}
 }
 
 // Restart delegates only an already-applied enabled snapshot to a runtime
@@ -260,17 +293,30 @@ func (reconciler *ClientReconciler) rollbackActivation(previous *ClientAppliedSt
 }
 
 func validateClientDesiredConfiguration(desired ClientDesiredConfiguration) error {
-	if strings.TrimSpace(desired.AdvertisedFRPHost) == "" || desired.AdvertisedFRPPort < 1 || desired.AdvertisedFRPPort > 65535 || strings.TrimSpace(desired.InternalFRPToken) == "" {
+	runtime := desired.normalizedRuntime()
+	if strings.TrimSpace(runtime.NodeID) == "" || strings.TrimSpace(runtime.AdvertisedFRPHost) == "" || runtime.AdvertisedFRPPort < 1 || runtime.AdvertisedFRPPort > 65535 || strings.TrimSpace(runtime.FRPToken) == "" || strings.TrimSpace(runtime.ClientKey) == "" || strings.TrimSpace(runtime.Digest) == "" {
 		return fmt.Errorf("desired FRPC configuration is incomplete")
 	}
-	if desired.Snapshot.Revision < 0 || desired.Snapshot.Revision > clientMaximumSafeInteger {
+	if runtime.Revision < 0 || runtime.Revision > clientMaximumSafeInteger {
 		return fmt.Errorf("desired revision is invalid")
+	}
+	digest, err := tunnelruntime.RuntimeDigest(runtime)
+	if err != nil || digest != runtime.Digest {
+		return fmt.Errorf("desired runtime digest is invalid")
 	}
 	return nil
 }
 
+func runtimeIsOlder(next, current tunnelruntime.ClientRuntime) bool {
+	return next.Revision < current.Revision
+}
+
+func runtimeIsEqual(left, right tunnelruntime.ClientRuntime) bool {
+	return left.Revision == right.Revision && left.NodeID == right.NodeID && left.Digest == right.Digest
+}
+
 func clientDesiredStateHasEnabledTunnel(desired ClientDesiredConfiguration) bool {
-	for _, definition := range desired.Snapshot.Tunnels {
+	for _, definition := range desired.Runtime.Tunnels {
 		if definition.Enabled {
 			return true
 		}

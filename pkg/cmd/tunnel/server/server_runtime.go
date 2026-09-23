@@ -117,6 +117,16 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	localEndpoint := options.Settings.AdvertiseFRPAddr
+	advertisedHost := ""
+	advertisedPort := int64(options.Settings.FRPPort)
+	if localEndpoint != nil {
+		advertisedHost = localEndpoint.Host
+		advertisedPort = int64(localEndpoint.Port)
+	}
+	if err := syncLocalClientRuntimeRevision(ctx, runtime.state.database, advertisedHost, advertisedPort, internalFRPToken); err != nil {
+		return fail(err)
+	}
 	runtime.frpArtifact, runtime.frpDirectory, runtime.ensureFRP, err = resolveServerFRPRuntime(options)
 	if err != nil {
 		return fail(err)

@@ -2,6 +2,8 @@ package connect
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +67,7 @@ type managedClientFRPRuntimeOptions struct {
 type managedClientFRPRuntime struct {
 	binaryPath string
 	supervisor *tunnelruntime.FRPSupervisor
+	status     *clientFRPCStatusEndpoint
 }
 
 func newManagedClientFRPRuntime(ctx context.Context, options managedClientFRPRuntimeOptions) (*managedClientFRPRuntime, error) {
@@ -113,7 +116,18 @@ func newManagedClientFRPRuntime(ctx context.Context, options managedClientFRPRun
 	if err != nil {
 		return nil, err
 	}
-	return &managedClientFRPRuntime{binaryPath: paths.FRPC, supervisor: supervisor}, nil
+	status, err := newClientFRPCStatusEndpoint()
+	if err != nil {
+		return nil, err
+	}
+	return &managedClientFRPRuntime{binaryPath: paths.FRPC, supervisor: supervisor, status: status}, nil
+}
+
+func (runtime *managedClientFRPRuntime) FRPCStatusEndpoint() *clientFRPCStatusEndpoint {
+	if runtime == nil {
+		return nil
+	}
+	return runtime.status
 }
 
 func defaultClientFRPRuntime(ctx context.Context, logger logging.Logger) (ClientFRPRuntime, error) {
@@ -181,7 +195,7 @@ func verifyFRPCConfiguration(ctx context.Context, binaryPath, configurationPath 
 	return fmt.Errorf("frpc rejected the generated configuration: %w", err)
 }
 
-// RunClient owns one resolved client instance through authentication, v4
+// RunClient owns one resolved client instance through authentication, v5
 // reconciliation, frpc supervision, reconnect, and final ordered shutdown.
 func RunClient(ctx context.Context, config ClientConfig, options ClientRunOptions) (result error) {
 	if ctx == nil {
@@ -221,11 +235,15 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 	var runtime ClientFRPRuntime
 	var reconciler *ClientReconciler
 	var stopObserving func()
+	var stopStatusPolling context.CancelFunc
 	defer func() {
 		result = errors.Join(result, connections.Close())
 		reporter.Clear()
 		if stopObserving != nil {
 			stopObserving()
+		}
+		if stopStatusPolling != nil {
+			stopStatusPolling()
 		}
 		if reconciler != nil {
 			result = errors.Join(result, reconciler.Stop())
@@ -247,8 +265,16 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 	defer close(shutdownDone)
 
 	lastAppliedRevision := int64(0)
+	var lastAppliedReference tunnelruntime.ClientRuntimeReference
 	if applied, found := ReadClientAppliedState(instance.StateDirectory); found {
 		lastAppliedRevision = applied.Revision
+		lastAppliedReference = applied.normalizedRuntime().Reference()
+	}
+	var lastAcceptedReference tunnelruntime.ClientRuntimeReference
+	if accepted, found, readErr := loadClientAcceptedState(instance.StateDirectory); readErr != nil {
+		return readErr
+	} else if found {
+		lastAcceptedReference = accepted.normalizedRuntime().Reference()
 	}
 	lastRestartResult, hasRestartResult, err := ReadClientRestartResult(instance.StateDirectory)
 	if err != nil {
@@ -262,6 +288,8 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 		Config:              config,
 		YCYVersion:          clientRunYCYVersion(options.YCYVersion),
 		LastAppliedRevision: lastAppliedRevision,
+		LastAccepted:        lastAcceptedReference,
+		LastApplied:         lastAppliedReference,
 		LastRestartResult:   restartResult,
 		HTTPClient:          options.HTTPClient,
 		WebSocketDialer:     options.WebSocketDialer,
@@ -333,6 +361,14 @@ func RunClient(ctx context.Context, config ClientConfig, options ClientRunOption
 			if observer, supported := runtime.(clientFRPRuntimeStateObserver); supported {
 				reporter.Report(observer.State())
 				stopObserving = observer.Observe(reporter.Report)
+			}
+			if provider, supported := runtime.(interface {
+				FRPCStatusEndpoint() *clientFRPCStatusEndpoint
+			}); supported {
+				reporter.status = provider.FRPCStatusEndpoint()
+				pollContext, cancel := context.WithCancel(ctx)
+				stopStatusPolling = cancel
+				go reporter.pollStatus(pollContext)
 			}
 		}
 		reporter.Set(connection)
@@ -457,7 +493,7 @@ func runClientControlConnectionWithLifecycle(ctx context.Context, agent *ClientA
 		}
 		switch message.kind {
 		case "desired_state":
-			configuration.Snapshot = message.desired.Snapshot
+			configuration = clientDesiredConfigurationFromRuntime(message.desired.Runtime)
 			worker.Update(configuration, message.desired.DesiredRestartGeneration)
 		case "revoke":
 			if lifecycle != nil {
@@ -536,7 +572,7 @@ func (worker *clientDesiredWorker) Run(ctx context.Context) error {
 			return err
 		}
 		latestDesired, latestGeneration, _ := worker.current()
-		if latestDesired.Snapshot.Revision > desired.Snapshot.Revision {
+		if latestDesired.normalizedRuntime().Revision > desired.normalizedRuntime().Revision {
 			select {
 			case worker.wake <- struct{}{}:
 			default:
@@ -610,12 +646,7 @@ func clientRestartFailureIsTransient(err error) bool {
 }
 
 func clientDesiredConfigurationFromWelcome(welcome tunnelruntime.AgentWelcome) ClientDesiredConfiguration {
-	return ClientDesiredConfiguration{
-		AdvertisedFRPHost: welcome.AdvertisedFRPHost,
-		AdvertisedFRPPort: welcome.AdvertisedFRPPort,
-		InternalFRPToken:  welcome.InternalFRPToken,
-		Snapshot:          welcome.Snapshot,
-	}
+	return clientDesiredConfigurationFromRuntime(welcome.Runtime)
 }
 
 func reportClientApply(ctx context.Context, agent *ClientAgent, connection *ClientControlConnection, reconciler *ClientReconciler, reporter *clientProcessStateReporter, desired ClientDesiredConfiguration) error {
@@ -623,17 +654,32 @@ func reportClientApply(ctx context.Context, agent *ClientAgent, connection *Clie
 }
 
 func reportClientApplyWithLifecycle(ctx context.Context, agent *ClientAgent, connection *ClientControlConnection, reconciler *ClientReconciler, reporter *clientProcessStateReporter, desired ClientDesiredConfiguration, lifecycle *clientLifecycle) error {
+	runtime := desired.normalizedRuntime()
+	reporter.BeginApply(runtime)
 	applyResult, err := reconciler.ApplyWithResult(ctx, desired)
+	if accepted, found, readErr := loadClientAcceptedState(reconciler.stateDirectory); readErr != nil {
+		return readErr
+	} else if found {
+		agent.RecordAcceptedRuntime(accepted.normalizedRuntime())
+	}
+	defer reporter.EndApply()
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	revision := desired.Snapshot.Revision
+	revision := runtime.Revision
 	if err == nil {
-		agent.RecordAppliedRevision(revision)
+		agent.RecordAppliedRuntime(runtime)
+		localState := "started"
+		if !clientRuntimeHasEnabledTunnel(runtime) {
+			localState = "stopped_no_enabled_tunnels"
+		}
 		if writeErr := connection.WriteJSON(tunnelruntime.ApplyResult{
 			Type:                  "apply_result",
 			TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 			Revision:              revision,
+			NodeID:                runtime.NodeID,
+			Digest:                runtime.Digest,
+			LocalState:            localState,
 			Success:               true,
 		}); writeErr != nil {
 			return fmt.Errorf("acknowledge Tunnel desired state: %w", writeErr)
@@ -647,6 +693,9 @@ func reportClientApplyWithLifecycle(ctx context.Context, agent *ClientAgent, con
 			Type:                  "apply_result",
 			TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 			Revision:              revision,
+			NodeID:                runtime.NodeID,
+			Digest:                runtime.Digest,
+			LocalState:            clientFailedApplyLocalState(reconciler),
 			Success:               false,
 			Error: &tunnelruntime.StructuredRuntimeError{
 				Code: code, Message: err.Error(), Revision: &revision,
@@ -654,14 +703,37 @@ func reportClientApplyWithLifecycle(ctx context.Context, agent *ClientAgent, con
 		}); writeErr != nil {
 			return fmt.Errorf("report Tunnel desired-state failure: %w", writeErr)
 		}
+		if code == "PROTOCOL_FAILED" || code == "STATE_CORRUPT" {
+			return errors.Join(errClientControlFatal, err)
+		}
 	}
 	if lifecycle != nil {
 		lifecycle.apply(applyResult, err)
 	}
+	reporter.EndApply()
 	if writeErr := reporter.Publish(); writeErr != nil {
 		return fmt.Errorf("report Tunnel client process state: %w", writeErr)
 	}
+	if writeErr := reporter.PublishFRPCStatus(); writeErr != nil {
+		return fmt.Errorf("report Tunnel client FRPC status: %w", writeErr)
+	}
 	return nil
+}
+
+func clientFailedApplyLocalState(reconciler *ClientReconciler) string {
+	if reconciler != nil {
+		if observer, ok := reconciler.runtime.(interface {
+			State() tunnelruntime.FRPSupervisorState
+		}); ok {
+			switch observer.State().State {
+			case tunnelruntime.FRPProcessRunning:
+				return "running_previous"
+			case tunnelruntime.FRPProcessStopped:
+				return "stopped"
+			}
+		}
+	}
+	return "unknown"
 }
 
 type clientControlMessage struct {
@@ -696,7 +768,7 @@ func decodeClientControlMessage(source []byte) (clientControlMessage, error) {
 	switch envelope.Type {
 	case "desired_state":
 		var desired tunnelruntime.DesiredState
-		if err := json.Unmarshal(source, &desired); err != nil || desired.Snapshot.Revision < 0 || desired.Snapshot.Revision > clientMaximumSafeInteger || desired.DesiredRestartGeneration < 0 || desired.DesiredRestartGeneration > clientMaximumSafeInteger {
+		if err := json.Unmarshal(source, &desired); err != nil || !validClientRuntime(desired.Runtime) || desired.DesiredRestartGeneration < 0 || desired.DesiredRestartGeneration > clientMaximumSafeInteger {
 			return clientControlMessage{}, fmt.Errorf("%w: invalid desired-state message", ErrClientProtocol)
 		}
 		return clientControlMessage{kind: envelope.Type, desired: desired}, nil
@@ -709,6 +781,14 @@ func decodeClientControlMessage(source []byte) (clientControlMessage, error) {
 	default:
 		return clientControlMessage{}, fmt.Errorf("%w: unexpected control message", ErrClientProtocol)
 	}
+}
+
+func validClientRuntime(runtime tunnelruntime.ClientRuntime) bool {
+	if runtime.Revision < 0 || runtime.Revision > clientMaximumSafeInteger || strings.TrimSpace(runtime.NodeID) == "" || strings.TrimSpace(runtime.ClientKey) == "" || strings.TrimSpace(runtime.AdvertisedFRPHost) == "" || runtime.AdvertisedFRPPort < 1 || runtime.AdvertisedFRPPort > 65535 || strings.TrimSpace(runtime.FRPToken) == "" || strings.TrimSpace(runtime.Digest) == "" {
+		return false
+	}
+	digest, err := tunnelruntime.RuntimeDigest(runtime)
+	return err == nil && digest == runtime.Digest
 }
 
 type clientControlConnectionHolder struct {
@@ -742,19 +822,52 @@ func (holder *clientControlConnectionHolder) Close() error {
 }
 
 type clientProcessStateReporter struct {
-	mu          sync.Mutex
-	connection  *ClientControlConnection
-	state       tunnelruntime.FRPSupervisorState
-	previous    tunnelruntime.FRPProcessState
-	initialized bool
-	lifecycle   *clientLifecycle
+	mu                sync.Mutex
+	connection        *ClientControlConnection
+	state             tunnelruntime.FRPSupervisorState
+	runtime           tunnelruntime.ClientRuntime
+	hasRuntime        bool
+	applying          bool
+	status            *clientFRPCStatusEndpoint
+	connectionStatus  string
+	proxies           []tunnelruntime.ProxyState
+	statusError       *tunnelruntime.StructuredRuntimeError
+	processGeneration string
+	lastPID           int
+	previous          tunnelruntime.FRPProcessState
+	initialized       bool
+	lifecycle         *clientLifecycle
 }
 
 func (reporter *clientProcessStateReporter) Set(connection *ClientControlConnection) {
 	reporter.mu.Lock()
 	reporter.connection = connection
+	if connection != nil {
+		reporter.runtime = connection.Welcome.Runtime
+		reporter.hasRuntime = true
+		reporter.applying = true
+		reporter.connectionStatus = "unknown"
+		reporter.proxies = nil
+	}
 	reporter.mu.Unlock()
 	_ = reporter.Publish()
+}
+
+func (reporter *clientProcessStateReporter) BeginApply(runtime tunnelruntime.ClientRuntime) {
+	reporter.mu.Lock()
+	reporter.runtime = runtime
+	reporter.hasRuntime = true
+	reporter.applying = true
+	reporter.connectionStatus = "unknown"
+	reporter.proxies = nil
+	reporter.statusError = nil
+	reporter.mu.Unlock()
+}
+
+func (reporter *clientProcessStateReporter) EndApply() {
+	reporter.mu.Lock()
+	reporter.applying = false
+	reporter.mu.Unlock()
 }
 
 func (reporter *clientProcessStateReporter) Clear() {
@@ -777,6 +890,20 @@ func (reporter *clientProcessStateReporter) Report(state tunnelruntime.FRPSuperv
 	initialized := reporter.initialized
 	reporter.state = tunnelruntime.CloneFRPSupervisorState(state)
 	reporter.initialized = true
+	pid := 0
+	if state.PID != nil {
+		pid = *state.PID
+	}
+	if state.State == tunnelruntime.FRPProcessRunning && (previous != tunnelruntime.FRPProcessRunning || pid != reporter.lastPID) {
+		var identifier [16]byte
+		if _, err := cryptorand.Read(identifier[:]); err == nil {
+			reporter.processGeneration = hex.EncodeToString(identifier[:])
+		}
+		reporter.connectionStatus = "unknown"
+		reporter.proxies = nil
+		reporter.statusError = nil
+	}
+	reporter.lastPID = pid
 	lifecycle := reporter.lifecycle
 	reporter.mu.Unlock()
 	if lifecycle != nil && initialized && previous != state.State {
@@ -796,20 +923,103 @@ func (reporter *clientProcessStateReporter) Report(state tunnelruntime.FRPSuperv
 		}
 	}
 	_ = reporter.Publish()
+	_ = reporter.PublishFRPCStatus()
 }
 
 func (reporter *clientProcessStateReporter) Publish() error {
 	reporter.mu.Lock()
 	connection := reporter.connection
 	state := tunnelruntime.CloneFRPSupervisorState(reporter.state)
+	runtime := reporter.runtime
+	hasRuntime := reporter.hasRuntime
+	applying := reporter.applying
 	reporter.mu.Unlock()
-	if connection == nil {
+	if connection == nil || !hasRuntime || applying {
 		return nil
 	}
 	return connection.WriteJSON(tunnelruntime.ProcessState{
 		Type:                  "process_state",
 		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
+		Revision:              runtime.Revision,
+		NodeID:                runtime.NodeID,
+		Digest:                runtime.Digest,
 		State:                 state.State,
 		Error:                 state.Error,
 	})
+}
+
+func (reporter *clientProcessStateReporter) PublishFRPCStatus() error {
+	reporter.mu.Lock()
+	connection := reporter.connection
+	state := reporter.state.State
+	runtime := reporter.runtime
+	ready := reporter.hasRuntime && !reporter.applying
+	status := reporter.connectionStatus
+	proxies := append([]tunnelruntime.ProxyState(nil), reporter.proxies...)
+	statusError := reporter.statusError
+	generation := reporter.processGeneration
+	reporter.mu.Unlock()
+	if connection == nil || !ready {
+		return nil
+	}
+	if !clientRuntimeHasEnabledTunnel(runtime) {
+		status = "not_required"
+	} else if state != tunnelruntime.FRPProcessRunning || status == "" {
+		status = "unknown"
+		proxies = nil
+	}
+	if len(proxies) == 0 {
+		for _, tunnel := range runtime.Tunnels {
+			if tunnel.Enabled {
+				proxies = append(proxies, tunnelruntime.ProxyState{TunnelID: tunnel.ID, State: "unknown"})
+			}
+		}
+	}
+	return connection.WriteJSON(tunnelruntime.FRPCStatus{
+		Type: "frpc_status", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
+		Revision: runtime.Revision, NodeID: runtime.NodeID, Digest: runtime.Digest,
+		ProcessGeneration: generation, Process: state, Connection: status, Proxies: proxies, Error: statusError,
+	})
+}
+
+func (reporter *clientProcessStateReporter) pollStatus(ctx context.Context) {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		reporter.mu.Lock()
+		status := reporter.status
+		runtime := reporter.runtime
+		generation := reporter.processGeneration
+		active := reporter.hasRuntime && !reporter.applying && reporter.state.State == tunnelruntime.FRPProcessRunning
+		reporter.mu.Unlock()
+		if !active || status == nil {
+			continue
+		}
+		connection, proxies, err := status.observe(ctx, runtime)
+		reporter.mu.Lock()
+		if reporter.runtime.Reference() == runtime.Reference() && reporter.processGeneration == generation && !reporter.applying {
+			reporter.connectionStatus = connection
+			reporter.proxies = proxies
+			reporter.statusError = nil
+			if err != nil {
+				reporter.statusError = &tunnelruntime.StructuredRuntimeError{Code: "FRPC_STATUS_UNAVAILABLE", Message: "FRPC status interface is unavailable"}
+			}
+		}
+		reporter.mu.Unlock()
+		_ = reporter.PublishFRPCStatus()
+	}
+}
+
+func clientRuntimeHasEnabledTunnel(runtime tunnelruntime.ClientRuntime) bool {
+	for _, tunnel := range runtime.Tunnels {
+		if tunnel.Enabled {
+			return true
+		}
+	}
+	return false
 }

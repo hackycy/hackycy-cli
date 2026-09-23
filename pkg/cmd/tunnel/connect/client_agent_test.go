@@ -13,7 +13,13 @@ import (
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
-func TestClientAgentConnectProbesBeforeV4HelloAndPinnedWelcome(t *testing.T) {
+func clientAgentTestRuntime(revision int64, clientKey, token string) tunnelruntime.ClientRuntime {
+	runtime := tunnelruntime.ClientRuntime{Revision: revision, NodeID: "local", AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, FRPToken: token, ClientKey: clientKey}
+	runtime.Digest, _ = tunnelruntime.RuntimeDigest(runtime)
+	return runtime
+}
+
+func TestClientAgentConnectProbesBeforeV5HelloAndPinnedWelcome(t *testing.T) {
 	artifact, err := tunnelruntime.CurrentFRPArtifact()
 	if err != nil {
 		t.Fatalf("CurrentFRPArtifact() error = %v", err)
@@ -64,10 +70,7 @@ func TestClientAgentConnectProbesBeforeV4HelloAndPinnedWelcome(t *testing.T) {
 			TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 			RequiredFRPVersion:    tunnelruntime.FRPVersion,
 			Artifact:              artifact.Description,
-			AdvertisedFRPHost:     "frp.example.test",
-			AdvertisedFRPPort:     7000,
-			InternalFRPToken:      "internal-token",
-			Snapshot:              tunnelruntime.TunnelSnapshot{ClientKey: "client-id", Revision: 3},
+			Runtime:               clientAgentTestRuntime(3, "client-id", "internal-token"),
 		}); writeErr != nil {
 			t.Errorf("write welcome: %v", writeErr)
 		}
@@ -96,14 +99,14 @@ func TestClientAgentConnectProbesBeforeV4HelloAndPinnedWelcome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Connect() error = %v", err)
 	}
-	if connection == nil || connection.Welcome.Snapshot.Revision != 3 {
+	if connection == nil || connection.Welcome.Runtime.Revision != 3 {
 		t.Fatalf("Connect() = %#v, want validated welcome", connection)
 	}
 	if err := connection.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 	hello := <-hellos
-	if hello.Type != "hello" || hello.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || hello.YCYVersion != "0.0.0-test" || hello.LastAppliedRevision != 3 || hello.Platform != string(target.Platform) || hello.Architecture != string(target.Architecture) {
+	if hello.Type != "hello" || hello.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || hello.YCYVersion != "0.0.0-test" || hello.LastApplied.Revision != 3 || hello.Platform != string(target.Platform) || hello.Architecture != string(target.Architecture) {
 		t.Fatalf("hello = %#v", hello)
 	}
 	if authenticated != 1 {
@@ -157,8 +160,7 @@ func TestClientControlConnectionTimesOutWhenPongIsMissing(t *testing.T) {
 		}
 		if err := socket.WriteJSON(tunnelruntime.AgentWelcome{
 			Type: "welcome", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, RequiredFRPVersion: tunnelruntime.FRPVersion,
-			Artifact: artifact.Description, AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "token",
-			Snapshot: tunnelruntime.TunnelSnapshot{ClientKey: "client"},
+			Artifact: artifact.Description, Runtime: clientAgentTestRuntime(0, "client", "token"),
 		}); err != nil {
 			return
 		}
@@ -290,8 +292,7 @@ func TestClientAgentConnectRejectsUnpinnedOrIncompatibleFirstFrame(t *testing.T)
 						Version: artifact.Description.Version, Archive: artifact.Description.Archive, URL: artifact.Description.URL,
 						SHA256: "0" + artifact.Description.SHA256[1:], FRPCSHA256: artifact.Description.FRPCSHA256,
 					},
-					AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "internal-token",
-					Snapshot: tunnelruntime.TunnelSnapshot{ClientKey: "client-id", Revision: 0},
+					Runtime: clientAgentTestRuntime(0, "client-id", "internal-token"),
 				}
 			},
 			want: ErrClientIncompatible,

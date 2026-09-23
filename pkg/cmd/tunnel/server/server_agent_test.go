@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -201,8 +202,9 @@ func TestServerAgentGatewayObservesConnectionAndProcessStateChanges(t *testing.T
 	state := openServerDomainState(t)
 	plane := openServerControlPlane(t, state)
 	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
-		ControlPlane: plane,
-		FRPS:         &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		ControlPlane:  plane,
+		FRPS:          &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		WelcomeSource: serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "test-token"}},
 	})
 	if err != nil {
 		t.Fatalf("NewServerAgentGateway() error = %v", err)
@@ -222,11 +224,19 @@ func TestServerAgentGatewayObservesConnectionAndProcessStateChanges(t *testing.T
 	if connection == nil {
 		t.Fatal("Activate() = nil")
 	}
-	if protocolError := connection.AcceptHello(context.Background(), []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); protocolError != nil {
+	if protocolError := connection.AcceptHello(context.Background(), []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)); protocolError != nil {
 		t.Fatalf("AcceptHello() error = %v", protocolError)
 	}
 	assertServerAgentChange(t, events, client.ID, "connect")
-	if protocolError := connection.AcceptProcessState(context.Background(), []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); protocolError != nil {
+	runtime, err := connection.expectedRuntime(context.Background())
+	if err != nil {
+		t.Fatalf("expectedRuntime() error = %v", err)
+	}
+	frame, err := json.Marshal(tunnelruntime.ProcessState{Type: "process_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Revision: runtime.Revision, NodeID: runtime.NodeID, Digest: runtime.Digest, State: tunnelruntime.FRPProcessRunning})
+	if err != nil {
+		t.Fatalf("marshal process state: %v", err)
+	}
+	if protocolError := connection.AcceptProcessState(context.Background(), frame); protocolError != nil {
 		t.Fatalf("AcceptProcessState() error = %v", protocolError)
 	}
 	assertServerAgentChange(t, events, client.ID, "process state")
@@ -250,8 +260,9 @@ func TestServerAgentGatewayPresentsDurableRestartGenerationToActiveConnection(t 
 	state := openServerDomainState(t)
 	plane := openServerControlPlane(t, state)
 	gateway, err := NewServerAgentGateway(ServerAgentGatewayOptions{
-		ControlPlane: plane,
-		FRPS:         &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		ControlPlane:  plane,
+		FRPS:          &serverAgentTestFRPSAvailability{state: tunnelruntime.FRPProcessRunning},
+		WelcomeSource: serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, InternalFRPToken: "test-token"}},
 	})
 	if err != nil {
 		t.Fatalf("NewServerAgentGateway() error = %v", err)

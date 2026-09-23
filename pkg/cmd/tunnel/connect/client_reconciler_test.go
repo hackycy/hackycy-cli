@@ -69,7 +69,7 @@ func TestClientReconcilerVerifiesPublishesStartsAndCachesOneDesiredRevision(t *t
 	if _, err := os.Stat(filepath.Join(directory, "frpc.revision-2.candidate.toml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("candidate remains after Apply(): %v", err)
 	}
-	if cache, ok := ReadClientAppliedState(directory); !ok || cache.Revision != 2 || cache.Snapshot.Revision != 2 {
+	if cache, ok := ReadClientAppliedState(directory); !ok || cache.Revision != 2 || cache.Runtime.Revision != 2 {
 		t.Fatalf("ReadClientAppliedState() = (%#v, %t)", cache, ok)
 	}
 }
@@ -177,17 +177,18 @@ func TestClientReconcilerReactivatesACompatibleCacheOncePerProcess(t *testing.T)
 
 func clientDesiredState(revision int64, enabled bool) ClientDesiredConfiguration {
 	port := int64(20000 + revision)
-	return ClientDesiredConfiguration{
+	runtime := tunnelruntime.ClientRuntime{
 		AdvertisedFRPHost: "frp.example.test",
 		AdvertisedFRPPort: 7000,
-		InternalFRPToken:  "internal-token",
-		Snapshot: tunnelruntime.TunnelSnapshot{
-			ClientKey: "client-key",
-			Revision:  revision,
-			Tunnels: []tunnelruntime.TunnelDefinition{{
-				ID: "tunnel-" + strconv.FormatInt(revision, 10), Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port,
-				LocalHost: "127.0.0.1", LocalPort: 3000, Enabled: enabled,
-			}},
-		},
+		FRPToken:          "internal-token",
+		NodeID:            "local",
+		ClientKey:         "client-key",
+		Revision:          revision,
+		Tunnels: []tunnelruntime.TunnelDefinition{{
+			ID: "tunnel-" + strconv.FormatInt(revision, 10), Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port,
+			LocalHost: "127.0.0.1", LocalPort: 3000, Enabled: enabled,
+		}},
 	}
+	runtime.Digest, _ = tunnelruntime.RuntimeDigest(runtime)
+	return ClientDesiredConfiguration{Runtime: runtime}
 }

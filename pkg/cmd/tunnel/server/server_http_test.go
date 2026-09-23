@@ -3374,7 +3374,7 @@ func activateServerHTTPAgentSocket(t *testing.T, socket *websocket.Conn) {
 	t.Helper()
 	if err := socket.WriteJSON(tunnelruntime.AgentHello{
 		Type: "hello", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, YCYVersion: "0.0.0-test",
-		Platform: "linux", Architecture: "x64", LastAppliedRevision: 0,
+		Platform: "linux", Architecture: "x64", LastAccepted: tunnelruntime.ClientRuntimeReference{}, LastApplied: tunnelruntime.ClientRuntimeReference{},
 	}); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
@@ -3465,7 +3465,7 @@ func TestServerHTTPHandlerClosesInvalidAgentHello(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	defer socket.Close()
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":5}`)); err != nil {
 		t.Fatalf("write invalid hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err == nil {
@@ -3543,7 +3543,7 @@ func TestServerHTTPHandlerSendsWelcomeAfterValidAgentHello(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	defer socket.Close()
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	messageType, source, err := socket.ReadMessage()
@@ -3557,7 +3557,7 @@ func TestServerHTTPHandlerSendsWelcomeAfterValidAgentHello(t *testing.T) {
 	if err := json.Unmarshal(source, &welcome); err != nil {
 		t.Fatalf("decode welcome: %v", err)
 	}
-	if welcome.Type != "welcome" || welcome.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || welcome.RequiredFRPVersion != tunnelruntime.FRPVersion || welcome.Artifact.Version != tunnelruntime.FRPVersion || welcome.AdvertisedFRPHost != "frp.example.test" || welcome.AdvertisedFRPPort != 7001 || welcome.InternalFRPToken != "agent-only-token" || welcome.Snapshot.ClientKey != client.ID || welcome.Snapshot.Revision != 0 || len(welcome.Snapshot.Tunnels) != 0 {
+	if welcome.Type != "welcome" || welcome.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || welcome.RequiredFRPVersion != tunnelruntime.FRPVersion || welcome.Artifact.Version != tunnelruntime.FRPVersion || welcome.Runtime.AdvertisedFRPHost != "frp.example.test" || welcome.Runtime.AdvertisedFRPPort != 7001 || welcome.Runtime.FRPToken != "agent-only-token" || welcome.Runtime.ClientKey != client.ID || welcome.Runtime.Revision != 0 || len(welcome.Runtime.Tunnels) != 0 {
 		t.Fatalf("welcome = %#v", welcome)
 	}
 	if _, err := plane.CreateTunnel(ctx, client.ID, TunnelMutationInput{
@@ -3580,13 +3580,13 @@ func TestServerHTTPHandlerSendsWelcomeAfterValidAgentHello(t *testing.T) {
 	if err := json.Unmarshal(source, &desired); err != nil {
 		t.Fatalf("decode desired state: %v", err)
 	}
-	if desired.Type != "desired_state" || desired.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || desired.Snapshot.ClientKey != client.ID || desired.Snapshot.Revision != 1 || len(desired.Snapshot.Tunnels) != 1 {
+	if desired.Type != "desired_state" || desired.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion || desired.Runtime.ClientKey != client.ID || desired.Runtime.Revision != 1 || len(desired.Runtime.Tunnels) != 1 {
 		t.Fatalf("desired state = %#v", desired)
 	}
 	if err := socket.SetReadDeadline(time.Time{}); err != nil {
 		t.Fatalf("clear desired-state read deadline: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true}`)); err != nil {
+	if err := socket.WriteJSON(tunnelruntime.ApplyResult{Type: "apply_result", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Revision: desired.Runtime.Revision, NodeID: desired.Runtime.NodeID, Digest: desired.Runtime.Digest, Success: true}); err != nil {
 		t.Fatalf("write apply result: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -3671,13 +3671,13 @@ func TestServerHTTPHandlerClosesInvalidAgentApplyResult(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err != nil {
 		t.Fatalf("read welcome: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":1,"success":true}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":5,"revision":1,"success":true}`)); err != nil {
 		t.Fatalf("write invalid apply result: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err == nil {
@@ -3740,13 +3740,14 @@ func TestServerHTTPHandlerProjectsAgentProcessState(t *testing.T) {
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
-	if _, _, err := socket.ReadMessage(); err != nil {
+	var welcome tunnelruntime.AgentWelcome
+	if err := socket.ReadJSON(&welcome); err != nil {
 		t.Fatalf("read welcome: %v", err)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"process_state","tunnelProtocolVersion":4,"state":"running"}`)); err != nil {
+	if err := socket.WriteJSON(tunnelruntime.ProcessState{Type: "process_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Revision: welcome.Runtime.Revision, NodeID: welcome.Runtime.NodeID, Digest: welcome.Runtime.Digest, State: tunnelruntime.FRPProcessRunning}); err != nil {
 		t.Fatalf("write process state: %v", err)
 	}
 	deadline := time.Now().Add(time.Second)
@@ -3769,7 +3770,8 @@ func TestServerHTTPHandlerProjectsAgentProcessState(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"apply_result","tunnelProtocolVersion":4,"revision":0,"success":false,"error":{"code":"APPLY_FAILED","message":"client configuration failed","revision":0}}`)); err != nil {
+	revision := int64(0)
+	if err := socket.WriteJSON(tunnelruntime.ApplyResult{Type: "apply_result", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Revision: welcome.Runtime.Revision, NodeID: welcome.Runtime.NodeID, Digest: welcome.Runtime.Digest, Success: false, Error: &tunnelruntime.StructuredRuntimeError{Code: "APPLY_FAILED", Message: "client configuration failed", Revision: &revision}}); err != nil {
 		t.Fatalf("write failed apply result: %v", err)
 	}
 	deadline = time.Now().Add(time.Second)
@@ -3855,7 +3857,7 @@ func TestServerHTTPHandlerPersistsOwnedClientRestartsOnlineAndOffline(t *testing
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":4,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAppliedRevision":0}`)); err != nil {
+	if err := socket.WriteMessage(websocket.TextMessage, []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)); err != nil {
 		t.Fatalf("write hello: %v", err)
 	}
 	if _, _, err := socket.ReadMessage(); err != nil {

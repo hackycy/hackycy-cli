@@ -21,12 +21,14 @@ var (
 	ErrClientProtocol       = errors.New("Tunnel client received an invalid control message")
 )
 
-// ClientAgentOptions defines one v4 control-link handshake. Reconciliation,
+// ClientAgentOptions defines one v5 control-link handshake. Reconciliation,
 // supervision, and reconnect ownership are added by later client slices.
 type ClientAgentOptions struct {
 	Config              ClientConfig
 	YCYVersion          string
 	LastAppliedRevision int64
+	LastAccepted        tunnelruntime.ClientRuntimeReference
+	LastApplied         tunnelruntime.ClientRuntimeReference
 	HTTPClient          *http.Client
 	WebSocketDialer     *websocket.Dialer
 	OnAuthenticated     func() error
@@ -36,11 +38,13 @@ type ClientAgentOptions struct {
 	wireTarget       *tunnelruntime.WireTarget
 }
 
-// ClientAgent owns the authentication probe and first v4 WebSocket exchange.
+// ClientAgent owns the authentication probe and first v5 WebSocket exchange.
 type ClientAgent struct {
 	config              ClientConfig
 	ycyVersion          string
 	lastAppliedRevision int64
+	lastAccepted        tunnelruntime.ClientRuntimeReference
+	lastApplied         tunnelruntime.ClientRuntimeReference
 	lastRestartResult   *tunnelruntime.RestartResult
 	httpClient          *http.Client
 	dialer              *websocket.Dialer
@@ -52,7 +56,7 @@ type ClientAgent struct {
 	authenticationReported bool
 }
 
-// ClientControlConnection is one authenticated v4 socket after its welcome
+// ClientControlConnection is one authenticated v5 socket after its welcome
 // has passed the compiled protocol and FRP-artifact checks.
 type ClientControlConnection struct {
 	Welcome tunnelruntime.AgentWelcome
@@ -125,6 +129,8 @@ func NewClientAgent(options ClientAgentOptions) (*ClientAgent, error) {
 		config:              options.Config,
 		ycyVersion:          options.YCYVersion,
 		lastAppliedRevision: options.LastAppliedRevision,
+		lastAccepted:        options.LastAccepted,
+		lastApplied:         options.LastApplied,
 		httpClient:          options.HTTPClient,
 		dialer:              options.WebSocketDialer,
 		expectedArtifact:    artifact,
@@ -185,6 +191,14 @@ func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnecti
 
 	agent.mu.Lock()
 	lastAppliedRevision := agent.lastAppliedRevision
+	lastAccepted := agent.lastAccepted
+	lastApplied := agent.lastApplied
+	if lastApplied.Revision == 0 && lastAppliedRevision != 0 {
+		lastApplied.Revision = lastAppliedRevision
+	}
+	if lastAccepted.Revision == 0 && lastApplied.Revision != 0 {
+		lastAccepted = lastApplied
+	}
 	lastRestartResult := cloneClientRestartResult(agent.lastRestartResult)
 	agent.mu.Unlock()
 	hello := tunnelruntime.AgentHello{
@@ -193,7 +207,8 @@ func (agent *ClientAgent) Connect(ctx context.Context) (_ *ClientControlConnecti
 		YCYVersion:            agent.ycyVersion,
 		Platform:              string(agent.wireTarget.Platform),
 		Architecture:          string(agent.wireTarget.Architecture),
-		LastAppliedRevision:   lastAppliedRevision,
+		LastAccepted:          lastAccepted,
+		LastApplied:           lastApplied,
 		LastRestartResult:     lastRestartResult,
 	}
 	if err := socket.SetWriteDeadline(time.Now().Add(clientControlWriteTimeout)); err != nil {
@@ -272,6 +287,32 @@ func (agent *ClientAgent) RecordAppliedRevision(revision int64) {
 	agent.mu.Lock()
 	if revision > agent.lastAppliedRevision {
 		agent.lastAppliedRevision = revision
+		agent.lastApplied.Revision = revision
+	}
+	agent.mu.Unlock()
+}
+
+// RecordAppliedRuntime advances both reconnect metadata tuples after the local
+// runtime state has been durably committed.
+func (agent *ClientAgent) RecordAppliedRuntime(runtime tunnelruntime.ClientRuntime) {
+	if agent == nil || runtime.Revision < 0 || strings.TrimSpace(runtime.NodeID) == "" || strings.TrimSpace(runtime.Digest) == "" {
+		return
+	}
+	agent.mu.Lock()
+	if runtime.Revision > agent.lastApplied.Revision || (runtime.Revision == agent.lastApplied.Revision && runtime.Digest >= agent.lastApplied.Digest) {
+		agent.lastApplied = runtime.Reference()
+		agent.lastAppliedRevision = runtime.Revision
+	}
+	agent.mu.Unlock()
+}
+
+func (agent *ClientAgent) RecordAcceptedRuntime(runtime tunnelruntime.ClientRuntime) {
+	if agent == nil || runtime.Revision < 0 || runtime.NodeID == "" || runtime.Digest == "" {
+		return
+	}
+	agent.mu.Lock()
+	if runtime.Revision > agent.lastAccepted.Revision || (runtime.Revision == agent.lastAccepted.Revision && agent.lastAccepted.Digest == "") {
+		agent.lastAccepted = runtime.Reference()
 	}
 	agent.mu.Unlock()
 }
@@ -321,8 +362,12 @@ func decodeClientWelcome(source []byte, expected tunnelruntime.FRPArtifact) (tun
 	if welcome.RequiredFRPVersion != tunnelruntime.FRPVersion || welcome.Artifact != expected.Description {
 		return tunnelruntime.AgentWelcome{}, fmt.Errorf("%w: Control plane requires an unsupported tunnel protocol or FRP build; upgrade ycy", ErrClientIncompatible)
 	}
-	if strings.TrimSpace(welcome.AdvertisedFRPHost) == "" || welcome.AdvertisedFRPPort < 1 || welcome.AdvertisedFRPPort > 65535 || strings.TrimSpace(welcome.InternalFRPToken) == "" || welcome.Snapshot.Revision < 0 || welcome.Snapshot.Revision > clientMaximumSafeInteger || welcome.DesiredRestartGeneration < 0 || welcome.DesiredRestartGeneration > clientMaximumSafeInteger {
+	if strings.TrimSpace(welcome.Runtime.NodeID) == "" || strings.TrimSpace(welcome.Runtime.AdvertisedFRPHost) == "" || welcome.Runtime.AdvertisedFRPPort < 1 || welcome.Runtime.AdvertisedFRPPort > 65535 || strings.TrimSpace(welcome.Runtime.FRPToken) == "" || strings.TrimSpace(welcome.Runtime.ClientKey) == "" || welcome.Runtime.Revision < 0 || welcome.Runtime.Revision > clientMaximumSafeInteger || strings.TrimSpace(welcome.Runtime.Digest) == "" || welcome.DesiredRestartGeneration < 0 || welcome.DesiredRestartGeneration > clientMaximumSafeInteger {
 		return tunnelruntime.AgentWelcome{}, fmt.Errorf("%w: welcome message is incomplete", ErrClientProtocol)
+	}
+	digest, err := tunnelruntime.RuntimeDigest(welcome.Runtime)
+	if err != nil || digest != welcome.Runtime.Digest {
+		return tunnelruntime.AgentWelcome{}, fmt.Errorf("%w: welcome runtime digest is invalid", ErrClientProtocol)
 	}
 	return welcome, nil
 }
