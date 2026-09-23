@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/hackycy/hackycy-cli/internal/logging"
+	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
 const (
@@ -51,6 +52,43 @@ func (lifecycle *clientLifecycle) event(level logging.Level, id, message string,
 		return
 	}
 	lifecycle.logger.Event(level, id, message, fields)
+}
+
+func clientFRPRuntimeObserver(logger logging.Logger) tunnelruntime.FRPRuntimeObserver {
+	return func(event tunnelruntime.FRPRuntimeEvent) {
+		level, message, found := clientFRPRuntimeEventLog(event.Type)
+		if !found {
+			return
+		}
+		logger.Event(level, "frp.runtime."+string(event.Type), message, event.DiagnosticFields())
+	}
+}
+
+func clientFRPRuntimeEventLog(eventType tunnelruntime.FRPRuntimeEventType) (logging.Level, string, bool) {
+	switch eventType {
+	case tunnelruntime.FRPRuntimeEventReuse:
+		return logging.Info, "FRP runtime reused", true
+	case tunnelruntime.FRPRuntimeEventDownloadStart:
+		return logging.Info, "FRP runtime download starting", true
+	case tunnelruntime.FRPRuntimeEventDownloadProgress:
+		return logging.Debug, "FRP runtime download progress", true
+	case tunnelruntime.FRPRuntimeEventDownloadDone:
+		return logging.Info, "FRP runtime download complete", true
+	case tunnelruntime.FRPRuntimeEventVerifyArchive:
+		return logging.Debug, "FRP runtime archive verification", true
+	case tunnelruntime.FRPRuntimeEventExtract:
+		return logging.Debug, "FRP runtime archive extraction", true
+	case tunnelruntime.FRPRuntimeEventPublish:
+		return logging.Debug, "FRP runtime publishing", true
+	case tunnelruntime.FRPRuntimeEventProbe:
+		return logging.Debug, "FRP runtime version probe", true
+	case tunnelruntime.FRPRuntimeEventReady:
+		return logging.Info, "FRP runtime ready", true
+	case tunnelruntime.FRPRuntimeEventFailed:
+		return logging.Error, "FRP runtime preparation failed", true
+	default:
+		return logging.Debug, "", false
+	}
 }
 
 func (lifecycle *clientLifecycle) starting(config ClientConfig) {

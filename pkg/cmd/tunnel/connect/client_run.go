@@ -92,7 +92,10 @@ func newManagedClientFRPRuntime(ctx context.Context, options managedClientFRPRun
 	}
 	ensure := options.ensureFRPRuntime
 	if ensure == nil {
-		ensure = tunnelruntime.EnsureFRPRuntimeAt
+		observer := clientFRPRuntimeObserver(options.Logger)
+		ensure = func(ctx context.Context, directory string, artifact tunnelruntime.FRPArtifact) (tunnelruntime.FRPRuntimePaths, error) {
+			return tunnelruntime.EnsureFRPRuntimeAtWithObserver(ctx, directory, artifact, observer)
+		}
 	}
 	paths, err := ensure(ctx, directory, artifact)
 	if err != nil {

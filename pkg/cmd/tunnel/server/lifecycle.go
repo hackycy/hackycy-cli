@@ -16,7 +16,6 @@ const (
 	serverEventStateOpened         = "state.opened"
 	serverEventListening           = "control.listening"
 	serverEventStarted             = "server.started"
-	serverEventFrpsPreparing       = "frps.preparing"
 	serverEventFrpsRunning         = "frps.running"
 	serverEventFrpsStopped         = "frps.stopped"
 	serverEventFrpsRecovering      = "frps.recovering"
@@ -59,6 +58,43 @@ func (lifecycle *serverLifecycle) event(level logging.Level, id, message string,
 	lifecycle.logger.Event(level, id, message, fields)
 }
 
+func serverFRPRuntimeObserver(logger logging.Logger) tunnelruntime.FRPRuntimeObserver {
+	return func(event tunnelruntime.FRPRuntimeEvent) {
+		level, message, found := serverFRPRuntimeEventLog(event.Type)
+		if !found {
+			return
+		}
+		logger.Event(level, "frps.runtime."+string(event.Type), message, event.DiagnosticFields())
+	}
+}
+
+func serverFRPRuntimeEventLog(eventType tunnelruntime.FRPRuntimeEventType) (logging.Level, string, bool) {
+	switch eventType {
+	case tunnelruntime.FRPRuntimeEventReuse:
+		return logging.Info, "Managed FRPS runtime reused", true
+	case tunnelruntime.FRPRuntimeEventDownloadStart:
+		return logging.Info, "Managed FRPS runtime download starting", true
+	case tunnelruntime.FRPRuntimeEventDownloadProgress:
+		return logging.Debug, "Managed FRPS runtime download progress", true
+	case tunnelruntime.FRPRuntimeEventDownloadDone:
+		return logging.Info, "Managed FRPS runtime download complete", true
+	case tunnelruntime.FRPRuntimeEventVerifyArchive:
+		return logging.Debug, "Managed FRPS runtime archive verification", true
+	case tunnelruntime.FRPRuntimeEventExtract:
+		return logging.Debug, "Managed FRPS runtime archive extraction", true
+	case tunnelruntime.FRPRuntimeEventPublish:
+		return logging.Debug, "Managed FRPS runtime publishing", true
+	case tunnelruntime.FRPRuntimeEventProbe:
+		return logging.Debug, "Managed FRPS runtime version probe", true
+	case tunnelruntime.FRPRuntimeEventReady:
+		return logging.Info, "Managed FRPS runtime ready", true
+	case tunnelruntime.FRPRuntimeEventFailed:
+		return logging.Error, "Managed FRPS runtime preparation failed", true
+	default:
+		return logging.Debug, "", false
+	}
+}
+
 func (lifecycle *serverLifecycle) starting(config ServerConfig) {
 	settings := config.Settings
 	fields := map[string]any{
@@ -92,10 +128,6 @@ func (lifecycle *serverLifecycle) listening(port int) {
 
 func (lifecycle *serverLifecycle) started() {
 	lifecycle.event(logging.Info, serverEventStarted, "Tunnel control plane started", nil)
-}
-
-func (lifecycle *serverLifecycle) frpsPreparing() {
-	lifecycle.event(logging.Debug, serverEventFrpsPreparing, "Managed FRPS preparing", nil)
 }
 
 func (lifecycle *serverLifecycle) frpsState(state tunnelruntime.FRPSupervisorState) {

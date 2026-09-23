@@ -193,7 +193,10 @@ func resolveServerFRPRuntime(options ServerRuntimeOptions) (tunnelruntime.FRPArt
 	}
 	ensure := options.ensureFRPRuntime
 	if ensure == nil {
-		ensure = tunnelruntime.EnsureFRPRuntimeAt
+		observer := serverFRPRuntimeObserver(options.LifecycleLogger)
+		ensure = func(ctx context.Context, directory string, artifact tunnelruntime.FRPArtifact) (tunnelruntime.FRPRuntimePaths, error) {
+			return tunnelruntime.EnsureFRPRuntimeAtWithObserver(ctx, directory, artifact, observer)
+		}
 	}
 	return artifact, directory, ensure, nil
 }

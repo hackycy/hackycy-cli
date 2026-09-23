@@ -44,7 +44,13 @@ type frpVersionVerifier func(context.Context, string) error
 // EnsureFRPRuntimeAt materializes the one manifest-pinned frpc/frps pair in
 // directory. It deliberately has no PATH or custom-binary fallback.
 func EnsureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtifact) (FRPRuntimePaths, error) {
-	return ensureFRPRuntimeAt(ctx, directory, artifact, http.DefaultClient, verifyFRPReportedVersion)
+	return EnsureFRPRuntimeAtWithObserver(ctx, directory, artifact, nil)
+}
+
+// EnsureFRPRuntimeAtWithObserver materializes the pinned runtime while
+// reporting optional preparation events.
+func EnsureFRPRuntimeAtWithObserver(ctx context.Context, directory string, artifact FRPArtifact, observer FRPRuntimeObserver) (FRPRuntimePaths, error) {
+	return ensureFRPRuntimeAt(ctx, directory, artifact, http.DefaultClient, verifyFRPReportedVersion, observer)
 }
 
 // PrepareFRPRuntimeAt downloads and materializes a manifest-pinned runtime
@@ -57,12 +63,13 @@ func PrepareFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArti
 // PrepareFRPRuntimeAtWithClient is the injectable form used by packaging
 // tools and tests. The client is only used for the pinned archive URL.
 func PrepareFRPRuntimeAtWithClient(ctx context.Context, directory string, artifact FRPArtifact, client *http.Client) (FRPRuntimePaths, error) {
-	return ensureFRPRuntimeAt(ctx, directory, artifact, client, func(context.Context, string) error { return nil })
+	return ensureFRPRuntimeAt(ctx, directory, artifact, client, func(context.Context, string) error { return nil }, nil)
 }
 
-func ensureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtifact, client *http.Client, verify frpVersionVerifier) (paths FRPRuntimePaths, err error) {
+func ensureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtifact, client *http.Client, verify frpVersionVerifier, observer FRPRuntimeObserver) (paths FRPRuntimePaths, err error) {
 	paths = FRPRuntimePathsFor(directory, artifact.Target)
 	if strings.TrimSpace(directory) == "" {
+		observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventFailed, FailureStage: FRPRuntimeFailureValidate})
 		return FRPRuntimePaths{}, fmt.Errorf("%w: runtime directory is required", ErrFRPInstall)
 	}
 	if client == nil {
@@ -72,41 +79,59 @@ func ensureFRPRuntimeAt(ctx context.Context, directory string, artifact FRPArtif
 		verify = verifyFRPReportedVersion
 	}
 	if validFRPRuntime(paths, artifact) {
-		if err := verifyFRPRuntime(ctx, paths, verify); err != nil {
-			return FRPRuntimePaths{}, installError(paths, artifact, err)
+		observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventReuse, Version: artifact.Description.Version, Directory: paths.Directory})
+		if err := verifyFRPRuntime(ctx, paths, artifact.Description.Version, verify, observer); err != nil {
+			return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureProbe, err)
 		}
+		observer.report(readyFRPRuntimeEvent(paths, false))
 		return paths, nil
 	}
 
+	downloadStartedAt := time.Now()
+	observer.report(FRPRuntimeEvent{
+		Type: FRPRuntimeEventDownloadStart, Version: artifact.Description.Version,
+		Archive: artifact.Description.Archive, URL: artifact.Description.URL, Directory: paths.Directory,
+	})
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, artifact.Description.URL, nil)
 	if err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, fmt.Errorf("create archive request: %w", err))
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureDownload, fmt.Errorf("create archive request: %w", err))
 	}
 	response, err := client.Do(request)
 	if err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, fmt.Errorf("download archive: %w", err))
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureDownload, fmt.Errorf("download archive: %w", err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return FRPRuntimePaths{}, installError(paths, artifact, fmt.Errorf("download returned HTTP %d", response.StatusCode))
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureDownload, fmt.Errorf("download returned HTTP %d", response.StatusCode))
 	}
-	archive, err := io.ReadAll(response.Body)
+	progress := newFRPDownloadProgressReader(response.Body, response.ContentLength, observer, time.Now)
+	progress.start()
+	archive, err := io.ReadAll(progress)
+	progress.finish()
 	if err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, fmt.Errorf("read archive: %w", err))
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureDownload, fmt.Errorf("read archive: %w", err))
 	}
+	observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventDownloadDone, ReceivedBytes: progress.receivedBytes, Elapsed: time.Since(downloadStartedAt)})
+	observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventVerifyArchive, SHA256: artifact.Description.SHA256})
 	if sha256Hex(archive) != artifact.Description.SHA256 {
-		return FRPRuntimePaths{}, installError(paths, artifact, fmt.Errorf("%w: archive SHA-256 does not match", ErrInvalidFRPArchive))
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureVerifyArchive, fmt.Errorf("%w: archive SHA-256 does not match", ErrInvalidFRPArchive))
 	}
+	observer.report(FRPRuntimeEvent{
+		Type: FRPRuntimeEventExtract, Archive: artifact.Description.Archive,
+		FRPCSHA256: artifact.Description.FRPCSHA256, FRPSSHA256: artifact.FRPSSHA256,
+	})
 	binaries, err := extractFRPBinaries(archive, artifact)
 	if err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, err)
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureExtract, err)
 	}
+	observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventPublish, Directory: paths.Directory})
 	if err := publishFRPRuntime(paths, artifact, binaries); err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, err)
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailurePublish, err)
 	}
-	if err := verifyFRPRuntime(ctx, paths, verify); err != nil {
-		return FRPRuntimePaths{}, installError(paths, artifact, err)
+	if err := verifyFRPRuntime(ctx, paths, artifact.Description.Version, verify, observer); err != nil {
+		return failFRPRuntime(paths, artifact, observer, FRPRuntimeFailureProbe, err)
 	}
+	observer.report(readyFRPRuntimeEvent(paths, true))
 	return paths, nil
 }
 
@@ -333,14 +358,26 @@ func replaceFRPRuntimeDirectory(candidate, destination string) (err error) {
 	return nil
 }
 
-func verifyFRPRuntime(ctx context.Context, paths FRPRuntimePaths, verify frpVersionVerifier) error {
-	if err := verify(ctx, paths.FRPC); err != nil {
-		return err
-	}
-	if err := verify(ctx, paths.FRPS); err != nil {
-		return err
+func verifyFRPRuntime(ctx context.Context, paths FRPRuntimePaths, version string, verify frpVersionVerifier, observer FRPRuntimeObserver) error {
+	for _, binary := range []string{paths.FRPC, paths.FRPS} {
+		observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventProbe, Binary: binary, Version: version})
+		if err := verify(ctx, binary); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func readyFRPRuntimeEvent(paths FRPRuntimePaths, downloaded bool) FRPRuntimeEvent {
+	return FRPRuntimeEvent{
+		Type: FRPRuntimeEventReady, Directory: paths.Directory,
+		FRPC: paths.FRPC, FRPS: paths.FRPS, Downloaded: downloaded,
+	}
+}
+
+func failFRPRuntime(paths FRPRuntimePaths, artifact FRPArtifact, observer FRPRuntimeObserver, stage FRPRuntimeFailureStage, cause error) (FRPRuntimePaths, error) {
+	observer.report(FRPRuntimeEvent{Type: FRPRuntimeEventFailed, FailureStage: stage})
+	return FRPRuntimePaths{}, installError(paths, artifact, cause)
 }
 
 func installError(paths FRPRuntimePaths, artifact FRPArtifact, cause error) error {

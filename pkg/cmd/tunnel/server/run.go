@@ -366,7 +366,6 @@ func RunServer(ctx context.Context, config ServerConfig, options ServerRunOption
 	}
 	lifecycle.listening(server.Port())
 	lifecycle.started()
-	lifecycle.frpsPreparing()
 	server.startManagedFRPS()
 
 	waited := make(chan error, 1)

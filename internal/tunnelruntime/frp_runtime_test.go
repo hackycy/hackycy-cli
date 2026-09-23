@@ -34,8 +34,10 @@ func TestEnsureFRPRuntimeAtDownloadsVerifiesAndPublishesOnePair(t *testing.T) {
 		verified = append(verified, binary)
 		return nil
 	}
+	var events []FRPRuntimeEvent
+	observer := FRPRuntimeObserver(func(event FRPRuntimeEvent) { events = append(events, event) })
 	directory := filepath.Join(t.TempDir(), "frp", FRPVersion)
-	paths, err := ensureFRPRuntimeAt(context.Background(), directory, artifact, client, verify)
+	paths, err := ensureFRPRuntimeAt(context.Background(), directory, artifact, client, verify, observer)
 	if err != nil {
 		t.Fatalf("ensureFRPRuntimeAt() error = %v", err)
 	}
@@ -56,12 +58,45 @@ func TestEnsureFRPRuntimeAtDownloadsVerifiesAndPublishesOnePair(t *testing.T) {
 			}
 		}
 	}
+	assertFRPRuntimeEventTypes(t, events, []FRPRuntimeEventType{
+		FRPRuntimeEventDownloadStart,
+		FRPRuntimeEventDownloadProgress,
+		FRPRuntimeEventDownloadProgress,
+		FRPRuntimeEventDownloadDone,
+		FRPRuntimeEventVerifyArchive,
+		FRPRuntimeEventExtract,
+		FRPRuntimeEventPublish,
+		FRPRuntimeEventProbe,
+		FRPRuntimeEventProbe,
+		FRPRuntimeEventReady,
+	})
+	if start := events[0]; start.Version != artifact.Description.Version || start.Archive != artifact.Description.Archive || start.URL != artifact.Description.URL || start.Directory != directory {
+		t.Fatalf("download start event = %#v", start)
+	}
+	progress := frpRuntimeEventsOfType(events, FRPRuntimeEventDownloadProgress)
+	if len(progress) != 2 || progress[0].ReceivedBytes != 0 || progress[0].TotalBytes == nil || *progress[0].TotalBytes != int64(len(archive)) || progress[0].Percent == nil || *progress[0].Percent != 0 {
+		t.Fatalf("initial progress events = %#v", progress)
+	}
+	if last := progress[len(progress)-1]; last.ReceivedBytes != int64(len(archive)) || last.TotalBytes == nil || *last.TotalBytes != int64(len(archive)) || last.Percent == nil || *last.Percent != 100 {
+		t.Fatalf("final progress event = %#v", last)
+	}
+	if ready := events[len(events)-1]; ready.Directory != directory || ready.FRPC != paths.FRPC || ready.FRPS != paths.FRPS || !ready.Downloaded {
+		t.Fatalf("download ready event = %#v", ready)
+	}
 
 	client.Transport = frpRoundTripper(func(*http.Request) (*http.Response, error) {
 		return nil, errors.New("network must not be used for valid runtime")
 	})
-	if _, err := ensureFRPRuntimeAt(context.Background(), directory, artifact, client, verify); err != nil || requests != 1 || len(verified) != 4 {
+	events = nil
+	if _, err := ensureFRPRuntimeAt(context.Background(), directory, artifact, client, verify, observer); err != nil || requests != 1 || len(verified) != 4 {
 		t.Fatalf("reuse valid runtime = (%v, requests=%d, verified=%#v)", err, requests, verified)
+	}
+	assertFRPRuntimeEventTypes(t, events, []FRPRuntimeEventType{FRPRuntimeEventReuse, FRPRuntimeEventProbe, FRPRuntimeEventProbe, FRPRuntimeEventReady})
+	if reuse := events[0]; reuse.Version != artifact.Description.Version || reuse.Directory != directory {
+		t.Fatalf("reuse event = %#v", reuse)
+	}
+	if ready := events[len(events)-1]; ready.Downloaded {
+		t.Fatalf("reuse ready event = %#v, want downloaded=false", ready)
 	}
 }
 
@@ -69,11 +104,20 @@ func TestEnsureFRPRuntimeAtRejectsBadArchivesWithoutPublishing(t *testing.T) {
 	archive, artifact := frpTarFixture(t, map[string][]byte{"frpc": []byte("frpc bytes"), "frps": []byte("frps bytes")})
 	artifact.Description.SHA256 = strings.Repeat("0", 64)
 	directory := filepath.Join(t.TempDir(), "frp", FRPVersion)
+	var events []FRPRuntimeEvent
 	_, err := ensureFRPRuntimeAt(context.Background(), directory, artifact, &http.Client{Transport: frpRoundTripper(func(*http.Request) (*http.Response, error) {
 		return frpHTTPResponse(http.StatusOK, archive), nil
-	})}, func(context.Context, string) error { return nil })
+	})}, func(context.Context, string) error { return nil }, func(event FRPRuntimeEvent) { events = append(events, event) })
 	if !errors.Is(err, ErrFRPInstall) || !errors.Is(err, ErrInvalidFRPArchive) {
 		t.Fatalf("bad archive error = %v", err)
+	}
+	for _, value := range []string{artifact.Description.URL, artifact.Description.SHA256, artifact.Description.FRPCSHA256, artifact.FRPSSHA256} {
+		if !strings.Contains(err.Error(), value) {
+			t.Fatalf("bad archive error omitted %q:\n%s", value, err)
+		}
+	}
+	if last := events[len(events)-1]; last.Type != FRPRuntimeEventFailed || last.FailureStage != FRPRuntimeFailureVerifyArchive {
+		t.Fatalf("bad archive final event = %#v", last)
 	}
 	if _, statErr := os.Stat(directory); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("runtime directory after failed archive = %v", statErr)
@@ -192,5 +236,31 @@ func (roundTrip frpRoundTripper) RoundTrip(request *http.Request) (*http.Respons
 }
 
 func frpHTTPResponse(status int, body []byte) *http.Response {
-	return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(body)), Header: make(http.Header)}
+	return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader(body)), ContentLength: int64(len(body)), Header: make(http.Header)}
+}
+
+func assertFRPRuntimeEventTypes(t *testing.T, events []FRPRuntimeEvent, want []FRPRuntimeEventType) {
+	t.Helper()
+	got := make([]FRPRuntimeEventType, len(events))
+	for index, event := range events {
+		got[index] = event.Type
+	}
+	if len(got) != len(want) {
+		t.Fatalf("event types = %v, want %v", got, want)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("event types = %v, want %v", got, want)
+		}
+	}
+}
+
+func frpRuntimeEventsOfType(events []FRPRuntimeEvent, eventType FRPRuntimeEventType) []FRPRuntimeEvent {
+	var matching []FRPRuntimeEvent
+	for _, event := range events {
+		if event.Type == eventType {
+			matching = append(matching, event)
+		}
+	}
+	return matching
 }
