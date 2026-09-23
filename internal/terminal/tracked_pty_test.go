@@ -106,7 +106,7 @@ func TestRichTrackCtrlCAndEscRequestCooperativeCancellationAndRestoreTerminal(t 
 			})
 
 			assertTrackedPTYCleanup(t, output, "cancelled-result")
-			if !strings.Contains(output, "Cancelled") {
+			if !strings.Contains(strings.ToLower(output), "cancelled") {
 				t.Fatalf("cancelled phase missing from PTY output: %q", output)
 			}
 		})
@@ -123,10 +123,11 @@ func TestRichTrackKeepsDurableResultsOnStdout(t *testing.T) {
 		Diagnostics:  &stderr,
 	})
 	run := experience.Open(context.Background())
-	updates := make(chan terminal.OperationPhase, 1)
-	updates <- terminal.OperationPhase{Name: "Scanning repositories", State: terminal.PhaseCompleted}
+	updates := make(chan terminal.OperationPhase, 2)
+	updates <- terminal.OperationPhase{ID: "scan", State: terminal.PhaseActive}
+	updates <- terminal.OperationPhase{ID: "scan", State: terminal.PhaseCompleted}
 	close(updates)
-	if err := run.Track(terminal.TrackedOperation{Label: "Git Pulse", Updates: updates}); err != nil {
+	if err := run.Track(terminal.TrackedOperation{Label: "Git Pulse", Phases: []terminal.PhaseDefinition{{ID: "scan", Name: "Scanning repositories"}}, Updates: updates}); err != nil {
 		t.Fatalf("Track() error = %v", err)
 	}
 	if err := run.Result(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "durable-result"}}}); err != nil {
@@ -156,14 +157,15 @@ func runTrackedPTYHelper(t *testing.T) {
 	defer run.Close()
 	updates := make(chan terminal.OperationPhase, 4)
 	go func() {
-		updates <- terminal.OperationPhase{Name: "Scanning repositories", Detail: "workspace/project", State: terminal.PhaseActive}
+		updates <- terminal.OperationPhase{ID: "scan", Detail: "workspace/project", State: terminal.PhaseActive}
 		time.Sleep(150 * time.Millisecond)
 		_, _ = io.WriteString(experience.DiagnosticWriter(), "deferred diagnostic\n")
-		updates <- terminal.OperationPhase{Name: "Scanning repositories", Detail: "workspace/project", State: terminal.PhaseCompleted}
-		updates <- terminal.OperationPhase{Name: "Fetching commits", Detail: "workspace/project", State: terminal.PhaseCompleted}
+		updates <- terminal.OperationPhase{ID: "scan", Detail: "workspace/project", State: terminal.PhaseCompleted}
+		updates <- terminal.OperationPhase{ID: "fetch", Detail: "workspace/project", State: terminal.PhaseActive}
+		updates <- terminal.OperationPhase{ID: "fetch", Detail: "workspace/project", State: terminal.PhaseCompleted}
 		close(updates)
 	}()
-	if err := run.Track(terminal.TrackedOperation{Label: "Git Pulse", Updates: updates}); err != nil {
+	if err := run.Track(terminal.TrackedOperation{Label: "Git Pulse", Phases: []terminal.PhaseDefinition{{ID: "scan", Name: "Scanning repositories"}, {ID: "fetch", Name: "Fetching commits"}}, Updates: updates}); err != nil {
 		t.Fatalf("Track() error = %v", err)
 	}
 	if err := run.Result(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "durable-result"}}}); err != nil {
@@ -184,15 +186,16 @@ func runTrackedCancellationPTYHelper(t *testing.T) {
 	run := experience.Open(ctx)
 	defer run.Close()
 	updates := make(chan terminal.OperationPhase, 2)
-	updates <- terminal.OperationPhase{Name: "Scanning repositories", State: terminal.PhaseActive}
+	updates <- terminal.OperationPhase{ID: "scan", State: terminal.PhaseActive}
 	var once sync.Once
 	if err := run.Track(terminal.TrackedOperation{
 		Label:   "Git Pulse",
+		Phases:  []terminal.PhaseDefinition{{ID: "scan", Name: "Scanning repositories"}},
 		Updates: updates,
 		RequestCancel: func() {
 			once.Do(func() {
 				cancel()
-				updates <- terminal.OperationPhase{Name: "Cancelled", State: terminal.PhaseCancelled}
+				updates <- terminal.OperationPhase{ID: "scan", State: terminal.PhaseCancelled}
 				close(updates)
 			})
 		},

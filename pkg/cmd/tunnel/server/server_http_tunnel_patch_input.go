@@ -22,7 +22,7 @@ func (input *serverHTTPTunnelPatchInput) UnmarshalJSON(source []byte) error {
 }
 
 func parseServerHTTPTunnelPatch(source []byte) (TunnelPatchInput, error) {
-	object, err := serverTunnelJSONObject(source, "label", "protocol", "customDomains", "hostname", "location", "serverPort", "localHost", "localPort", "enabled", "options")
+	object, err := serverTunnelJSONObject(source, "label", "protocol", "customDomains", "location", "serverPort", "localHost", "localPort", "enabled", "options")
 	if err != nil {
 		return TunnelPatchInput{}, err
 	}
@@ -31,10 +31,6 @@ func parseServerHTTPTunnelPatch(source []byte) (TunnelPatchInput, error) {
 		return TunnelPatchInput{}, err
 	}
 	customDomains, err := serverTunnelPatchStrings(object, "customDomains")
-	if err != nil {
-		return TunnelPatchInput{}, err
-	}
-	hostname, err := serverTunnelPatchNullableString(object, "hostname")
 	if err != nil {
 		return TunnelPatchInput{}, err
 	}
@@ -67,16 +63,15 @@ func parseServerHTTPTunnelPatch(source []byte) (TunnelPatchInput, error) {
 		return TunnelPatchInput{}, err
 	}
 	return TunnelPatchInput{
-		Protocol:       protocol,
-		CustomDomains:  customDomains,
-		LegacyHostname: hostname,
-		Location:       location,
-		ServerPort:     serverPort,
-		LocalHost:      localHost,
-		LocalPort:      localPort,
-		Enabled:        enabled,
-		Label:          label,
-		Options:        options,
+		Protocol:      protocol,
+		CustomDomains: customDomains,
+		Location:      location,
+		ServerPort:    serverPort,
+		LocalHost:     localHost,
+		LocalPort:     localPort,
+		Enabled:       enabled,
+		Label:         label,
+		Options:       options,
 	}, nil
 }
 

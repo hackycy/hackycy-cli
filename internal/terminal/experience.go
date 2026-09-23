@@ -214,7 +214,6 @@ func (run *runtimeRun) Track(operation TrackedOperation) error {
 	}
 	protocol, err := newPhaseProtocol(operation)
 	if err != nil {
-		drainTrackedUpdates(operation.Updates)
 		return err
 	}
 	if run.richEnabled() {
@@ -302,9 +301,7 @@ func (run *runtimeRun) Milestone(document PresentationDocument) error {
 }
 
 // Finish commits one finite command outcome and emits its optional result once.
-// FinishRequest is the production semantic form; the legacy outcome/document
-// shape remains accepted so command adapters can migrate independently.
-func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) error {
+func (run *runtimeRun) Finish(request FinishRequest, documents ...*PresentationDocument) error {
 	run.operation.Lock()
 	defer run.operation.Unlock()
 	if run.state == runClosed {
@@ -313,15 +310,15 @@ func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) err
 	if run.state == runFinished {
 		return ErrExperienceRunFinished
 	}
-	request, result, legacy, err := finishRequestFromValue(value, documents...)
-	if err != nil {
-		return err
+	if len(documents) > 1 {
+		return fmt.Errorf("%w: at most one durable result is allowed", ErrInvalidFinishRequest)
+	}
+	var result *PresentationDocument
+	if len(documents) == 1 {
+		result = documents[0]
 	}
 	normalized, err := normalizeFinishRequest(request)
 	if err != nil {
-		if legacy && !request.Outcome.valid() {
-			return ErrInvalidFinishOutcome
-		}
 		return err
 	}
 	workErr := run.closeActiveWork()
@@ -351,32 +348,6 @@ func (run *runtimeRun) Finish(value any, documents ...*PresentationDocument) err
 		return errors.Join(workErr, outcomeErr, run.richFailure, restoreErr)
 	}
 	return errors.Join(workErr, outcomeErr, run.richFailure, restoreErr, run.writeResult(*result))
-}
-
-func finishRequestFromValue(value any, documents ...*PresentationDocument) (FinishRequest, *PresentationDocument, bool, error) {
-	if len(documents) > 1 {
-		return FinishRequest{}, nil, false, fmt.Errorf("%w: at most one durable result is allowed", ErrInvalidFinishRequest)
-	}
-	var result *PresentationDocument
-	if len(documents) == 1 {
-		result = documents[0]
-	}
-	switch request := value.(type) {
-	case FinishRequest:
-		return request, result, false, nil
-	case *FinishRequest:
-		if request == nil {
-			return FinishRequest{}, nil, false, fmt.Errorf("%w: request is nil", ErrInvalidFinishRequest)
-		}
-		return *request, result, false, nil
-	case FinishOutcome:
-		// Existing adapters pass a durable Result as the second argument. Keep
-		// it out of the new completion projection until the adapter provides an
-		// explicit FinishRequest in its own migration slice.
-		return FinishRequest{Outcome: request}, result, true, nil
-	default:
-		return FinishRequest{}, nil, false, fmt.Errorf("%w: unsupported request type %T", ErrInvalidFinishRequest, value)
-	}
 }
 
 // ResultCheckpoint writes one stable service-command checkpoint while leaving

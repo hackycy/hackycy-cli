@@ -13,15 +13,13 @@ import (
 )
 
 const (
-	legacySalt       = "bGVnYWN5LWNvbmZpZy1zYWx0"
-	legacyCiphertext = "MDEyMzQ1Njc4OWFiY2RlZg==:dc4+2YzE3mJaY01o7OyLtw==:QvEGhYbu7lpp4lc2/N0a8IXumQ=="
-	legacySecret     = "token: hello \u4f60\u597d"
+	testCiphertext = "MDEyMzQ1Njc4OWFiY2RlZg==:dc4+2YzE3mJaY01o7OyLtw==:QvEGhYbu7lpp4lc2/N0a8IXumQ=="
+	testSecret     = "token: hello \u4f60\u597d"
 )
 
-func TestSemanticReadsDecryptBunWrittenCurrentAndLegacyConfig(t *testing.T) {
-	t.Run("current shape", func(t *testing.T) {
-		store := semanticStore(t, nil)
-		writeConfigFixture(t, store, `{
+func TestSemanticReadsDecryptCurrentConfig(t *testing.T) {
+	store := semanticStore(t, nil)
+	writeConfigFixture(t, store, `{
   "salt": "bGVnYWN5LWNvbmZpZy1zYWx0",
   "fork": {"instances": {
     "beta": {"host": "gitlab.example", "type": "gitlab", "token": "MDEyMzQ1Njc4OWFiY2RlZg==:dc4+2YzE3mJaY01o7OyLtw==:QvEGhYbu7lpp4lc2/N0a8IXumQ=="},
@@ -35,62 +33,43 @@ func TestSemanticReadsDecryptBunWrittenCurrentAndLegacyConfig(t *testing.T) {
   }}
 }`)
 
-		forks, err := store.ListForkInstances()
-		if err != nil {
-			t.Fatalf("ListForkInstances() returned an error: %v", err)
-		}
-		if got, want := forkNames(forks), []string{"beta", "alpha"}; !sameStrings(got, want) {
-			t.Fatalf("Fork order = %#v, want %#v", got, want)
-		}
-		if forks[0].Scheme != "https" || forks[0].TokenPreview != "MDEy***" {
-			t.Fatalf("safe Fork projection = %#v", forks[0])
-		}
-		if strings.Contains(fmt.Sprintf("%#v", forks), legacySecret) || strings.Contains(fmt.Sprintf("%#v", forks), legacyCiphertext) {
-			t.Fatal("Fork list exposed a secret or full ciphertext")
-		}
-		fork, found, err := store.ForkInstance("beta")
-		if err != nil || !found || fork.Token != legacySecret {
-			t.Fatalf("ForkInstance() = (%#v, %t, %v)", fork, found, err)
-		}
+	forks, err := store.ListForkInstances()
+	if err != nil {
+		t.Fatalf("ListForkInstances() returned an error: %v", err)
+	}
+	if got, want := forkNames(forks), []string{"beta", "alpha"}; !sameStrings(got, want) {
+		t.Fatalf("Fork order = %#v, want %#v", got, want)
+	}
+	if forks[0].Scheme != "https" || forks[0].TokenPreview != "MDEy***" {
+		t.Fatalf("safe Fork projection = %#v", forks[0])
+	}
+	if strings.Contains(fmt.Sprintf("%#v", forks), testSecret) || strings.Contains(fmt.Sprintf("%#v", forks), testCiphertext) {
+		t.Fatal("Fork list exposed a secret or full ciphertext")
+	}
+	fork, found, err := store.ForkInstance("beta")
+	if err != nil || !found || fork.Token != testSecret {
+		t.Fatalf("ForkInstance() = (%#v, %t, %v)", fork, found, err)
+	}
 
-		profiles, err := store.ListCMProfiles()
-		if err != nil {
-			t.Fatalf("ListCMProfiles() returned an error: %v", err)
-		}
-		if profiles.DefaultProfile != "work" || len(profiles.Profiles) != 1 || profiles.Profiles[0].Name != "work" {
-			t.Fatalf("ListCMProfiles() = %#v", profiles)
-		}
-		if strings.Contains(fmt.Sprintf("%#v", profiles), legacySecret) || strings.Contains(fmt.Sprintf("%#v", profiles), legacyCiphertext) {
-			t.Fatal("CM list exposed a secret or full ciphertext")
-		}
-		resolved, err := store.ResolveCMProfile(CMResolveOptions{})
-		if err != nil || resolved.APIKey != legacySecret || resolved.TimeoutMS != 300000 || resolved.MaxOutputTokens != 1000 {
-			t.Fatalf("ResolveCMProfile() = (%#v, %v)", resolved, err)
-		}
+	profiles, err := store.ListCMProfiles()
+	if err != nil {
+		t.Fatalf("ListCMProfiles() returned an error: %v", err)
+	}
+	if profiles.DefaultProfile != "work" || len(profiles.Profiles) != 1 || profiles.Profiles[0].Name != "work" {
+		t.Fatalf("ListCMProfiles() = %#v", profiles)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", profiles), testSecret) || strings.Contains(fmt.Sprintf("%#v", profiles), testCiphertext) {
+		t.Fatal("CM list exposed a secret or full ciphertext")
+	}
+	resolved, err := store.ResolveCMProfile(CMResolveOptions{})
+	if err != nil || resolved.APIKey != testSecret || resolved.TimeoutMS != 300000 || resolved.MaxOutputTokens != 1000 {
+		t.Fatalf("ResolveCMProfile() = (%#v, %v)", resolved, err)
+	}
 
-		connections, err := store.ReadTunnelConnections()
-		if err != nil || len(connections) != 1 || connections[0].Token != legacySecret {
-			t.Fatalf("ReadTunnelConnections() = (%#v, %v)", connections, err)
-		}
-	})
-
-	t.Run("legacy instances and ai", func(t *testing.T) {
-		store := semanticStore(t, nil)
-		writeConfigFixture(t, store, `{
-  "salt": "bGVnYWN5LWNvbmZpZy1zYWx0",
-  "instances": {"legacy": {"host": "https://legacy.example", "type": "github", "token": "MDEyMzQ1Njc4OWFiY2RlZg==:dc4+2YzE3mJaY01o7OyLtw==:QvEGhYbu7lpp4lc2/N0a8IXumQ=="}},
-  "ai": {"defaultProfile": "legacy", "profiles": {"legacy": {"baseURL": "https://legacy.provider/", "model": "legacy-model", "apiKey": "MDEyMzQ1Njc4OWFiY2RlZg==:dc4+2YzE3mJaY01o7OyLtw==:QvEGhYbu7lpp4lc2/N0a8IXumQ=="}}}
-}`)
-
-		fork, found, err := store.ForkInstance("legacy")
-		if err != nil || !found || fork.Host != "legacy.example" || fork.Scheme != "https" || fork.Token != legacySecret {
-			t.Fatalf("legacy ForkInstance() = (%#v, %t, %v)", fork, found, err)
-		}
-		resolved, err := store.ResolveCMProfile(CMResolveOptions{})
-		if err != nil || resolved.Name != "legacy" || resolved.APIKey != legacySecret {
-			t.Fatalf("legacy ResolveCMProfile() = (%#v, %v)", resolved, err)
-		}
-	})
+	connections, err := store.ReadTunnelConnections()
+	if err != nil || len(connections) != 1 || connections[0].Token != testSecret {
+		t.Fatalf("ReadTunnelConnections() = (%#v, %v)", connections, err)
+	}
 }
 
 func TestSemanticForkAndCMOperationsEncryptAndPreserveOrder(t *testing.T) {
@@ -289,7 +268,7 @@ func TestSetCMProfileAPIKeyEncryptsAndPreservesExistingFields(t *testing.T) {
 	}
 }
 
-func TestSetCMProfileNumericFieldsMatchLegacyParserBoundaries(t *testing.T) {
+func TestSetCMProfileNumericFieldsMatchCurrentParserBoundaries(t *testing.T) {
 	for _, update := range []struct {
 		name        string
 		key         string

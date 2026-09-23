@@ -89,7 +89,7 @@ func TestTerminalZipAdapterTranslatesPlanningAndPresentation(t *testing.T) {
 	}
 }
 
-func TestTerminalZipAdapterPlainPreservesLegacyInputGrammar(t *testing.T) {
+func TestTerminalZipAdapterPlainPreservesCurrentInputGrammar(t *testing.T) {
 	stdout, diagnostics := &bytes.Buffer{}, &bytes.Buffer{}
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
 		Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive},

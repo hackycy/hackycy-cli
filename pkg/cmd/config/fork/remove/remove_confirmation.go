@@ -21,7 +21,7 @@ const (
 	RemoveConfirmationCancelled
 )
 
-// ConfirmRemove asks for the legacy removal confirmation without mutating configuration.
+// ConfirmRemove asks for the current removal confirmation without mutating configuration.
 func ConfirmRemove(name string, prompter RemoveConfirmationPrompter) (RemoveConfirmation, error) {
 	confirmed, cancelled, err := prompter.Confirm(ConfirmPrompt{Message: fmt.Sprintf("Remove instance \"%s\"?", name)})
 	if err != nil {

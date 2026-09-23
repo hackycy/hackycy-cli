@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDeriveKeyMatchesLegacyPBKDF2Vector(t *testing.T) {
+func TestDeriveKeyMatchesCurrentPBKDF2Vector(t *testing.T) {
 	key, err := deriveKey("bGVnYWN5LWNvbmZpZy1zYWx0", "machine-id", "alice")
 	if err != nil {
 		t.Fatalf("deriveKey() returned an error: %v", err)
@@ -16,7 +16,7 @@ func TestDeriveKeyMatchesLegacyPBKDF2Vector(t *testing.T) {
 	}
 }
 
-func TestEncryptAndDecryptMatchLegacyAESGCMVector(t *testing.T) {
+func TestEncryptAndDecryptMatchCurrentAESGCMVector(t *testing.T) {
 	key, err := deriveKey("bGVnYWN5LWNvbmZpZy1zYWx0", "machine-id", "alice")
 	if err != nil {
 		t.Fatalf("deriveKey() returned an error: %v", err)

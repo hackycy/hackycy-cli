@@ -67,7 +67,7 @@ func cmPhaseDefinitionsForSegment(segment int) []terminalexperience.PhaseDefinit
 }
 
 // cmDetailedObserver is an optional terminal projection. The module keeps
-// its typed Tracker contract for legacy callers while the command adapter can
+// its typed Tracker contract for current callers while the command adapter can
 // expose the finer Work Phase boundaries required by the B Console.
 type cmDetailedObserver interface {
 	reportCMPhase(string, PhaseState, string)
@@ -119,7 +119,7 @@ type Phase struct {
 	FileCount int
 	Remote    string
 	// StageAll distinguishes the bulk staging phase for detailed terminal
-	// projections without changing the legacy PhaseKind contract.
+	// projections without changing the current PhaseKind contract.
 	StageAll bool
 }
 

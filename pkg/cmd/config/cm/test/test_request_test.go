@@ -11,7 +11,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/appconfig"
 )
 
-func TestNewCMTestProviderRequestUsesTheLegacyOpenAICompatibleShape(t *testing.T) {
+func TestNewCMTestProviderRequestUsesTheCurrentOpenAICompatibleShape(t *testing.T) {
 	profile := appconfig.ResolvedCMProfile{
 		Name:            "work",
 		BaseURL:         "https://provider.test/v1",

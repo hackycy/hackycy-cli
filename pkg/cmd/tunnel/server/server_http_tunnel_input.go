@@ -24,7 +24,7 @@ func (input *serverHTTPTunnelCreateInput) UnmarshalJSON(source []byte) error {
 }
 
 func parseServerHTTPTunnelMutation(source []byte) (TunnelMutationInput, error) {
-	object, err := serverTunnelJSONObject(source, "label", "protocol", "customDomains", "hostname", "location", "serverPort", "localHost", "localPort", "enabled", "options")
+	object, err := serverTunnelJSONObject(source, "label", "protocol", "customDomains", "location", "serverPort", "localHost", "localPort", "enabled", "options")
 	if err != nil {
 		return TunnelMutationInput{}, err
 	}
@@ -45,10 +45,6 @@ func parseServerHTTPTunnelMutation(source []byte) (TunnelMutationInput, error) {
 		return TunnelMutationInput{}, err
 	}
 	customDomains, err := serverTunnelOptionalStrings(object, "customDomains")
-	if err != nil {
-		return TunnelMutationInput{}, err
-	}
-	hostname, err := serverTunnelOptionalString(object, "hostname", true)
 	if err != nil {
 		return TunnelMutationInput{}, err
 	}
@@ -73,16 +69,15 @@ func parseServerHTTPTunnelMutation(source []byte) (TunnelMutationInput, error) {
 		return TunnelMutationInput{}, err
 	}
 	return TunnelMutationInput{
-		Protocol:       protocol,
-		CustomDomains:  customDomains,
-		LegacyHostname: hostname,
-		Location:       location,
-		ServerPort:     serverPort,
-		LocalHost:      localHost,
-		LocalPort:      localPort,
-		Enabled:        enabled,
-		Label:          label,
-		Options:        options,
+		Protocol:      protocol,
+		CustomDomains: customDomains,
+		Location:      location,
+		ServerPort:    serverPort,
+		LocalHost:     localHost,
+		LocalPort:     localPort,
+		Enabled:       enabled,
+		Label:         label,
+		Options:       options,
 	}, nil
 }
 

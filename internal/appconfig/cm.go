@@ -125,7 +125,7 @@ func (store *Store) SetDefaultCMProfile(name string) error {
 	})
 }
 
-// SetCMProfileValue applies the legacy semantic update for one supported key.
+// SetCMProfileValue applies the current semantic update for one supported key.
 func (store *Store) SetCMProfileValue(name, key, value string) error {
 	return store.updateDocument(func(document *document) error {
 		cm := ensureCMDocument(document)

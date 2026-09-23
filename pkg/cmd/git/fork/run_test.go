@@ -146,7 +146,7 @@ func TestModuleFallsBackToCloneForArchiveAndDefaultBranchFailures(t *testing.T) 
 	}
 }
 
-func TestModuleRetainsLegacyDestinationConfirmationAndReadErrorBehavior(t *testing.T) {
+func TestModuleRetainsCurrentDestinationConfirmationAndReadErrorBehavior(t *testing.T) {
 	tests := []struct {
 		name            string
 		input           Input

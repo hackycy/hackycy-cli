@@ -256,14 +256,14 @@ func (do upgradeHTTPDoer) Do(request *http.Request) (*http.Response, error) {
 func TestConsumeStateDoesNotReadAdjacentState(t *testing.T) {
 	directory := t.TempDir()
 	target := filepath.Join(directory, "ycy")
-	legacyPath := target + ".update-state.json"
-	if err := os.WriteFile(legacyPath, []byte("preserve"), 0o600); err != nil {
+	currentPath := target + ".update-state.json"
+	if err := os.WriteFile(currentPath, []byte("preserve"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ConsumeState(target); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(legacyPath)
+	contents, err := os.ReadFile(currentPath)
 	if err != nil || string(contents) != "preserve" {
 		t.Fatalf("adjacent state = %q, %v", contents, err)
 	}

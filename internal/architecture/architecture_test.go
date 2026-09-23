@@ -102,7 +102,7 @@ func TestActiveArchitecture(t *testing.T) {
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
 			switch relative {
-			case ".git", "legacy", ".scratch", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
+			case ".git", ".scratch", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
 				return filepath.SkipDir
 			}
 			return nil
@@ -161,7 +161,7 @@ func TestApprovedCharmV2ModuleGraph(t *testing.T) {
 			}
 			continue
 		}
-		if legacyCharmModule(module.Path) {
+		if unapprovedCharmModule(module.Path) {
 			violations = append(violations, "unapproved Charm module "+module.Path+"@"+module.Version)
 		}
 	}
@@ -230,7 +230,7 @@ func TestLogV2RemainsPrivateToLogging(t *testing.T) {
 		relative = filepath.ToSlash(relative)
 		if entry.IsDir() {
 			switch relative {
-			case ".git", ".scratch", "legacy", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
+			case ".git", ".scratch", "mock", "node_modules", "web/node_modules", "web/dist", "tools":
 				return filepath.SkipDir
 			}
 			return nil
@@ -324,7 +324,7 @@ type moduleDescription struct {
 	Version string
 }
 
-func legacyCharmModule(path string) bool {
+func unapprovedCharmModule(path string) bool {
 	return path == "github.com/charmbracelet/bubbles" ||
 		path == "github.com/charmbracelet/bubbletea" ||
 		path == "github.com/charmbracelet/huh" ||
@@ -672,9 +672,6 @@ func validateImport(source, filePath, imported string) []string {
 			violations = append(violations, filePath+": Cobra/pflag may be imported only by command packages")
 		}
 	}
-	if strings.Contains(imported, "/legacy/"+"b"+"un") {
-		violations = append(violations, filePath+": active code imports frozen legacy")
-	}
 	if strings.HasPrefix(imported, modulePath+"/") {
 		violations = append(violations, validateInternalImport(source, filePath, strings.TrimPrefix(imported, modulePath+"/"))...)
 	}
@@ -709,9 +706,6 @@ func validateInternalImport(source, filePath, imported string) []string {
 	}
 	if isInternalPackage(source) && imported == "cmd/ycy" {
 		violations = append(violations, filePath+": internal package imports cmd/ycy")
-	}
-	if isInternalPackage(source) && imported == "legacy/bun" {
-		violations = append(violations, filePath+": internal package imports legacy/bun")
 	}
 	if imported == "web" && !allowedWebassetsConsumer(source) {
 		violations = append(violations, filePath+": webassets consumer is not an owning command or composition root")

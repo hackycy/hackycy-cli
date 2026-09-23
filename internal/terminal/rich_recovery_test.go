@@ -52,7 +52,7 @@ func TestRuntimeRecoversStoppedRichRendererAndBlocksReplay(t *testing.T) {
 	if _, err := run.Ask(InteractionRequest{Kind: InteractionText, Message: "Retry?", ConsoleStepID: "retry"}); !errors.Is(err, rendererErr) {
 		t.Fatalf("Ask() after renderer failure = %v, want original failure", err)
 	}
-	if err := run.Finish(Succeeded, &PresentationDocument{Blocks: []PresentationBlock{{Text: "result"}}}); !errors.Is(err, rendererErr) {
+	if err := run.Finish(FinishRequest{Outcome: Succeeded}, &PresentationDocument{Blocks: []PresentationBlock{{Text: "result"}}}); !errors.Is(err, rendererErr) {
 		t.Fatalf("Finish() after renderer failure = %v, want original failure", err)
 	}
 	if got := diagnostics.String(); strings.Contains(got, "unused") || strings.Contains(got, "result") {
@@ -61,7 +61,7 @@ func TestRuntimeRecoversStoppedRichRendererAndBlocksReplay(t *testing.T) {
 	if got, want := output.String(), "result\n"; got != want {
 		t.Fatalf("Finish() fallback result = %q, want %q", got, want)
 	}
-	if err := run.Finish(Failed, &PresentationDocument{Blocks: []PresentationBlock{{Text: "retry"}}}); !errors.Is(err, ErrExperienceRunFinished) {
+	if err := run.Finish(FinishRequest{Outcome: Failed}, &PresentationDocument{Blocks: []PresentationBlock{{Text: "retry"}}}); !errors.Is(err, ErrExperienceRunFinished) {
 		t.Fatalf("second Finish() after renderer failure = %v, want finished run", err)
 	}
 	if err := run.Close(); err != nil {
@@ -106,7 +106,7 @@ func TestRuntimeRecoversRendererTerminationDuringOutcomeDwell(t *testing.T) {
 	if run.controller != nil || !run.richDisabled || !errors.Is(run.richFailure, rendererErr) {
 		t.Fatalf("outcome recovery state = controller=%v disabled=%v failure=%v", run.controller, run.richDisabled, run.richFailure)
 	}
-	if err := run.Finish(Failed, nil); !errors.Is(err, ErrExperienceRunFinished) {
+	if err := run.Finish(FinishRequest{Outcome: Failed}); !errors.Is(err, ErrExperienceRunFinished) {
 		t.Fatalf("second Finish() error = %v, want ErrExperienceRunFinished", err)
 	}
 }

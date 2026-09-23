@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,13 +12,10 @@ import (
 	"strings"
 )
 
-const approvedLegacyHookHash = "7bc48fcc880a58ab4f92dbe45343a82eea1b2539c86e5c05dc6713d39bdf5d95"
-
 type hookKind string
 
 const (
 	hookMissing  hookKind = "missing"
-	hookLegacy   hookKind = "approved legacy hook"
 	hookLefthook hookKind = "lefthook"
 	hookUnknown  hookKind = "unknown"
 )
@@ -94,7 +89,7 @@ func (controller *Controller) Discover(context context.Context) (State, error) {
 	return state, nil
 }
 
-// Install removes only the approved legacy hook and replaces it with pinned Lefthook output.
+// Install replaces a missing or Lefthook-managed hook with pinned Lefthook output.
 func (controller *Controller) Install(context context.Context) error {
 	state, err := controller.Discover(context)
 	if err != nil {
@@ -108,11 +103,6 @@ func (controller *Controller) Install(context context.Context) error {
 	}
 	if err := controller.runLefthook(context, state.Root, "validate"); err != nil {
 		return fmt.Errorf("validate pinned Lefthook policy before installation: %w", err)
-	}
-	if state.PreCommitKind == hookLegacy {
-		if err := os.Remove(filepath.Join(state.HooksPath, "pre-commit")); err != nil {
-			return fmt.Errorf("remove approved legacy pre-commit hook: %w", err)
-		}
 	}
 	if err := controller.runLefthook(context, state.Root, "install", "pre-commit"); err != nil {
 		return fmt.Errorf("install pinned Lefthook pre-commit hook: %w", err)
@@ -159,14 +149,11 @@ func (controller *Controller) Doctor(context context.Context) error {
 	if _, err := os.Stat(filepath.Join(state.Root, "web", "node_modules")); err != nil {
 		return fmt.Errorf("web dependencies are unavailable; run make bootstrap")
 	}
-	if err := activeToolchainClean(state.Root); err != nil {
-		return err
-	}
 	fmt.Fprintln(controller.output, "hook lifecycle: ready")
 	return nil
 }
 
-// Uninstall removes only a Lefthook-managed pre-commit hook and never restores legacy content.
+// Uninstall removes only a Lefthook-managed pre-commit hook.
 func (controller *Controller) Uninstall(context context.Context) error {
 	state, err := controller.Discover(context)
 	if err != nil {
@@ -186,7 +173,7 @@ func (controller *Controller) Uninstall(context context.Context) error {
 		if err := os.Remove(checksum); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("remove Lefthook checksum: %w", err)
 		}
-	case hookLegacy, hookUnknown:
+	case hookUnknown:
 		return unknownHookError(filepath.Join(state.HooksPath, "pre-commit"))
 	}
 
@@ -264,10 +251,6 @@ func classifyHook(path string) (hookKind, error) {
 	if err != nil {
 		return hookUnknown, fmt.Errorf("read pre-commit hook %s: %w", path, err)
 	}
-	checksum := sha256.Sum256(contents)
-	if len(contents) == 222 && hex.EncodeToString(checksum[:]) == approvedLegacyHookHash {
-		return hookLegacy, nil
-	}
 	if strings.Contains(string(contents), "LEFTHOOK") {
 		return hookLefthook, nil
 	}
@@ -282,25 +265,13 @@ func requireDefaultHooksPath(state State) error {
 }
 
 func unknownHookError(path string) error {
-	return fmt.Errorf("pre-commit hook at %s is not an approved legacy or Lefthook hook; it was left unchanged", path)
+	return fmt.Errorf("pre-commit hook at %s is not a Lefthook hook; it was left unchanged", path)
 }
 
 func requireFile(path, description string) error {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return fmt.Errorf("%s is unavailable at %s; run make bootstrap", description, path)
-	}
-	return nil
-}
-
-func activeToolchainClean(root string) error {
-	legacyRuntime := "b" + "un"
-	for _, name := range []string{"package.json", legacyRuntime + ".lock", legacyRuntime + ".lockb", legacyRuntime + "fig.toml"} {
-		if _, err := os.Lstat(filepath.Join(root, name)); err == nil {
-			return fmt.Errorf("active obsolete toolchain residue %s is present", name)
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
 	}
 	return nil
 }

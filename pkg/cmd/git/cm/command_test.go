@@ -3,7 +3,6 @@ package cm
 import (
 	"bytes"
 	"context"
-	"reflect"
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/terminal"
@@ -11,7 +10,7 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdCMParsesLegacyFlagMatrix(t *testing.T) {
+func TestNewCmdCMParsesCurrentFlagMatrix(t *testing.T) {
 	var inputs []Input
 	for _, arguments := range [][]string{
 		{},
@@ -47,41 +46,6 @@ func TestNewCmdCMParsesLegacyFlagMatrix(t *testing.T) {
 	}
 	if got := inputs[4]; !got.IncludeScope {
 		t.Fatalf("scope input = %#v", got)
-	}
-}
-
-func TestNormalizeArgumentsPreservesLegacyOptionalRemoteForms(t *testing.T) {
-	var inputs []Input
-	for _, arguments := range [][]string{
-		{"git", "cm", "--push", "upstream"},
-		{"git", "cm", "-p", "upstream"},
-		{"git", "cm", "-pupstream"},
-		{"git", "cm", "--stage-push", "publish"},
-		{"git", "cm", "-cpublish"},
-		{"git", "cm", "-p=upstream"},
-		{"git", "cm", "--push", "-d"},
-	} {
-		command := NewCmdCM(newCMTestFactory(&bytes.Buffer{}, &bytes.Buffer{}), func(options *Options) error {
-			inputs = append(inputs, options.Input)
-			return nil
-		})
-		normalized := NormalizeArguments(arguments)
-		command.SetArgs(normalized[2:])
-		if err := command.ExecuteContext(context.Background()); err != nil {
-			t.Fatalf("%v normalized to %v, ExecuteContext() error = %v", arguments, normalized, err)
-		}
-	}
-
-	if got, want := inputs, []Input{
-		{Language: "en", Push: stringPointer("upstream")},
-		{Language: "en", Push: stringPointer("upstream")},
-		{Language: "en", Push: stringPointer("upstream")},
-		{Language: "en", StagePush: stringPointer("publish")},
-		{Language: "en", StagePush: stringPointer("publish")},
-		{Language: "en", Push: stringPointer("=upstream")},
-		{Language: "en", Push: stringPointer("origin"), DryRun: true},
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("inputs = %#v, want %#v", got, want)
 	}
 }
 
@@ -131,17 +95,6 @@ func TestParseTimeoutMSMatchesStrictJavaScriptNumberSemantics(t *testing.T) {
 	}
 	if _, err := parseTimeoutMS("-1000"); err == nil {
 		t.Fatalf("parseTimeoutMS negative result = %v", err)
-	}
-}
-
-func TestNormalizeArgumentsLeavesOtherCommandArgumentsUntouched(t *testing.T) {
-	arguments := []string{"git", "pulse", "--push", "upstream"}
-	if got := NormalizeArguments(arguments); !reflect.DeepEqual(got, arguments) {
-		t.Fatalf("normalized arguments = %#v, want %#v", got, arguments)
-	}
-	arguments = []string{"git", "cm", "--", "--push", "upstream"}
-	if got := NormalizeArguments(arguments); !reflect.DeepEqual(got, arguments) {
-		t.Fatalf("normalized arguments after delimiter = %#v, want %#v", got, arguments)
 	}
 }
 

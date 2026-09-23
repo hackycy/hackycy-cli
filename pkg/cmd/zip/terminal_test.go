@@ -40,7 +40,7 @@ func TestZipPhaseCoordinatorUsesOneControlledWorkCatalogAcrossPlanning(t *testin
 
 	tracks, updates := run.trackSnapshot()
 	if len(tracks) != 0 {
-		t.Fatalf("legacy Track calls = %#v, want none", tracks)
+		t.Fatalf("current Track calls = %#v, want none", tracks)
 	}
 	want := []terminalexperience.OperationPhase{
 		{ID: zipDiscoverWorkspacePhaseID, State: terminalexperience.PhaseActive, Detail: "Inspecting workspace"},
@@ -58,7 +58,7 @@ func TestZipPhaseCoordinatorUsesOneControlledWorkCatalogAcrossPlanning(t *testin
 		t.Fatalf("Work updates = %#v, want %#v", workUpdates, want)
 	}
 	if len(updates) != 0 {
-		t.Fatalf("legacy updates = %#v, want none", updates)
+		t.Fatalf("current updates = %#v, want none", updates)
 	}
 	if closeCount != 1 {
 		t.Fatalf("Work close count = %d, want 1", closeCount)
@@ -389,23 +389,10 @@ func (run *recordingZIPRun) Notice(document terminalexperience.PresentationDocum
 
 func (*recordingZIPRun) Milestone(terminalexperience.PresentationDocument) error { return nil }
 
-func (run *recordingZIPRun) Finish(value any, documents ...*terminalexperience.PresentationDocument) error {
+func (run *recordingZIPRun) Finish(request terminalexperience.FinishRequest, documents ...*terminalexperience.PresentationDocument) error {
 	run.mu.Lock()
 	defer run.mu.Unlock()
-	var outcome terminalexperience.FinishOutcome
-	var document *terminalexperience.PresentationDocument
-	switch request := value.(type) {
-	case terminalexperience.FinishRequest:
-		outcome = request.Outcome
-		run.finishes = append(run.finishes, recordedZIPFinish{outcome: outcome, request: request, document: firstZIPDocument(documents)})
-		return nil
-	case terminalexperience.FinishOutcome:
-		outcome = request
-	}
-	if len(documents) == 1 {
-		document = documents[0]
-	}
-	run.finishes = append(run.finishes, recordedZIPFinish{outcome: outcome, document: document})
+	run.finishes = append(run.finishes, recordedZIPFinish{outcome: request.Outcome, request: request, document: firstZIPDocument(documents)})
 	return nil
 }
 

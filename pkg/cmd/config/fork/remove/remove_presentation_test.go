@@ -2,7 +2,7 @@ package remove
 
 import "testing"
 
-func TestPresentRemoveEmptyUsesTheLegacyNoopMessages(t *testing.T) {
+func TestPresentRemoveEmptyUsesTheCurrentNoopMessages(t *testing.T) {
 	presenter := &recordingRemovePresenter{}
 
 	PresentRemoveEmpty(presenter)
@@ -15,7 +15,7 @@ func TestPresentRemoveEmptyUsesTheLegacyNoopMessages(t *testing.T) {
 	}
 }
 
-func TestPresentRemoveCancellationUsesTheLegacyMessage(t *testing.T) {
+func TestPresentRemoveCancellationUsesTheCurrentMessage(t *testing.T) {
 	presenter := &recordingRemovePresenter{}
 
 	PresentRemoveCancellation(presenter)

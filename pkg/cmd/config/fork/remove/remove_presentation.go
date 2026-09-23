@@ -8,7 +8,7 @@ type RemovePresenter interface {
 	Outcome(message string)
 }
 
-// PresentRemoveEmpty reports the legacy empty-configuration outcome.
+// PresentRemoveEmpty reports the current empty-configuration outcome.
 func PresentRemoveEmpty(presenter RemovePresenter) {
 	presenter.Info("No instances configured")
 	presenter.Outcome("Nothing to remove")

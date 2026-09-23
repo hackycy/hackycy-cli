@@ -22,7 +22,7 @@ const (
 	RemoveConfirmationCancelled
 )
 
-// ConfirmRemove asks for the legacy CM profile removal confirmation without mutating configuration.
+// ConfirmRemove asks for the current CM profile removal confirmation without mutating configuration.
 func ConfirmRemove(name string, prompter RemoveConfirmationPrompter) (RemoveConfirmation, error) {
 	confirmed, cancelled, err := prompter.Confirm(RemoveConfirmPrompt{Message: fmt.Sprintf("Remove CM profile \"%s\"?", name)})
 	if err != nil {

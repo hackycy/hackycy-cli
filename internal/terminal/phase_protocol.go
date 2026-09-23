@@ -9,7 +9,6 @@ import (
 var ErrInvalidPhaseProtocol = errors.New("terminal phase protocol is invalid")
 
 type phaseProtocol struct {
-	legacy  bool
 	phases  []OperationPhase
 	index   map[string]int
 	reached map[string]bool
@@ -28,7 +27,7 @@ func newPhaseProtocol(operation TrackedOperation) (*phaseProtocol, error) {
 		definitions = operation.PhaseDefinitions
 	}
 	if len(definitions) == 0 {
-		return &phaseProtocol{legacy: true}, nil
+		return nil, phaseProtocolError("at least one phase definition is required")
 	}
 
 	protocol := &phaseProtocol{
@@ -53,9 +52,6 @@ func newPhaseProtocol(operation TrackedOperation) (*phaseProtocol, error) {
 }
 
 func (protocol *phaseProtocol) apply(update OperationPhase) (OperationPhase, error) {
-	if protocol.legacy {
-		return update, nil
-	}
 	if update.ID != "" && update.PhaseID != "" && update.ID != update.PhaseID {
 		return OperationPhase{}, phaseProtocolError("phase update ID %q conflicts with phase ID %q", update.ID, update.PhaseID)
 	}
@@ -114,7 +110,7 @@ func samePhaseDefinitions(first, second []PhaseDefinition) bool {
 }
 
 func (protocol *phaseProtocol) finalSnapshot() []OperationPhase {
-	if protocol == nil || protocol.legacy {
+	if protocol == nil {
 		return nil
 	}
 	result := make([]OperationPhase, 0, len(protocol.phases))

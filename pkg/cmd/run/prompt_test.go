@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestSelectScriptPreservesTheLegacyPromptAndScriptHints(t *testing.T) {
+func TestSelectScriptPreservesTheCurrentPromptAndScriptHints(t *testing.T) {
 	prompter := &recordingRunPrompter{script: "build"}
 	scripts := []Script{
 		{Name: "check", Command: "go test ./..."},

@@ -70,7 +70,7 @@ func TestTerminalGitForkAdapterTranslatesConfirmationPhasesAndPresentation(t *te
 	for phase := range tracked.Updates {
 		phases = append(phases, phase)
 	}
-	if got, want := phases, []terminalexperience.OperationPhase{{Name: "Downloading archive", Detail: "main", State: terminalexperience.PhaseActive}}; !reflect.DeepEqual(got, want) {
+	if got, want := phases, []terminalexperience.OperationPhase{{ID: forkDownloadArchivePhaseID, Detail: "main", State: terminalexperience.PhaseActive}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("tracked phases = %#v, want %#v", got, want)
 	}
 	outcome := operations[3].Value.(terminalexperience.PresentationDocument)

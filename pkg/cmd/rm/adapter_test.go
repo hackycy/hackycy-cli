@@ -75,7 +75,7 @@ func TestTerminalRMAdapterTranslatesPromptClusterAndPresentation(t *testing.T) {
 	}
 }
 
-func TestTerminalRMAdapterPlainPreservesLegacyInputGrammarAndMutationBoundaries(t *testing.T) {
+func TestTerminalRMAdapterPlainPreservesCurrentInputGrammarAndMutationBoundaries(t *testing.T) {
 	root := t.TempDir()
 	confirmed := writeStandaloneRMFile(t, root, "confirmed.txt")
 	cancelledTarget := writeStandaloneRMFile(t, root, "cancelled.txt")

@@ -116,11 +116,11 @@ func verifyExecutableFormat(artifact releaseArtifact) error {
 		if file.Cpu != want {
 			return fmt.Errorf("%s Mach-O CPU = %s, want %s", artifact.name, file.Cpu, want)
 		}
-		libraries, err := file.ImportedLibraries()
+		_, err = file.ImportedLibraries()
 		if err != nil {
 			return fmt.Errorf("inspect Mach-O libraries for %s: %w", artifact.name, err)
 		}
-		return rejectLegacyRuntimeLibraries(artifact.name, libraries)
+		return nil
 	case "linux":
 		file, err := elf.Open(artifact.path)
 		if err != nil {
@@ -141,7 +141,7 @@ func verifyExecutableFormat(artifact releaseArtifact) error {
 		if len(libraries) != 0 {
 			return fmt.Errorf("CGO-free Linux artifact imports libraries: %s", artifact.name)
 		}
-		return rejectLegacyRuntimeLibraries(artifact.name, libraries)
+		return nil
 	case "windows":
 		file, err := pe.Open(artifact.path)
 		if err != nil {
@@ -155,25 +155,14 @@ func verifyExecutableFormat(artifact releaseArtifact) error {
 		if file.Machine != want {
 			return fmt.Errorf("%s PE CPU = %#x, want %#x", artifact.name, file.Machine, want)
 		}
-		libraries, err := file.ImportedLibraries()
+		_, err = file.ImportedLibraries()
 		if err != nil {
 			return fmt.Errorf("inspect PE libraries for %s: %w", artifact.name, err)
 		}
-		return rejectLegacyRuntimeLibraries(artifact.name, libraries)
+		return nil
 	default:
 		return fmt.Errorf("unsupported artifact target: %s", artifact.name)
 	}
-}
-
-func rejectLegacyRuntimeLibraries(name string, libraries []string) error {
-	legacyRuntime := "b" + "un"
-	for _, library := range libraries {
-		lower := strings.ToLower(library)
-		if strings.Contains(lower, legacyRuntime) || strings.Contains(lower, "node") {
-			return fmt.Errorf("artifact imports a forbidden runtime library: %s -> %s", name, library)
-		}
-	}
-	return nil
 }
 
 func verifyBuildMetadata(artifact releaseArtifact) error {

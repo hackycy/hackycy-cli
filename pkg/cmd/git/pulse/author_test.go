@@ -18,7 +18,7 @@ func TestSelectAuthorsSkipsThePromptForZeroOrOneAuthor(t *testing.T) {
 	}
 }
 
-func TestSelectAuthorsUsesLegacyDefaultsAndFiltersSelection(t *testing.T) {
+func TestSelectAuthorsUsesCurrentDefaultsAndFiltersSelection(t *testing.T) {
 	testCases := []struct {
 		name         string
 		commits      []Commit

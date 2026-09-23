@@ -24,7 +24,7 @@ type DirectoryRemover interface {
 	RemoveAll(string) error
 }
 
-// CloneFallback performs the legacy shallow-clone fallback and removes its Git metadata.
+// CloneFallback performs the current shallow-clone fallback and removes its Git metadata.
 func CloneFallback(ctx context.Context, runner CloneRunner, remover DirectoryRemover, repository Repository, destination string) error {
 	return cloneFallbackWithProgress(ctx, runner, remover, repository, destination, nil)
 }
@@ -40,7 +40,7 @@ const (
 	cloneMetadataRemovalFailed
 )
 
-// cloneFallbackWithProgress keeps the public legacy helper intact while
+// cloneFallbackWithProgress keeps the public current helper intact while
 // exposing the two real mutation boundaries to the terminal adapter.
 func cloneFallbackWithProgress(ctx context.Context, runner CloneRunner, remover DirectoryRemover, repository Repository, destination string, progress func(cloneFallbackStage, error)) error {
 	if runner == nil {

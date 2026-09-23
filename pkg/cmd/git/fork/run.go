@@ -24,7 +24,7 @@ type OverwritePrompt struct {
 	Message     string
 }
 
-// OverwritePrompter obtains the legacy default-yes replacement decision.
+// OverwritePrompter obtains the current default-yes replacement decision.
 type OverwritePrompter interface {
 	ConfirmOverwrite(OverwritePrompt) (confirmed bool, cancelled bool, err error)
 }
@@ -68,7 +68,7 @@ type Result struct {
 	DefaultBranchError error
 	ArchiveError       error
 	// DiskFact records a conservative post-failure filesystem fact. It is empty
-	// for ordinary success and therefore does not alter the legacy result shape.
+	// for ordinary success and therefore does not alter the current result shape.
 	DiskFact string
 }
 

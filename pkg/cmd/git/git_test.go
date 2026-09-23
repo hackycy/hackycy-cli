@@ -11,11 +11,3 @@ func TestNewCmdGitRegistersItsDirectLeaves(t *testing.T) {
 		}
 	}
 }
-
-func TestNormalizeArgumentsDelegatesToCM(t *testing.T) {
-	arguments := []string{"git", "cm", "--push", "upstream"}
-	got := NormalizeArguments(arguments)
-	if len(got) != 3 || got[2] != "--push=upstream" {
-		t.Fatalf("NormalizeArguments(%#v) = %#v", arguments, got)
-	}
-}

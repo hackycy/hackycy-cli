@@ -110,7 +110,7 @@ func TestInteractionTranscriptProjectionRedactsAndUsesOptionLabels(t *testing.T)
 	if _, err := run.Ask(terminal.InteractionRequest{Kind: terminal.InteractionConfirm, Message: "Continue", TranscriptLabel: "Confirmation"}); err != nil {
 		t.Fatalf("confirm Ask() error = %v", err)
 	}
-	if err := run.Finish(terminal.Succeeded, nil); err != nil {
+	if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}); err != nil {
 		t.Fatalf("Finish() error = %v", err)
 	}
 	if got := diagnostics.String(); strings.Contains(got, "secret") {
@@ -213,7 +213,7 @@ func TestPlainAskUsesCommandOwnedParserWithoutChangingDefaultOrCancellation(t *t
 	var diagnostics bytes.Buffer
 	handler := terminal.NewInteractionHandler(terminal.InteractionOptions{
 		Capabilities: terminal.Capabilities{Interaction: terminal.PlainInteractive},
-		Input:        strings.NewReader("bad\nlegacy\n"),
+		Input:        strings.NewReader("bad\ncurrent\n"),
 		Diagnostics:  &diagnostics,
 	})
 
@@ -221,8 +221,8 @@ func TestPlainAskUsesCommandOwnedParserWithoutChangingDefaultOrCancellation(t *t
 		Kind:    terminal.InteractionSelect,
 		Message: "Choose",
 		ParsePlain: func(value string) (terminal.InteractionAnswer, error) {
-			if value != "legacy" {
-				return terminal.InteractionAnswer{}, errors.New("invalid legacy choice")
+			if value != "current" {
+				return terminal.InteractionAnswer{}, errors.New("invalid current choice")
 			}
 			return terminal.InteractionAnswer{Value: "selected"}, nil
 		},
@@ -231,7 +231,7 @@ func TestPlainAskUsesCommandOwnedParserWithoutChangingDefaultOrCancellation(t *t
 	if err != nil || answer.Value != "selected" {
 		t.Fatalf("Ask() = (%#v, %v)", answer, err)
 	}
-	if !strings.Contains(diagnostics.String(), "invalid legacy choice") {
+	if !strings.Contains(diagnostics.String(), "invalid current choice") {
 		t.Fatalf("diagnostics = %q", diagnostics.String())
 	}
 }

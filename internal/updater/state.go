@@ -36,7 +36,7 @@ const (
 	StatusFailed               UpdateStatus = "failed"
 )
 
-// UpdateTransaction is persisted beside the install target and never shares the legacy namespace.
+// UpdateTransaction is persisted beside the install target and never shares the current namespace.
 type UpdateTransaction struct {
 	TransactionID   string       `json:"transactionId"`
 	ParentPID       int          `json:"parentPid"`

@@ -43,14 +43,7 @@ func normalizeExactHostname(input string) (string, error) {
 	return ascii, nil
 }
 
-func normalizeCustomDomains(domains []string, legacyHostname *string) ([]string, error) {
-	if domains != nil && legacyHostname != nil {
-		return nil, serverDomainError("INVALID_TUNNEL", "Use customDomains instead of combining it with the legacy hostname field")
-	}
-	values := domains
-	if values == nil && legacyHostname != nil && *legacyHostname != "" {
-		values = []string{*legacyHostname}
-	}
+func normalizeCustomDomains(values []string) ([]string, error) {
 	if len(values) == 0 {
 		return nil, serverDomainError("INVALID_HOSTNAME", "HTTP Tunnel requires at least one custom domain")
 	}

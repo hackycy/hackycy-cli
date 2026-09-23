@@ -15,7 +15,7 @@ const (
 	smartActionAIAgent         = "ai-agent"
 )
 
-// SmartAction is one legacy smart-cleanup action shown by the terminal adapter.
+// SmartAction is one current smart-cleanup action shown by the terminal adapter.
 type SmartAction struct {
 	ID    string
 	Label string

@@ -120,7 +120,7 @@ func TestResolveServerConfigRejectsInvalidOrConflictingSettings(t *testing.T) {
 	}
 }
 
-func TestResolveServerConfigPreservesLegacyNumericAndCredentialSemantics(t *testing.T) {
+func TestResolveServerConfigPreservesCurrentNumericAndCredentialSemantics(t *testing.T) {
 	input := ServerOptionInput{
 		Address:          serverOption("127.0.0.1"),
 		ControlPort:      serverOption("7.5e3"),
@@ -149,7 +149,7 @@ func TestResolveServerConfigPreservesLegacyNumericAndCredentialSemantics(t *test
 		t.Fatalf("ResolveServerConfig() error = %v", err)
 	}
 	if config.Settings.ControlPort != 7500 || config.Settings.FRPPort != 7001 || config.Settings.AdvertiseFRPAddr == nil || *config.Settings.AdvertiseFRPAddr != (ServerHTTPFRPAddress{Host: "2001:db8::1", Port: 7001}) || config.FRPToken != "configured-token" {
-		t.Fatalf("legacy numeric config = %#v", config)
+		t.Fatalf("current numeric config = %#v", config)
 	}
 
 	if _, err := ResolveServerConfig(input, serverEnvironment(map[string]string{

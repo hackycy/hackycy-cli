@@ -37,7 +37,7 @@ func TestResolvePulseRootResolvesDefaultRelativeAndAbsoluteDirectories(t *testin
 	}
 }
 
-func TestResolvePulseRootMapsMissingAndFileTargetsToLegacyErrors(t *testing.T) {
+func TestResolvePulseRootMapsMissingAndFileTargetsToCurrentErrors(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "file")
 	if err := os.WriteFile(file, []byte("file"), 0o600); err != nil {

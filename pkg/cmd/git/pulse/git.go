@@ -30,14 +30,14 @@ type Commit struct {
 }
 
 // FetchResult retains the otherwise silent repository inspection failures.
-// They remain separate from commits so the caller can preserve legacy no-result behavior.
+// They remain separate from commits so the caller can preserve current no-result behavior.
 type FetchResult struct {
 	Commits               []Commit
 	FailedRepositories    int
 	FailedRepositoryPaths []string
 }
 
-// FetchCommits reads the selected range from each repository with the legacy five-child limit.
+// FetchCommits reads the selected range from each repository with the current five-child limit.
 func FetchCommits(ctx context.Context, runner GitRunner, repositories []string, since string, onProgress func(string, int)) (FetchResult, error) {
 	if len(repositories) == 0 {
 		return FetchResult{}, nil

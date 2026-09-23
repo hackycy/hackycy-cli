@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPresentationUsesTheLegacyRunMessages(t *testing.T) {
+func TestPresentationUsesTheCurrentRunMessages(t *testing.T) {
 	presenter := &recordingRunPresenter{}
 	presentIntroduction(presenter)
 	presentLaunch(presenter, ChildRequest{

@@ -24,7 +24,7 @@ func TestSelectUsesExplicitEnvironmentAndMergeOrder(t *testing.T) {
 	}
 }
 
-func TestSelectPromptsWithLegacyChoices(t *testing.T) {
+func TestSelectPromptsWithCurrentChoices(t *testing.T) {
 	discovery := Discovery{
 		Directory:        "/project",
 		BaseFile:         ".env",

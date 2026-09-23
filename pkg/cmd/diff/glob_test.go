@@ -2,7 +2,7 @@ package diff
 
 import "testing"
 
-func TestExplicitExclusionsPreserveBunGlobVectors(t *testing.T) {
+func TestExplicitExclusionsPreserveGlobVectors(t *testing.T) {
 	testCases := []struct {
 		name      string
 		patterns  []string

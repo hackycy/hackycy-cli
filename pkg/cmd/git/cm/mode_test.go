@@ -2,7 +2,7 @@ package cm
 
 import "testing"
 
-func TestResolveExecutionModePreservesTheLegacyFlagMatrix(t *testing.T) {
+func TestResolveExecutionModePreservesTheCurrentFlagMatrix(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string
 		input Input
@@ -81,7 +81,7 @@ func TestResolveExecutionModePreservesTheLegacyFlagMatrix(t *testing.T) {
 	}
 }
 
-func TestResolveExecutionModeRejectsOnlyTheLegacyConflicts(t *testing.T) {
+func TestResolveExecutionModeRejectsOnlyTheCurrentConflicts(t *testing.T) {
 	for _, testCase := range []struct {
 		name  string
 		input Input

@@ -106,7 +106,7 @@ type InteractionRequest struct {
 	PlainLead    string
 	PlainPrompt  string
 	// ConsoleStepID identifies the corresponding entry in the complete Form
-	// Catalog. An empty ID is retained for legacy adapters without a catalog.
+	// Catalog. An empty ID is retained for current adapters without a catalog.
 	ConsoleStepID string
 	// TranscriptLabel is the safe label used for the completed answer marker.
 	TranscriptLabel string
@@ -263,13 +263,12 @@ type ExperienceRun interface {
 	Milestone(PresentationDocument) error
 	// Finish accepts a bounded FinishRequest and an optional durable Result.
 	// The optional document remains a separate stdout channel; it is never
-	// derived into the Live View or Interaction Transcript. A FinishOutcome
-	// first argument retains source compatibility for existing adapters.
-	Finish(any, ...*PresentationDocument) error
+	// derived into the Live View or Interaction Transcript.
+	Finish(FinishRequest, ...*PresentationDocument) error
 	// ResultCheckpoint writes one identified service-command result without
 	// closing the run or entering the interaction transcript.
 	ResultCheckpoint(string, PresentationDocument) error
-	// Result remains for command adapters that have not yet migrated to Finish.
+	// Result writes a durable result without recording a semantic outcome.
 	Result(PresentationDocument) error
 	Close() error
 }

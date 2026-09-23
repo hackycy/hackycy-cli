@@ -25,7 +25,7 @@ func TestPresentIntroductionMissingPathsAndExplicitTargets(t *testing.T) {
 	}
 }
 
-func TestPresentCancellationOutcomesUseLegacyMessages(t *testing.T) {
+func TestPresentCancellationOutcomesUseCurrentMessages(t *testing.T) {
 	testCases := []struct {
 		name    string
 		present func(Presenter)
@@ -46,7 +46,7 @@ func TestPresentCancellationOutcomesUseLegacyMessages(t *testing.T) {
 	}
 }
 
-func TestPresentScanAndNoTargetOutcomesUseLegacyCounts(t *testing.T) {
+func TestPresentScanAndNoTargetOutcomesUseCurrentCounts(t *testing.T) {
 	presenter := &recordingPresenter{}
 
 	presentScanStart(presenter)

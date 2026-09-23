@@ -24,7 +24,7 @@ func (report Report) IsEmpty() bool {
 	return report.CommitCount == 0
 }
 
-// BuildReport groups commits by absolute repository path and sorts the legacy presentation order.
+// BuildReport groups commits by absolute repository path and sorts the current presentation order.
 func BuildReport(commits []Commit) Report {
 	groups := make(map[string][]Commit)
 	for _, commit := range commits {

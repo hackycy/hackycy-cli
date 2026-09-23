@@ -18,16 +18,15 @@ type ServerPortRange struct {
 }
 
 type TunnelMutationInput struct {
-	Protocol       tunnelruntime.TunnelProtocol
-	CustomDomains  []string
-	LegacyHostname *string
-	Location       *string
-	ServerPort     *int64
-	LocalHost      *string
-	LocalPort      int64
-	Enabled        *bool
-	Label          *string
-	Options        *TunnelOptionsInput
+	Protocol      tunnelruntime.TunnelProtocol
+	CustomDomains []string
+	Location      *string
+	ServerPort    *int64
+	LocalHost     *string
+	LocalPort     int64
+	Enabled       *bool
+	Label         *string
+	Options       *TunnelOptionsInput
 }
 
 // TunnelPatchValue distinguishes an omitted field from an explicitly supplied
@@ -37,16 +36,15 @@ type TunnelPatchValue[T any] struct {
 }
 
 type TunnelPatchInput struct {
-	Protocol       *tunnelruntime.TunnelProtocol
-	CustomDomains  *[]string
-	LegacyHostname *TunnelPatchValue[*string]
-	Location       *TunnelPatchValue[*string]
-	ServerPort     *TunnelPatchValue[*int64]
-	LocalHost      *string
-	LocalPort      *int64
-	Enabled        *bool
-	Label          *string
-	Options        *TunnelOptionsPatchInput
+	Protocol      *tunnelruntime.TunnelProtocol
+	CustomDomains *[]string
+	Location      *TunnelPatchValue[*string]
+	ServerPort    *TunnelPatchValue[*int64]
+	LocalHost     *string
+	LocalPort     *int64
+	Enabled       *bool
+	Label         *string
+	Options       *TunnelOptionsPatchInput
 }
 
 type TunnelOptionsPatchInput struct {
@@ -388,7 +386,7 @@ func (plane *ServerControlPlane) tunnelValuesWithOptions(ctx context.Context, co
 	}
 	values := normalizedTunnelValues{protocol: protocol, label: label, localHost: localHost, localPort: localPort, enabled: enabled, options: options}
 	if protocol == tunnelruntime.TunnelProtocolHTTP {
-		domains, err := normalizeCustomDomains(input.CustomDomains, input.LegacyHostname)
+		domains, err := normalizeCustomDomains(input.CustomDomains)
 		if err != nil {
 			return normalizedTunnelValues{}, err
 		}
@@ -444,8 +442,6 @@ func tunnelMutationForPatch(current ServerTunnel, patch TunnelPatchInput) Tunnel
 	}
 	if patch.CustomDomains != nil {
 		input.CustomDomains = append([]string(nil), (*patch.CustomDomains)...)
-	} else if patch.LegacyHostname != nil {
-		input.LegacyHostname = patch.LegacyHostname.Value
 	} else if current.Protocol == tunnelruntime.TunnelProtocolHTTP {
 		input.CustomDomains = append([]string(nil), current.CustomDomains...)
 	}

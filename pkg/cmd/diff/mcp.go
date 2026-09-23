@@ -34,7 +34,7 @@ func newMCPHandler(workspace *Workspace, bindingAddress string, refresh *refresh
 			writeMCPOriginError(writer)
 			return
 		}
-		if serveMCPTransportCompatibility(writer, request) {
+		if serveMCPTransport(writer, request) {
 			return
 		}
 		streamable.ServeHTTP(&mcpSecurityResponseWriter{ResponseWriter: writer}, request)

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestReadDocumentNormalizesCurrentAndLegacyShapes(t *testing.T) {
+func TestReadDocumentNormalizesCurrentShape(t *testing.T) {
 	tests := []struct {
 		name string
 		body string
@@ -35,23 +35,6 @@ func TestReadDocumentNormalizesCurrentAndLegacyShapes(t *testing.T) {
 				}},
 			},
 		},
-		{
-			name: "legacy instances ai and URL host",
-			body: `{
-  "salt": "bGVnYWN5LXNhbHQ=",
-  "instances": {"gitlab": {"host": "http://gitlab.example:8080/path", "type": "gitlab", "token": "ciphertext"}},
-  "ai": {"profiles": {"legacy": {"baseURL": "https://provider.example/", "model": "model", "apiKey": "api-ciphertext"}}}
-}`,
-			want: document{
-				Salt: "bGVnYWN5LXNhbHQ=",
-				Fork: forkDocument{Instances: map[string]forkDocumentInstance{
-					"gitlab": {Host: "gitlab.example:8080", Scheme: "http", Type: "gitlab", Token: "ciphertext"},
-				}},
-				CM: &cmDocument{Profiles: map[string]cmDocumentProfile{
-					"legacy": {BaseURL: "https://provider.example/", Model: "model", APIKey: "api-ciphertext"},
-				}},
-			},
-		},
 	}
 
 	for _, test := range tests {
@@ -70,6 +53,23 @@ func TestReadDocumentNormalizesCurrentAndLegacyShapes(t *testing.T) {
 				t.Fatalf("readDocument() = %#v, want %#v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestReadDocumentIgnoresUnsupportedRootFields(t *testing.T) {
+	store := testStore(t)
+	writeConfigFixture(t, store, `{
+  "salt": "c2FsdA==",
+	"unsupportedFork": {"github": {"host": "github.example", "type": "github", "token": "ciphertext"}},
+	"unsupportedProvider": {"profiles": {"work": {"baseURL": "https://provider.example/", "model": "model", "apiKey": "api-ciphertext"}}}
+}`)
+
+	got, exists, err := store.readDocument()
+	if err != nil || !exists {
+		t.Fatalf("readDocument() = (%#v, %t, %v)", got, exists, err)
+	}
+	if len(got.Fork.Instances) != 0 || got.CM != nil {
+		t.Fatalf("readDocument() accepted unsupported root fields: %#v", got)
 	}
 }
 

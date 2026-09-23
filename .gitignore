@@ -28,7 +28,7 @@ test-results/
 # Pinned development-tool binary and local caches
 /tools/lefthook/bin/
 
-# Local release and legacy build artifacts
+# Local release artifacts
 /ycy
 /ycy-*
 /SHA256SUMS

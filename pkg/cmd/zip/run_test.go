@@ -91,7 +91,7 @@ func TestModuleValidatesTheSelectedSourceAfterPlanning(t *testing.T) {
 	}
 }
 
-func TestModuleMapsAFileSourceToTheLegacyPathNotDirectoryResult(t *testing.T) {
+func TestModuleMapsAFileSourceToTheCurrentPathNotDirectoryResult(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "not-a-directory")
 	writeZipFile(t, input, "file")
 	module := newZipModule(t, Dependencies{Prompter: selectFirstZipPrompter{output: "archive"}})

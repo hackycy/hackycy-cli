@@ -105,7 +105,7 @@ func TestResultCheckpointDoesNotEnterTranscriptOrRichRenderer(t *testing.T) {
 func TestResultCheckpointRejectsFinishedAndClosedRuns(t *testing.T) {
 	runtime := NewExperience(ExperienceOptions{Capabilities: Capabilities{Interaction: PlainInteractive}})
 	run := runtime.Open(context.Background())
-	if err := run.Finish(Succeeded, nil); err != nil {
+	if err := run.Finish(FinishRequest{Outcome: Succeeded}); err != nil {
 		t.Fatalf("Finish() error = %v", err)
 	}
 	if err := run.ResultCheckpoint("late", PresentationDocument{}); !errors.Is(err, ErrExperienceRunFinished) {

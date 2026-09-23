@@ -11,7 +11,7 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdZIPParsesLegacyFlagsAndDefaults(t *testing.T) {
+func TestNewCmdZIPParsesCurrentFlagsAndDefaults(t *testing.T) {
 	testCases := []struct {
 		arguments []string
 		want      Options

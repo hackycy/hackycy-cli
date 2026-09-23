@@ -51,9 +51,9 @@ func TestServerHandlerComposesDiffProtocolsAndEmbeddedShell(t *testing.T) {
 		t.Fatalf("asset response = code %d, headers %v, bytes %d", asset.Code, asset.Header(), asset.Body.Len())
 	}
 
-	legacyMCPFallback := serverHandlerResponse(handler, http.MethodGet, "/mcp/missing", nil)
-	if legacyMCPFallback.Code != http.StatusOK || legacyMCPFallback.Header().Get("Content-Type") != "text/html; charset=utf-8" {
-		t.Fatalf("MCP fallback response = code %d, headers %v, body %q", legacyMCPFallback.Code, legacyMCPFallback.Header(), legacyMCPFallback.Body.String())
+	currentMCPFallback := serverHandlerResponse(handler, http.MethodGet, "/mcp/missing", nil)
+	if currentMCPFallback.Code != http.StatusOK || currentMCPFallback.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("MCP fallback response = code %d, headers %v, body %q", currentMCPFallback.Code, currentMCPFallback.Header(), currentMCPFallback.Body.String())
 	}
 
 	initialize := []byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"server-handler-test","version":"1.0.0"}}}`)

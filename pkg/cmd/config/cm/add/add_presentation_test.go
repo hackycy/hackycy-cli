@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestPresentAddCancellationUsesTheLegacyMessage(t *testing.T) {
+func TestPresentAddCancellationUsesTheCurrentMessage(t *testing.T) {
 	presenter := &recordingCMAddPresenter{}
 
 	PresentAddCancellation(presenter)

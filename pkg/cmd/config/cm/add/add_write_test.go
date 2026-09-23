@@ -95,7 +95,7 @@ func TestSaveAddNormalizesEncryptsSetsTheFirstDefaultAndSilentlyOverwrites(t *te
 	}
 	ciphertext, _ := persisted["apiKey"].(string)
 	if ciphertext == "" || ciphertext == "replacement-work-key" || strings.Count(ciphertext, ":") != 2 {
-		t.Fatalf("persisted API key = %q, want encrypted legacy-compatible shape", ciphertext)
+		t.Fatalf("persisted API key = %q, want encrypted current-compatible shape", ciphertext)
 	}
 }
 

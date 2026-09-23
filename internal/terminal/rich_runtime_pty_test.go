@@ -327,13 +327,13 @@ func runRichLongListHelper(t *testing.T) {
 		t.Fatalf("multi-select Ask() error = %v", err)
 	}
 	updates := make(chan terminal.OperationPhase, 2)
-	updates <- terminal.OperationPhase{Name: "Working", Detail: "200 options", State: terminal.PhaseActive}
+	updates <- terminal.OperationPhase{ID: "working", Detail: "200 options", State: terminal.PhaseActive}
 	go func() {
 		time.Sleep(150 * time.Millisecond)
-		updates <- terminal.OperationPhase{Name: "Working", Detail: "200 options", State: terminal.PhaseCompleted}
+		updates <- terminal.OperationPhase{ID: "working", Detail: "200 options", State: terminal.PhaseCompleted}
 		close(updates)
 	}()
-	if err := run.Track(terminal.TrackedOperation{Label: "Long list", Updates: updates}); err != nil {
+	if err := run.Track(terminal.TrackedOperation{Label: "Long list", Phases: []terminal.PhaseDefinition{{ID: "working", Name: "Working"}}, Updates: updates}); err != nil {
 		t.Fatalf("Track() error = %v", err)
 	}
 	if err := run.Result(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: fmt.Sprintf("select=%s\nmulti=%d", selected.Value, len(multiple.Values))}}}); err != nil {
@@ -410,12 +410,12 @@ func runRichRedirectHelper(t *testing.T) {
 	}
 	updates := make(chan terminal.OperationPhase)
 	go func() {
-		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseActive}
+		updates <- terminal.OperationPhase{ID: "redirect", State: terminal.PhaseActive}
 		time.Sleep(spinner.Pulse.FPS + 50*time.Millisecond)
-		updates <- terminal.OperationPhase{Name: "Redirect work", State: terminal.PhaseCompleted}
+		updates <- terminal.OperationPhase{ID: "redirect", State: terminal.PhaseCompleted}
 		close(updates)
 	}()
-	if err := run.Track(terminal.TrackedOperation{Label: "Redirect work", Updates: updates}); err != nil {
+	if err := run.Track(terminal.TrackedOperation{Label: "Redirect work", Phases: []terminal.PhaseDefinition{{ID: "redirect", Name: "Redirect work"}}, Updates: updates}); err != nil {
 		t.Fatalf("Track() error = %v", err)
 	}
 	if _, err := io.WriteString(experience.DiagnosticWriter(), "deferred diagnostic\n"); err != nil {

@@ -3,7 +3,7 @@ package fs
 import "sync"
 
 // taskSubscription decouples a manager mutation from a potentially slow SSE writer
-// without dropping any of the complete snapshots accepted by the legacy contract.
+// without dropping any of the complete snapshots accepted by the current contract.
 type taskSubscription[T any] struct {
 	output chan []T
 	done   chan struct{}

@@ -28,7 +28,7 @@ var serverAgentWebSocketPingInterval = 30 * time.Second
 var serverAgentWebSocketHelloTimeout = 30 * time.Second
 
 // Agent authentication is exclusively Bearer-token based, so it retains the
-// legacy endpoint's lack of an Origin requirement.
+// current endpoint's lack of an Origin requirement.
 var serverAgentWebSocketUpgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }

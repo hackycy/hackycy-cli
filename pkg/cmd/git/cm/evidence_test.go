@@ -67,8 +67,8 @@ func TestCompileEvidenceExcludesProtectedContentAndRecordsInspectableRename(t *t
 }
 
 func TestExtractEvidenceFactsPrioritizesManifestDeclarationTestAndBehavior(t *testing.T) {
-	before := `{"dependencies":{"obsolete":"1.0.0","zod":"4.0.0"},"scripts":{"test":"legacy-test"}}`
-	after := `{"dependencies":{"zod":"4.4.3","vitest":"3.0.0"},"scripts":{"test":"legacy-test","lint":"eslint ."}}`
+	before := `{"dependencies":{"obsolete":"1.0.0","zod":"4.0.0"},"scripts":{"test":"current-test"}}`
+	after := `{"dependencies":{"zod":"4.4.3","vitest":"3.0.0"},"scripts":{"test":"current-test","lint":"eslint ."}}`
 	packageFile := withRole(evidenceFile("package.json"), FileRoleDependency)
 	packageFile.Manifest = &ManifestState{Before: &before, After: &after}
 	packageFile.Hunks = []DiffHunk{evidenceHunk(nil)}

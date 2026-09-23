@@ -302,7 +302,7 @@ func TestDeriveRecommendationConfidenceThresholds(t *testing.T) {
 	}
 }
 
-func TestArchiveNameDerivationPreservesLegacyPriorityAndSanitization(t *testing.T) {
+func TestArchiveNameDerivationPreservesCurrentPriorityAndSanitization(t *testing.T) {
 	testCases := []struct {
 		name  string
 		input string

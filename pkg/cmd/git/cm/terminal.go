@@ -243,6 +243,7 @@ func (adapter *terminalGitCMAdapter) Start(_ context.Context) (PhaseReporter, er
 	go func() {
 		err := adapter.run.Track(terminalexperience.TrackedOperation{
 			Label:         "Git CM",
+			Phases:        append([]terminalexperience.PhaseDefinition(nil), cmPhaseDefinitions...),
 			Updates:       reporter.updates,
 			RequestCancel: adapter.requestCancel,
 		})
@@ -324,13 +325,13 @@ func (adapter *terminalGitCMAdapter) reportCMPhase(id string, state PhaseState, 
 	if !adapter.active {
 		adapter.pending = append(adapter.pending, update)
 		if state == PhaseActive {
-			adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: cmLegacyPhaseLabel(id)}}})
+			adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: cmPhaseLabel(id)}}})
 		}
 		adapter.mu.Unlock()
 		return
 	}
 	if state == PhaseActive {
-		adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: cmLegacyPhaseLabel(id)}}})
+		adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: cmPhaseLabel(id)}}})
 	}
 	updates := adapter.activeUpdates
 	adapter.mu.Unlock()
@@ -362,7 +363,7 @@ func (adapter *terminalGitCMAdapter) reportControlledCMPhase(update terminalexpe
 	}
 }
 
-func cmLegacyPhaseLabel(id string) string {
+func cmPhaseLabel(id string) string {
 	switch id {
 	case cmInspectChangesPhaseID:
 		return "Inspecting changes"
@@ -816,21 +817,25 @@ func (reporter *terminalGitCMPhaseReporter) complete(err error) {
 }
 
 func terminalGitCMPhase(phase Phase) terminalexperience.OperationPhase {
-	name := "Staging selected files"
+	id := cmStageSelectedPhaseID
 	detail := gitCMPhaseFileDetail(phase.FileCount)
 	switch phase.Kind {
+	case PhaseStage:
+		if phase.StageAll {
+			id = cmStageAllPhaseID
+		}
 	case PhaseCollect:
-		name = "Collecting changes"
+		id = cmCaptureEvidencePhaseID
 	case PhaseGenerate:
-		name = "Generating commit message"
+		id = cmGenerateMessagePhaseID
 	case PhaseCommit:
-		name = "Creating commit"
+		id = cmCreateCommitPhaseID
 		detail = ""
 	case PhasePush:
-		name = "Pushing commit"
+		id = cmPushCommitPhaseID
 		detail = phase.Remote
 	}
-	return terminalexperience.OperationPhase{Name: name, Detail: detail, State: terminalGitCMPhaseState(phase.State)}
+	return terminalexperience.OperationPhase{ID: id, Detail: detail, State: terminalGitCMPhaseState(phase.State)}
 }
 
 func gitCMPhaseFileDetail(count int) string {

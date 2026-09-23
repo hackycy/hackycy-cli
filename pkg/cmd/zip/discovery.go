@@ -84,7 +84,7 @@ var artifactDirectorySpecs = []artifactDirectorySpec{
 	{Relative: "public", AppliesTo: []ProjectKind{ProjectKindFrontend, ProjectKindGeneric}, BaseScore: 42, Reason: "public is available, but may still be source assets"},
 }
 
-// ProjectKind identifies the legacy project's inferred frontend family.
+// ProjectKind identifies the current project's inferred frontend family.
 type ProjectKind string
 
 const (
@@ -205,7 +205,7 @@ func NormalizeRelativePath(root, target string) string {
 	return filepath.ToSlash(relative)
 }
 
-// SanitizeFileName keeps the frozen legacy archive-name normalization.
+// SanitizeFileName keeps the frozen current archive-name normalization.
 func SanitizeFileName(value string) string {
 	if slash := strings.LastIndex(value, "/"); slash >= 0 {
 		value = value[slash+1:]
@@ -241,7 +241,7 @@ func SanitizeFileName(value string) string {
 	return value
 }
 
-// ArchiveNameFromRemoteURL derives the legacy default archive name from one Git remote URL.
+// ArchiveNameFromRemoteURL derives the current default archive name from one Git remote URL.
 func ArchiveNameFromRemoteURL(remote string) string {
 	repositoryPath := ""
 	if match := sshRemotePattern.FindStringSubmatch(remote); len(match) == 2 {

@@ -44,23 +44,14 @@ func TestServerDomainNormalizesHTTPRoutesAndDomainSets(t *testing.T) {
 			return err
 		}(), "INVALID_HTTP_ROUTE")
 	}
-	gotDomains, err := normalizeCustomDomains([]string{"App.Example.com", "app.example.com", "\u4f8b\u5b50.\u6d4b\u8bd5"}, nil)
+	gotDomains, err := normalizeCustomDomains([]string{"App.Example.com", "app.example.com", "\u4f8b\u5b50.\u6d4b\u8bd5"})
 	if err != nil || strings.Join(gotDomains, ",") != "app.example.com,xn--fsqu00a.xn--0zwm56d" {
 		t.Fatalf("normalizeCustomDomains() = (%#v, %v)", gotDomains, err)
 	}
-	legacy := "Legacy.Example.com"
-	gotDomains, err = normalizeCustomDomains(nil, &legacy)
-	if err != nil || strings.Join(gotDomains, ",") != "legacy.example.com" {
-		t.Fatalf("legacy normalizeCustomDomains() = (%#v, %v)", gotDomains, err)
-	}
 	assertServerDomainCode(t, func() error {
-		_, err := normalizeCustomDomains([]string{}, nil)
+		_, err := normalizeCustomDomains([]string{})
 		return err
 	}(), "INVALID_HOSTNAME")
-	assertServerDomainCode(t, func() error {
-		_, err := normalizeCustomDomains([]string{"app.example.com"}, &legacy)
-		return err
-	}(), "INVALID_TUNNEL")
 }
 
 func TestServerDomainNormalizesClientAndTunnelFields(t *testing.T) {

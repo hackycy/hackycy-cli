@@ -22,6 +22,7 @@ func TestRecordingExperienceCapturesOnlyTerminalSemantics(t *testing.T) {
 	}
 	operation := terminal.TrackedOperation{
 		Label:   "Scan repositories",
+		Phases:  []terminal.PhaseDefinition{{ID: "scan", Name: "Scanning"}},
 		Updates: updates,
 	}
 	experience := terminaltest.NewRecordingExperience(

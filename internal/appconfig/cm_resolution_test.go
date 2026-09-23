@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestResolveCMProfileUsesTheLegacySelectionPrecedence(t *testing.T) {
+func TestResolveCMProfileUsesTheCurrentSelectionPrecedence(t *testing.T) {
 	t.Run("explicit profile wins over environment and default", func(t *testing.T) {
 		environment := map[string]string{"YCY_CM_PROFILE": "environment"}
 		store := populatedCMResolutionStore(t, environment)
@@ -125,7 +125,7 @@ func TestResolveCMProfileAppliesEnvironmentCompatibilityRules(t *testing.T) {
 		}
 	})
 
-	t.Run("missing values retain the actionable legacy error", func(t *testing.T) {
+	t.Run("missing values retain the actionable current error", func(t *testing.T) {
 		store := semanticStore(t, map[string]string{})
 		_, err := store.ResolveCMProfile(CMResolveOptions{})
 		const want = "No usable CM profile found. Run \"ycy config cm add\" or set YCY_CM_BASE_URL, YCY_CM_MODEL, and YCY_CM_API_KEY."

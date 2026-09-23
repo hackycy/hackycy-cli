@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestSelectDaysUsesExplicitLegacyValuesWithoutPrompting(t *testing.T) {
+func TestSelectDaysUsesExplicitCurrentValuesWithoutPrompting(t *testing.T) {
 	days := -1
 	got, cancelled, err := selectDays(Input{Days: &days}, panicPulsePrompter{})
 	if err != nil || cancelled || got != -1 {
@@ -13,7 +13,7 @@ func TestSelectDaysUsesExplicitLegacyValuesWithoutPrompting(t *testing.T) {
 	}
 }
 
-func TestSelectDaysProvidesTheLegacyPromptChoices(t *testing.T) {
+func TestSelectDaysProvidesTheCurrentPromptChoices(t *testing.T) {
 	prompter := &scriptedPulsePrompter{days: 7}
 	got, cancelled, err := selectDays(Input{}, prompter)
 	if err != nil || cancelled || got != 7 {

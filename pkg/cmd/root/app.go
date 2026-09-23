@@ -59,7 +59,6 @@ func (app *App) diagnostics() io.Writer {
 // Execute builds a fresh Cobra tree for every invocation and never exits the process itself.
 func (app *App) Execute(context context.Context, arguments []string) Outcome {
 	arguments = normalizeDiagnosticAliases(arguments)
-	arguments = gitcommand.NormalizeArguments(arguments)
 	controls := collectDiagnosticControls(arguments)
 	var presentationErr error
 	root := app.rootCommandWithPresentationError(controls, func(err error) {

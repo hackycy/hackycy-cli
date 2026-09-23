@@ -11,7 +11,7 @@
 1. 代码与测试。
 2. `Makefile`、`.github/workflows/` 和 `tools/`。
 3. 本文件。
-4. `legacy/bun/` 仅用于必要的历史兼容分析，不属于当前实现，也禁止被生产代码依赖。
+4. 当前 Go/Web 实现是唯一受支持的实现。
 
 常用入口：
 
@@ -218,7 +218,6 @@ adapters
 * `charm.land/log/v2` 只由 `internal/logging` 封装。
 * `os.Exit` 只属于 `cmd/ycy`。
 * 配置持久化细节只属于 `internal/appconfig`。
-* active production code 不得 import `legacy/bun`。
 * Web embedded assets 只能由明确拥有它们的 package 使用。
 
 修改目录结构或依赖方向时，先检查：
@@ -267,10 +266,6 @@ acceptance/*
     ↓
 真实进程、终端、浏览器、跨包行为
 ```
-
-如果历史 Bun 实现和当前 Go 实现不同，优先当前测试和当前代码。
-
-不要为了保持历史代码结构而破坏现在的架构。
 
 ---
 
@@ -935,29 +930,7 @@ sgccr.ccs.tencentyun.com/sooosin-sg/hackycy-cli
 
 ---
 
-## 23. Generated / Frozen 区域
-
-### `legacy/bun/`
-
-冻结。
-
-用途：
-
-```text
-历史行为分析
-兼容性参考
-迁移对照
-```
-
-禁止：
-
-```text
-production import
-从这里启动当前程序
-继续在这里开发新功能
-```
-
-### Generated output
+## 23. Generated 区域
 
 以下内容都不属于源代码：
 

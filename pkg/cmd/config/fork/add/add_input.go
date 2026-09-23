@@ -60,7 +60,7 @@ var protocolChoices = []Choice{
 	{Value: "http", Label: "HTTP (self-hosted / no TLS)"},
 }
 
-// PromptAdd collects the legacy add questions in their observable order.
+// PromptAdd collects the current add questions in their observable order.
 func PromptAdd(prompter AddPrompter) (AddInput, bool, error) {
 	alias, cancelled, err := prompter.Text(TextPrompt{
 		Message:     "Instance name (alias)",

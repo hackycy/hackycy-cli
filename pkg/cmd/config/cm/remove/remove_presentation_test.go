@@ -2,7 +2,7 @@ package remove
 
 import "testing"
 
-func TestPresentRemoveCancellationUsesTheLegacyMessage(t *testing.T) {
+func TestPresentRemoveCancellationUsesTheCurrentMessage(t *testing.T) {
 	presenter := &recordingCMRemovePresenter{}
 
 	PresentRemoveCancellation(presenter)

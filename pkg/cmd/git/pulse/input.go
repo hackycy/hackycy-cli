@@ -6,7 +6,7 @@ type Input struct {
 	Days      *int
 }
 
-// DayChoice is one selectable legacy date range.
+// DayChoice is one selectable current date range.
 type DayChoice struct {
 	Value int
 	Label string

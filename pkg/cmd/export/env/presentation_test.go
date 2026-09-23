@@ -28,7 +28,7 @@ func TestPresentReportsOutputTargetWithoutPrintingJSON(t *testing.T) {
 	}
 }
 
-func TestPresentCancellationReportsLegacyMessage(t *testing.T) {
+func TestPresentCancellationReportsCurrentMessage(t *testing.T) {
 	presenter := &recordingPresenter{}
 
 	PresentCancellation(presenter)

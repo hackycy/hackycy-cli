@@ -170,9 +170,12 @@ func TestRootTunnelServerPlainDiagnosticsWriteImmediately(t *testing.T) {
 	}()
 
 	go func() {
-		tracked <- run.Track(terminalexperience.TrackedOperation{Updates: updates})
+		tracked <- run.Track(terminalexperience.TrackedOperation{
+			Phases:  []terminalexperience.PhaseDefinition{{ID: "scan", Name: "Scanning"}},
+			Updates: updates,
+		})
 	}()
-	updates <- terminalexperience.OperationPhase{Name: "Scanning", State: terminalexperience.PhaseActive}
+	updates <- terminalexperience.OperationPhase{ID: "scan", State: terminalexperience.PhaseActive}
 	waitForRootDiagnostic(t, diagnostics, "Scanning\n")
 
 	if _, err := io.WriteString(factory.Terminal.DiagnosticWriter(), "cobra diagnostic\n"); err != nil {

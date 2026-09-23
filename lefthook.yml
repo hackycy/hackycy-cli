@@ -10,7 +10,6 @@ pre-commit:
       run: git diff --cached --check
     gofmt:
       glob: "**/*.go"
-      exclude: "legacy/bun/**"
       run: test -z "$(gofmt -l {staged_files})"
       fail_text: "Run make fmt and stage the formatted Go files."
     web-eslint:

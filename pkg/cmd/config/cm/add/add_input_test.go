@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestPromptAddCollectsLegacyQuestionsInOrder(t *testing.T) {
+func TestPromptAddCollectsCurrentQuestionsInOrder(t *testing.T) {
 	prompter := &scriptedCMAddPrompter{responses: []cmAddPromptResponse{
 		{value: "work"},
 		{value: " https://provider.example/v1/// "},
@@ -78,7 +78,7 @@ func TestPromptAddStopsWhenAnyQuestionIsCancelled(t *testing.T) {
 	}
 }
 
-func TestValidateAddInputMatchesTheLegacyValidationBoundary(t *testing.T) {
+func TestValidateAddInputMatchesTheCurrentValidationBoundary(t *testing.T) {
 	valid := AddInput{
 		Name:    "work",
 		BaseURL: " https://provider.example/v1/// ",
@@ -112,7 +112,7 @@ func TestValidateAddInputMatchesTheLegacyValidationBoundary(t *testing.T) {
 	}
 }
 
-func TestTextPromptValidationFunctionsExposeLegacyMessages(t *testing.T) {
+func TestTextPromptValidationFunctionsExposeCurrentMessages(t *testing.T) {
 	prompter := &scriptedCMAddPrompter{responses: []cmAddPromptResponse{
 		{value: "work"},
 		{value: "https://provider.example"},

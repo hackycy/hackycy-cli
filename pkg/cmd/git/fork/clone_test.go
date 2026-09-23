@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCloneFallbackBuildsTheLegacyCloneArgumentsAndCleansMetadata(t *testing.T) {
+func TestCloneFallbackBuildsTheCurrentCloneArgumentsAndCleansMetadata(t *testing.T) {
 	runner := &fakeCloneRunner{}
 	remover := &fakeDirectoryRemover{}
 	repository := Repository{

@@ -12,7 +12,7 @@ import (
 
 const (
 	mcpProtocolVersionHeader        = "Mcp-Protocol-Version"
-	mcpLegacyProtocolVersions       = "2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07"
+	mcpProtocolVersion              = "2025-06-18"
 	mcpPostAcceptError              = "Not Acceptable: Client must accept both application/json and text/event-stream"
 	mcpGetAcceptError               = "Not Acceptable: Client must accept text/event-stream"
 	mcpContentTypeError             = "Unsupported Media Type: Content-Type must be application/json"
@@ -21,18 +21,10 @@ const (
 	mcpUnsupportedHTTPMethodMessage = "Method not allowed."
 )
 
-var mcpLegacyToSDKProtocolVersion = map[string]string{
-	"2025-11-25": "2025-06-18",
-	"2025-06-18": "2025-06-18",
-	"2025-03-26": "2025-03-26",
-	"2024-11-05": "2024-11-05",
-	"2024-10-07": "2024-11-05",
-}
-
-// serveMCPTransportCompatibility owns the observable Streamable HTTP layer
+// serveMCPTransport owns the observable Streamable HTTP layer
 // that differs from the Go SDK. Valid POST requests still use the SDK for MCP
-// dispatch; this adapter only preserves the legacy transport contract.
-func serveMCPTransportCompatibility(writer http.ResponseWriter, request *http.Request) bool {
+// dispatch; this adapter validates the command's HTTP contract.
+func serveMCPTransport(writer http.ResponseWriter, request *http.Request) bool {
 	switch request.Method {
 	case http.MethodPost:
 		return validateMCPPostTransport(writer, request)
@@ -41,13 +33,13 @@ func serveMCPTransportCompatibility(writer http.ResponseWriter, request *http.Re
 			writeMCPProtocolError(writer, http.StatusNotAcceptable, -32000, mcpGetAcceptError)
 			return true
 		}
-		if !normalizeMCPProtocolVersion(writer, request) {
+		if !validateMCPProtocolVersion(writer, request) {
 			return true
 		}
 		serveMCPStatelessEventStream(writer, request)
 		return true
 	case http.MethodDelete:
-		if !normalizeMCPProtocolVersion(writer, request) {
+		if !validateMCPProtocolVersion(writer, request) {
 			return true
 		}
 		setHTTPAPIHeaders(writer.Header())
@@ -81,14 +73,13 @@ func validateMCPPostTransport(writer http.ResponseWriter, request *http.Request)
 		return true
 	}
 	if hasInitialize {
-		normalizeKnownMCPProtocolVersion(request)
-	} else if !normalizeMCPProtocolVersion(writer, request) {
+		if !validateMCPProtocolVersion(writer, request) {
+			return true
+		}
+	} else if !validateMCPProtocolVersion(writer, request) {
 		return true
 	}
 
-	// The Go SDK only recognizes a subset of the legacy SDK's historical
-	// protocol values. The transport behavior is compatible for this stateless
-	// JSON endpoint after mapping those values to the nearest supported version.
 	request.Header.Set("Accept", "application/json, text/event-stream")
 	return false
 }
@@ -111,28 +102,15 @@ func mcpHeaderContains(headers http.Header, name, value string) bool {
 	return strings.Contains(strings.Join(headers.Values(name), ","), value)
 }
 
-func normalizeMCPProtocolVersion(writer http.ResponseWriter, request *http.Request) bool {
+func validateMCPProtocolVersion(writer http.ResponseWriter, request *http.Request) bool {
 	version := request.Header.Get(mcpProtocolVersionHeader)
-	if version == "" {
+	if version == "" || version == mcpProtocolVersion {
 		return true
 	}
 
-	normalized, ok := mcpLegacyToSDKProtocolVersion[version]
-	if !ok {
-		message := "Bad Request: Unsupported protocol version: " + version + " (supported versions: " + mcpLegacyProtocolVersions + ")"
-		writeMCPProtocolError(writer, http.StatusBadRequest, -32000, message)
-		return false
-	}
-	request.Header.Set(mcpProtocolVersionHeader, normalized)
-	return true
-}
-
-func normalizeKnownMCPProtocolVersion(request *http.Request) {
-	if normalized, ok := mcpLegacyToSDKProtocolVersion[request.Header.Get(mcpProtocolVersionHeader)]; ok {
-		request.Header.Set(mcpProtocolVersionHeader, normalized)
-		return
-	}
-	request.Header.Del(mcpProtocolVersionHeader)
+	message := "Bad Request: Unsupported protocol version: " + version + " (supported version: " + mcpProtocolVersion + ")"
+	writeMCPProtocolError(writer, http.StatusBadRequest, -32000, message)
+	return false
 }
 
 func serveMCPStatelessEventStream(writer http.ResponseWriter, request *http.Request) {

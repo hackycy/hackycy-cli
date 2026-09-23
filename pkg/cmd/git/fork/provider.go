@@ -54,7 +54,7 @@ func (client *ProviderClient) DefaultBranch(ctx context.Context, repository Repo
 	return payload.DefaultBranch, nil
 }
 
-// DownloadArchive retrieves an archive while preserving the legacy redirect and memory behavior.
+// DownloadArchive retrieves an archive while preserving the current redirect and memory behavior.
 func (client *ProviderClient) DownloadArchive(ctx context.Context, repository Repository, ref string) ([]byte, error) {
 	request, err := providerRequest(ctx, http.MethodGet, archiveURL(repository, ref), providerHeaders(repository))
 	if err != nil {
@@ -78,7 +78,7 @@ func (client *ProviderClient) DownloadArchive(ctx context.Context, repository Re
 	return archive, nil
 }
 
-// CloneURL returns the legacy provider-specific clone remote, including configured credentials.
+// CloneURL returns the current provider-specific clone remote, including configured credentials.
 func CloneURL(repository Repository) string {
 	base := providerBaseURL(repository)
 	if repository.Token == "" {

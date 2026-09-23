@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestSmartActionsPreserveLegacyOrderAndLabels(t *testing.T) {
+func TestSmartActionsPreserveCurrentOrderAndLabels(t *testing.T) {
 	want := []SmartAction{
 		{ID: smartActionNodeDist, Label: "Node project - delete ./dist"},
 		{ID: smartActionNodeModules, Label: "Node project - delete ./node_modules"},

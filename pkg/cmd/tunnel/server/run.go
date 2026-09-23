@@ -182,7 +182,7 @@ func parseServerPositiveSafeInteger(value string) (int64, error) {
 }
 
 // parseServerNumber intentionally accepts the JavaScript Number spellings
-// exercised by the legacy option parser, including hexadecimal, binary, and
+// exercised by the current option parser, including hexadecimal, binary, and
 // octal integer literals. The caller imposes the positive-safe-integer rule.
 func parseServerNumber(value string) (float64, error) {
 	value = strings.TrimSpace(value)

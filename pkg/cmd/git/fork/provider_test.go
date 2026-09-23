@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestProviderClientUsesLegacyGitHubAndGitLabRequests(t *testing.T) {
+func TestProviderClientUsesCurrentGitHubAndGitLabRequests(t *testing.T) {
 	tests := []struct {
 		name             string
 		provider         string
@@ -154,7 +154,7 @@ func TestProviderClientRejectsMalformedResponsesWithoutLeakingCredentials(t *tes
 	}
 }
 
-func TestProviderURLsAndCloneURLsMatchTheLegacyProviderRules(t *testing.T) {
+func TestProviderURLsAndCloneURLsMatchTheCurrentProviderRules(t *testing.T) {
 	githubPublic := Repository{Host: "github.com", Scheme: "https", Owner: "owner", Name: "project", ProviderType: providerGitHub}
 	if got, want := defaultBranchURL(githubPublic), "https://api.github.com/repos/owner/project"; got != want {
 		t.Fatalf("public default URL = %q, want %q", got, want)

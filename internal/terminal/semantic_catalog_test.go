@@ -82,10 +82,10 @@ func TestFinishRequestRejectsInvalidSemanticValues(t *testing.T) {
 	if err := run.Finish(FinishRequest{Outcome: FinishOutcome(99)}); !errors.Is(err, ErrInvalidFinishRequest) {
 		t.Fatalf("invalid request error = %v, want ErrInvalidFinishRequest", err)
 	}
-	if err := run.Finish(Succeeded, nil, nil); !errors.Is(err, ErrInvalidFinishRequest) {
-		t.Fatalf("duplicate legacy documents error = %v, want ErrInvalidFinishRequest", err)
+	if err := run.Finish(FinishRequest{Outcome: Succeeded}, nil, nil); !errors.Is(err, ErrInvalidFinishRequest) {
+		t.Fatalf("duplicate documents error = %v, want ErrInvalidFinishRequest", err)
 	}
-	if err := run.Finish(FinishOutcome(99), nil); !errors.Is(err, ErrInvalidFinishOutcome) {
-		t.Fatalf("invalid legacy outcome error = %v, want ErrInvalidFinishOutcome", err)
+	if err := run.Finish(FinishRequest{Outcome: FinishOutcome(99)}); !errors.Is(err, ErrInvalidFinishRequest) {
+		t.Fatalf("invalid outcome error = %v, want ErrInvalidFinishRequest", err)
 	}
 }

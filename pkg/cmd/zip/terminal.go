@@ -99,7 +99,7 @@ func (presenter *terminalZipPresenter) Note(note PlanningNote) {
 }
 
 // Progress is represented by Work Phases. Keeping this method a no-op avoids
-// replaying the legacy spinner/status lines in addition to the semantic phase.
+// replaying the current spinner/status lines in addition to the semantic phase.
 func (*terminalZipPresenter) Progress(string) {}
 
 // Module.Run reports the final command result to its caller. The terminal

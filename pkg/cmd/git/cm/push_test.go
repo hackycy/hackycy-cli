@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestPushCommitUsesTheCurrentBranchAndLegacyRemoteArguments(t *testing.T) {
+func TestPushCommitUsesTheCurrentBranchAndCurrentRemoteArguments(t *testing.T) {
 	for _, testCase := range []struct {
 		name   string
 		remote string

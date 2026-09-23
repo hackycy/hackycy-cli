@@ -61,7 +61,7 @@ func (report Report) Rows() []PathHeat {
 	return report.Directories
 }
 
-// IsEmpty matches the legacy empty-result behavior, which is based on file rows.
+// IsEmpty matches the current empty-result behavior, which is based on file rows.
 func (report Report) IsEmpty() bool {
 	return report.CommitCount == 0 || len(report.Files) == 0
 }

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestResolveHomeDirectoryUsesLegacyPrecedence(t *testing.T) {
+func TestResolveHomeDirectoryUsesCurrentPrecedence(t *testing.T) {
 	tests := []struct {
 		name        string
 		environment map[string]string

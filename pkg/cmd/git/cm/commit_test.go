@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func TestCommitArgumentsPreserveTheLegacySubjectAndBodySplitting(t *testing.T) {
+func TestCommitArgumentsPreserveTheCurrentSubjectAndBodySplitting(t *testing.T) {
 	for _, testCase := range []struct {
 		message string
 		want    []string

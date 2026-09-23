@@ -93,7 +93,7 @@ func TestSaveAddSilentlyOverwritesThroughEncryptedAppconfig(t *testing.T) {
 	}
 	ciphertext, _ := instance["token"].(string)
 	if ciphertext == "" || ciphertext == "replacement-token" || strings.Count(ciphertext, ":") != 2 {
-		t.Fatalf("persisted token = %q, want encrypted legacy-compatible shape", ciphertext)
+		t.Fatalf("persisted token = %q, want encrypted current-compatible shape", ciphertext)
 	}
 }
 

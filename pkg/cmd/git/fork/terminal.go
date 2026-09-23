@@ -256,6 +256,7 @@ func (adapter *terminalGitForkAdapter) Start(_ context.Context) (PhaseReporter, 
 	go func() {
 		err := adapter.run.Track(terminalexperience.TrackedOperation{
 			Label:         "Git Fork",
+			Phases:        append([]terminalexperience.PhaseDefinition(nil), forkPhaseDefinitions...),
 			Updates:       reporter.updates,
 			RequestCancel: adapter.requestCancel,
 		})
@@ -284,13 +285,13 @@ func (adapter *terminalGitForkAdapter) reportForkPhase(id string, state PhaseSta
 	if !adapter.started {
 		adapter.pending = append(adapter.pending, update)
 		if state == PhaseActive {
-			adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: forkLegacyPhaseLabel(id)}}})
+			adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: forkPhaseLabel(id)}}})
 		}
 		adapter.mu.Unlock()
 		return
 	}
 	if state == PhaseActive {
-		adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: forkLegacyPhaseLabel(id)}}})
+		adapter.milestones = append(adapter.milestones, terminalexperience.PresentationDocument{Blocks: []terminalexperience.PresentationBlock{{Role: terminalexperience.VisualRoleActive, Text: forkPhaseLabel(id)}}})
 	}
 	adapter.updates <- update
 	adapter.mu.Unlock()
@@ -545,7 +546,7 @@ func safeForkDiskFact(value string) string {
 	}
 }
 
-func forkLegacyPhaseLabel(id string) string {
+func forkPhaseLabel(id string) string {
 	switch id {
 	case forkResolveRepositoryPhaseID:
 		return "Resolving repository"
@@ -631,23 +632,23 @@ func (reporter *terminalGitForkPhaseReporter) complete(err error) {
 }
 
 func terminalGitForkPhase(phase Phase) terminalexperience.OperationPhase {
-	name := "Resolving repository"
+	id := forkResolveRepositoryPhaseID
 	detail := phase.Repository
 	switch phase.Kind {
 	case PhaseDefaultBranch:
-		name = "Fetching default branch"
+		id = forkResolveDefaultBranchPhaseID
 		detail = phase.Ref
 	case PhaseArchive:
-		name = "Downloading archive"
+		id = forkDownloadArchivePhaseID
 		detail = phase.Ref
 	case PhaseClone:
-		name = "Falling back to git clone"
+		id = forkCloneFallbackPhaseID
 		detail = phase.Destination
 	case PhaseReady:
-		name = "Project ready"
+		id = forkExtractArchivePhaseID
 		detail = phase.Destination
 	}
-	return terminalexperience.OperationPhase{Name: name, Detail: detail, State: terminalGitForkPhaseState(phase.State)}
+	return terminalexperience.OperationPhase{ID: id, Detail: detail, State: terminalGitForkPhaseState(phase.State)}
 }
 
 func terminalGitForkPhaseState(state PhaseState) terminalexperience.PhaseState {
@@ -714,7 +715,7 @@ func gitForkOutcomeDocument(result Result) terminalexperience.PresentationDocume
 }
 
 // gitForkOutcomeDocumentDetailed is the B durable result used by the command
-// adapter. The legacy document above remains available to direct adapter
+// adapter. The current document above remains available to direct adapter
 // callers and preserves its established wording and ordering.
 func gitForkOutcomeDocumentDetailed(result Result) terminalexperience.PresentationDocument {
 	blocks := []terminalexperience.PresentationBlock{

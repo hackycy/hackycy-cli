@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestFetchCommitsUsesTheLegacyGitLogArgumentsAndParsesRecords(t *testing.T) {
+func TestFetchCommitsUsesTheCurrentGitLogArgumentsAndParsesRecords(t *testing.T) {
 	const repository = "/workspace/project"
 	const since = "2026-08-22 00:00:00"
 	runner := &scriptedPulseGitRunner{responses: map[string]pulseGitResponse{

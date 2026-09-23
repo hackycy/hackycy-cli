@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/url"
 	"os"
 )
 
@@ -95,15 +94,11 @@ func (store *Store) normalizeDocument(root map[string]any, rawFields map[string]
 		normalized.Salt = salt
 	}
 
-	legacyInstances, hasLegacyInstances := objectValue(root["instances"])
 	fork, hasFork := objectValue(root["fork"])
 	forkInstances, hasForkInstances := objectValue(fork["instances"])
 	forkFields := rawObjectFields(rawFields["fork"])
-	switch {
-	case hasFork && hasForkInstances:
+	if hasFork && hasForkInstances {
 		normalized.Fork.Instances, normalized.Fork.order, err = normalizeForkInstances(forkInstances, orderedObjectKeys(forkFields["instances"]))
-	case hasLegacyInstances:
-		normalized.Fork.Instances, normalized.Fork.order, err = normalizeForkInstances(legacyInstances, orderedObjectKeys(rawFields["instances"]))
 	}
 	if err != nil {
 		return document{}, err
@@ -112,9 +107,6 @@ func (store *Store) normalizeDocument(root map[string]any, rawFields map[string]
 	if cm, ok := objectValue(root["cm"]); ok {
 		cmFields := rawObjectFields(rawFields["cm"])
 		normalized.CM = normalizeCM(cm, orderedObjectKeys(cmFields["profiles"]))
-	} else if legacyCM, ok := objectValue(root["ai"]); ok {
-		legacyCMFields := rawObjectFields(rawFields["ai"])
-		normalized.CM = normalizeCM(legacyCM, orderedObjectKeys(legacyCMFields["profiles"]))
 	}
 	if tunnel, ok := objectValue(root["tunnel"]); ok {
 		if connections, ok := objectValue(tunnel["connections"]); ok {
@@ -138,29 +130,9 @@ func normalizeForkInstances(raw map[string]any, order []string) (map[string]fork
 			Type:   optionalString(instance["type"]),
 			Token:  optionalString(instance["token"]),
 		}
-		if containsScheme(normalized.Host) {
-			parsed, err := url.ParseRequestURI(normalized.Host)
-			if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-				if err == nil {
-					err = errors.New("missing URL scheme or host")
-				}
-				return nil, nil, fmt.Errorf("normalize Fork instance %q URL host: %w", name, err)
-			}
-			normalized.Scheme = parsed.Scheme
-			normalized.Host = parsed.Host
-		}
 		instances[name] = normalized
 	}
 	return instances, normalizedOrder(order, instances), nil
-}
-
-func containsScheme(value string) bool {
-	for index := 0; index+2 < len(value); index++ {
-		if value[index:index+3] == "://" {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeCM(raw map[string]any, order []string) *cmDocument {

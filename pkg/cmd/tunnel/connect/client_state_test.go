@@ -59,7 +59,7 @@ func TestAcquireClientInstanceCleansOnlyExpiredUnlockedVersionedDirectories(t *t
 	recentID := clientTestInstanceID('c')
 	activeID := clientTestInstanceID('d')
 	staleID := clientTestInstanceID('e')
-	unknownDirectory := filepath.Join(root, "legacy-client-state")
+	unknownDirectory := filepath.Join(root, "current-client-state")
 
 	for _, directory := range []string{
 		filepath.Join(root, expiredID),

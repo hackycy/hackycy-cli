@@ -2,7 +2,7 @@ package remove
 
 import "testing"
 
-func TestConfirmRemoveUsesLegacyQuestionAndAcceptsConfirmation(t *testing.T) {
+func TestConfirmRemoveUsesCurrentQuestionAndAcceptsConfirmation(t *testing.T) {
 	prompter := &scriptedRemoveConfirmationPrompter{confirmed: true}
 
 	outcome, err := ConfirmRemove("work", prompter)

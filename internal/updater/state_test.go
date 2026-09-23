@@ -152,8 +152,8 @@ func TestStateTemporaryCleanupAndParentPolling(t *testing.T) {
 
 func TestGoStateNamespaceDoesNotTouchAdjacentState(t *testing.T) {
 	state := testState(t, StatusSucceeded)
-	legacyPath := strings.TrimSuffix(state.StatePath, ".go-update-state.json") + ".update-state.json"
-	if err := os.WriteFile(legacyPath, []byte("preserve"), 0o600); err != nil {
+	currentPath := strings.TrimSuffix(state.StatePath, ".go-update-state.json") + ".update-state.json"
+	if err := os.WriteFile(currentPath, []byte("preserve"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteState(state); err != nil {
@@ -162,7 +162,7 @@ func TestGoStateNamespaceDoesNotTouchAdjacentState(t *testing.T) {
 	if _, err := ConsumeState(state.TargetPath); err != nil {
 		t.Fatal(err)
 	}
-	contents, err := os.ReadFile(legacyPath)
+	contents, err := os.ReadFile(currentPath)
 	if err != nil || string(contents) != "preserve" {
 		t.Fatalf("adjacent state changed: %q, %v", contents, err)
 	}

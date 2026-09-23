@@ -11,17 +11,9 @@ import (
 	"testing"
 )
 
-func TestInstallReplacesOnlyApprovedLegacyHook(t *testing.T) {
+func TestInstallCreatesLefthookHook(t *testing.T) {
 	root := testRepository(t)
 	controller := testController(t, root)
-	state, err := controller.Discover(context.Background())
-	if err != nil {
-		t.Fatalf("Discover returned an error: %v", err)
-	}
-	legacy := []byte("#!/bin/sh\n\nif [ \"$SKIP_SIMPLE_GIT_HOOKS\" = \"1\" ]; then\n    echo \"[INFO] SKIP_SIMPLE_GIT_HOOKS is set to 1, skipping hook.\"\n    exit 0\nfi\n\nif [ -f \"$SIMPLE_GIT_HOOKS_RC\" ]; then\n    . \"$SIMPLE_GIT_HOOKS_RC\"\nfi\n\nb" + "un run lint")
-	if err := os.WriteFile(filepath.Join(state.HooksPath, "pre-commit"), legacy, 0o755); err != nil {
-		t.Fatalf("write legacy hook: %v", err)
-	}
 	controller.invoke = installFakeHook(controller)
 
 	if err := controller.Install(context.Background()); err != nil {

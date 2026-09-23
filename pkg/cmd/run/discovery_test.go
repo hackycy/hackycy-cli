@@ -65,7 +65,7 @@ func TestDiscoverProjectFiltersScriptsAndPreservesDeclarationOrder(t *testing.T)
 	}
 }
 
-func TestDiscoverProjectMapsLegacyPackageErrors(t *testing.T) {
+func TestDiscoverProjectMapsCurrentPackageErrors(t *testing.T) {
 	testCases := []struct {
 		name     string
 		contents string
@@ -89,7 +89,7 @@ func TestDiscoverProjectMapsLegacyPackageErrors(t *testing.T) {
 	}
 }
 
-func TestDiscoverProjectUsesTheLegacyMissingPackageMessageForExplicitPaths(t *testing.T) {
+func TestDiscoverProjectUsesTheCurrentMissingPackageMessageForExplicitPaths(t *testing.T) {
 	root := t.TempDir()
 	_, err := DiscoverProject(root, "missing-project", fileReaderFunc(os.ReadFile))
 	if !errors.Is(err, errNoPackage) || err.Error() != "No package.json found in current directory." {

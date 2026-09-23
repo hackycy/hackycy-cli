@@ -12,7 +12,7 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdDiffPassesTypedInputAndLegacyDefaults(t *testing.T) {
+func TestNewCmdDiffPassesTypedInputAndCurrentDefaults(t *testing.T) {
 	var options []*Options
 	for _, arguments := range [][]string{
 		{"baseline", "-x", "first", "--port", "00007", "target", "--exclude=second", "--public", "--no-gitignore"},

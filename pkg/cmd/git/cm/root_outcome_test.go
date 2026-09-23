@@ -84,28 +84,6 @@ func TestRootConfiguresDiagnosticsBeforeGitCM(t *testing.T) {
 	}
 }
 
-func TestRootNormalizesGitCMOptionalRemoteArgument(t *testing.T) {
-	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
-	factory := commandfactory.New(commandfactory.Options{
-		Version: "0.0.0-dev",
-		IOStreams: cmdutil.IOStreams{
-			Out:    stdout,
-			ErrOut: stderr,
-		},
-		Capabilities: terminal.Capabilities{Interaction: terminal.Automation},
-	})
-	app, err := rootcommand.New(factory)
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	outcome := app.Execute(context.Background(), []string{"git", "cm", "--push", "upstream"})
-	const want = "error: Use --push with --stage, --staged, or --stage-all.\n"
-	if outcome.Code != 1 || outcome.Err == nil || outcome.Err.Error() != "Use --push with --stage, --staged, or --stage-all." || stderr.String() != want || stdout.Len() != 0 {
-		t.Fatalf("outcome = %#v, streams = (%q, %q)", outcome, stdout.String(), stderr.String())
-	}
-}
-
 func runGitCMRootOutcome(t *testing.T, directory string, arguments ...string) {
 	t.Helper()
 	command := exec.Command("git", arguments...)

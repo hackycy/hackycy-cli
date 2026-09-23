@@ -63,9 +63,12 @@ func TestPlainExperienceTrackDoesNotBufferDiagnostics(t *testing.T) {
 	updates := make(chan terminal.OperationPhase)
 	trackDone := make(chan error, 1)
 	go func() {
-		trackDone <- run.Track(terminal.TrackedOperation{Updates: updates})
+		trackDone <- run.Track(terminal.TrackedOperation{
+			Phases:  []terminal.PhaseDefinition{{ID: "scan", Name: "Scanning"}},
+			Updates: updates,
+		})
 	}()
-	updates <- terminal.OperationPhase{Name: "Scanning", State: terminal.PhaseActive}
+	updates <- terminal.OperationPhase{ID: "scan", State: terminal.PhaseActive}
 	select {
 	case <-stderr.prompt:
 	case <-time.After(time.Second):
@@ -267,10 +270,10 @@ func TestExperienceFinishCommitsOneOutcomeAndNeverSynthesizesAnother(t *testing.
 		run := experience.Open(context.Background())
 		document := &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "complete"}}}
 
-		if err := run.Finish(terminal.Succeeded, document); err != nil {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}, document); err != nil {
 			t.Fatalf("first Finish() error = %v", err)
 		}
-		if err := run.Finish(terminal.Failed, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "retry"}}}); !errors.Is(err, terminal.ErrExperienceRunFinished) {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Failed}, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "retry"}}}); !errors.Is(err, terminal.ErrExperienceRunFinished) {
 			t.Fatalf("second Finish() error = %v, want ErrExperienceRunFinished", err)
 		}
 		if err := run.Close(); err != nil {
@@ -289,7 +292,7 @@ func TestExperienceFinishCommitsOneOutcomeAndNeverSynthesizesAnother(t *testing.
 		})
 		run := experience.Open(context.Background())
 
-		if err := run.Finish(terminal.Cancelled, nil); err != nil {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Cancelled}); err != nil {
 			t.Fatalf("Finish() error = %v", err)
 		}
 		if err := run.Close(); err != nil {
@@ -310,10 +313,10 @@ func TestExperienceFinishCommitsOneOutcomeAndNeverSynthesizesAnother(t *testing.
 		run := experience.Open(context.Background())
 		document := &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "complete"}}}
 
-		if err := run.Finish(terminal.Failed, document); !errors.Is(err, writeFailure) {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Failed}, document); !errors.Is(err, writeFailure) {
 			t.Fatalf("first Finish() error = %v, want result write failure", err)
 		}
-		if err := run.Finish(terminal.Failed, document); !errors.Is(err, terminal.ErrExperienceRunFinished) {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Failed}, document); !errors.Is(err, terminal.ErrExperienceRunFinished) {
 			t.Fatalf("second Finish() error = %v, want ErrExperienceRunFinished", err)
 		}
 		if got, want := output.writes, []string{"complete\n"}; !reflect.DeepEqual(got, want) {
@@ -330,10 +333,10 @@ func TestExperienceFinishCommitsOneOutcomeAndNeverSynthesizesAnother(t *testing.
 		run := experience.Open(context.Background())
 		document := &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "complete"}}}
 
-		if err := run.Finish(terminal.FinishOutcome(99), document); !errors.Is(err, terminal.ErrInvalidFinishOutcome) {
-			t.Fatalf("invalid Finish() error = %v, want ErrInvalidFinishOutcome", err)
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.FinishOutcome(99)}, document); !errors.Is(err, terminal.ErrInvalidFinishRequest) {
+			t.Fatalf("invalid Finish() error = %v, want ErrInvalidFinishRequest", err)
 		}
-		if err := run.Finish(terminal.Succeeded, document); err != nil {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}, document); err != nil {
 			t.Fatalf("Finish() after invalid outcome error = %v", err)
 		}
 		if got, want := stdout.String(), "complete\n"; got != want {
@@ -365,7 +368,7 @@ func TestExperienceFinishCommitsOneOutcomeAndNeverSynthesizesAnother(t *testing.
 		})
 		run := experience.Open(context.Background())
 
-		if err := run.Finish(terminal.Succeeded, nil); err != nil {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}); err != nil {
 			t.Fatalf("Finish() error = %v", err)
 		}
 		if err := run.Result(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Text: "late"}}}); !errors.Is(err, terminal.ErrExperienceRunFinished) {
@@ -411,7 +414,7 @@ func TestExperienceMilestoneRoutesByInteractionCapability(t *testing.T) {
 			Capabilities: terminal.Capabilities{Interaction: terminal.PlainInteractive},
 		})
 		run := experience.Open(context.Background())
-		if err := run.Finish(terminal.Succeeded, nil); err != nil {
+		if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}); err != nil {
 			t.Fatalf("Finish() error = %v", err)
 		}
 		if err := run.Milestone(terminal.PresentationDocument{}); !errors.Is(err, terminal.ErrExperienceRunFinished) {
@@ -456,7 +459,7 @@ func TestExperienceNonRichResultsAreAlwaysControlFree(t *testing.T) {
 				Output: &output,
 			})
 			run := experience.Open(context.Background())
-			if err := run.Finish(terminal.Succeeded, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleTitle, Text: "done"}}}); err != nil {
+			if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleTitle, Text: "done"}}}); err != nil {
 				t.Fatalf("Finish() error = %v", err)
 			}
 			if got, want := output.String(), "done\n"; got != want {

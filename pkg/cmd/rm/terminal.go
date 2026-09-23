@@ -449,7 +449,7 @@ func terminalRMNoValidPathsDocument(caps terminalexperience.Capabilities, root s
 	return terminalexperience.PresentationDocument{Blocks: blocks}
 }
 
-// terminalRMAutomationDeletionDocument preserves the legacy command-result
+// terminalRMAutomationDeletionDocument preserves the current command-result
 // facts on successful noninteractive deletions without reintroducing terminal
 // interactions, Work Phase diagnostics, or an unbounded path list.
 func terminalRMAutomationDeletionDocument(root string, missing []string, result deletionResult) terminalexperience.PresentationDocument {

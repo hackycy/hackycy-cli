@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestConfirmRemoveUsesLegacyQuestionAndAcceptsConfirmation(t *testing.T) {
+func TestConfirmRemoveUsesCurrentQuestionAndAcceptsConfirmation(t *testing.T) {
 	prompter := &scriptedCMRemoveConfirmationPrompter{confirmed: true}
 
 	outcome, err := ConfirmRemove("work", prompter)

@@ -2,7 +2,7 @@ package cm
 
 import "errors"
 
-// executionMode is the command-owned interpretation of the legacy flag matrix.
+// executionMode is the command-owned interpretation of the current flag matrix.
 type executionMode struct {
 	Scope        Scope
 	PromptStage  bool

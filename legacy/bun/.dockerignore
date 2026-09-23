@@ -1,9 +1,0 @@
-.git
-.tmp
-dist
-node_modules
-playwright-report
-test-results
-*.log
-*.tgz
-*.zip

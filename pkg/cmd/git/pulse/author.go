@@ -13,7 +13,7 @@ type AuthorChoice struct {
 	Label string
 }
 
-// AuthorPrompt describes the legacy author multi-selection.
+// AuthorPrompt describes the current author multi-selection.
 type AuthorPrompt struct {
 	Message       string
 	Options       []AuthorChoice

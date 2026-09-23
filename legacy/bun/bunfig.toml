@@ -1,5 +1,0 @@
-[serve.static]
-plugins = [ "bun-plugin-tailwind" ]
-
-[test]
-root = "src"

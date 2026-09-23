@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// StageOption is one displayed Git status entry in the legacy selection prompt.
+// StageOption is one displayed Git status entry in the current selection prompt.
 type StageOption struct {
 	Value string
 	Label string
@@ -117,7 +117,7 @@ func applyStagePlan(ctx context.Context, runner GitRunner, fileSystem SnapshotFi
 	return result, nil
 }
 
-// StageAllChanges reproduces the legacy bulk index mutation.
+// StageAllChanges reproduces the current bulk index mutation.
 func StageAllChanges(ctx context.Context, runner GitRunner) (string, error) {
 	root, err := discoverRepository(ctx, runner)
 	if err != nil {

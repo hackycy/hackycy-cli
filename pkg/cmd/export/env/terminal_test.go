@@ -192,7 +192,7 @@ func TestTerminalExportEnvPhaseSinkUsesOneWorkCatalogAndSafeMilestones(t *testin
 				t.Fatalf("milestone leaked secret: %#v", operation.Value)
 			}
 		case terminaltest.TrackOperation:
-			t.Fatalf("legacy Track operation = %#v, want one controlled Work Catalog", operations)
+			t.Fatalf("current Track operation = %#v, want one controlled Work Catalog", operations)
 		}
 	}
 	if startWork != 1 || workClose != 1 || milestones != 2 {

@@ -162,35 +162,29 @@ func TestMCPHandlerPreservesStreamableHTTPTransport(t *testing.T) {
 		unsupported := rawMCPRequest(t, http.DefaultClient, server.URL, http.MethodDelete, "", map[string]string{
 			"Mcp-Protocol-Version": "2099-01-01",
 		})
-		assertMCPTransportError(t, unsupported, http.StatusBadRequest, -32000, "Bad Request: Unsupported protocol version: 2099-01-01 (supported versions: "+mcpLegacyProtocolVersions+")")
+		assertMCPTransportError(t, unsupported, http.StatusBadRequest, -32000, "Bad Request: Unsupported protocol version: 2099-01-01 (supported version: "+mcpProtocolVersion+")")
 	})
 
-	t.Run("protocol versions retain legacy rejection and historical support", func(t *testing.T) {
+	t.Run("protocol versions accept only the current version", func(t *testing.T) {
 		unsupported := rawMCPRequest(t, http.DefaultClient, server.URL, http.MethodPost, requestBody, map[string]string{
 			"Accept":               "application/json, text/event-stream",
 			"Content-Type":         "application/json",
 			"Mcp-Protocol-Version": "2099-01-01",
 		})
-		assertMCPTransportError(t, unsupported, http.StatusBadRequest, -32000, "Bad Request: Unsupported protocol version: 2099-01-01 (supported versions: "+mcpLegacyProtocolVersions+")")
+		assertMCPTransportError(t, unsupported, http.StatusBadRequest, -32000, "Bad Request: Unsupported protocol version: 2099-01-01 (supported version: "+mcpProtocolVersion+")")
 
 		historical := rawMCPRequest(t, http.DefaultClient, server.URL, http.MethodPost, requestBody, map[string]string{
 			"Accept":               "application/json, text/event-stream",
 			"Content-Type":         "application/json",
 			"Mcp-Protocol-Version": "2024-10-07",
 		})
-		if historical.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(historical.Body)
-			historical.Body.Close()
-			t.Fatalf("historical protocol status = %d, body = %s", historical.StatusCode, body)
-		}
-		assertMCPHeaders(t, historical.Header)
-		assertNoMCPSession(t, historical)
+		assertMCPTransportError(t, historical, http.StatusBadRequest, -32000, "Bad Request: Unsupported protocol version: 2024-10-07 (supported version: "+mcpProtocolVersion+")")
 		historical.Body.Close()
 
 		initialize := rawMCPRequest(t, http.DefaultClient, server.URL, http.MethodPost, `{"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"version-header-test","version":"1.0.0"}}}`, map[string]string{
 			"Accept":               "application/json, text/event-stream",
 			"Content-Type":         "application/json",
-			"Mcp-Protocol-Version": "2099-01-01",
+			"Mcp-Protocol-Version": mcpProtocolVersion,
 		})
 		assertMCPResponseHeaders(t, initialize)
 		assertNoMCPSession(t, initialize)

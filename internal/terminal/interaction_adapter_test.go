@@ -59,7 +59,7 @@ func TestAutomationRunDoesNotRecordInteractionTranscript(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Track() error = %v", err)
 	}
-	if err := run.Finish(Succeeded, &PresentationDocument{Blocks: []PresentationBlock{{Text: "result"}}}); err != nil {
+	if err := run.Finish(FinishRequest{Outcome: Succeeded}, &PresentationDocument{Blocks: []PresentationBlock{{Text: "result"}}}); err != nil {
 		t.Fatalf("Finish() error = %v", err)
 	}
 	if events := run.ledger.Events(); len(events) != 0 {

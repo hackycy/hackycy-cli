@@ -12,7 +12,7 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdRMParsesOptionsAndLegacyDepthPrefixes(t *testing.T) {
+func TestNewCmdRMParsesOptionsAndCurrentDepthPrefixes(t *testing.T) {
 	var options []*Options
 	command := NewCmdRM(newRMTestFactory(&bytes.Buffer{}, &bytes.Buffer{}), func(input *Options) error {
 		options = append(options, input)

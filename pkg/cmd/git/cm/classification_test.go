@@ -2,7 +2,7 @@ package cm
 
 import "testing"
 
-func TestFileRoleForPathPreservesLegacyRolePriority(t *testing.T) {
+func TestFileRoleForPathPreservesCurrentRolePriority(t *testing.T) {
 	for _, testCase := range []struct {
 		path   string
 		binary bool
@@ -33,7 +33,7 @@ func TestFileRoleForPathPreservesLegacyRolePriority(t *testing.T) {
 	}
 }
 
-func TestContentPolicyForPreservesDenyBasedLegacyBoundary(t *testing.T) {
+func TestContentPolicyForPreservesDenyBasedCurrentBoundary(t *testing.T) {
 	for _, testCase := range []struct {
 		name           string
 		role           FileRole

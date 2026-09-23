@@ -71,7 +71,7 @@ func TestPlanExplicitClassifiesMissingAndDanglingSymlinkPathsWithoutFailing(t *t
 	}
 }
 
-func TestPlanExplicitPreservesLegacyDuplicateAndUnsafeOperandsWithoutMutation(t *testing.T) {
+func TestPlanExplicitPreservesCurrentDuplicateAndUnsafeOperandsWithoutMutation(t *testing.T) {
 	workingDirectory := t.TempDir()
 	victim := filepath.Join(workingDirectory, "victim.txt")
 	if err := os.WriteFile(victim, []byte("retain"), 0o600); err != nil {

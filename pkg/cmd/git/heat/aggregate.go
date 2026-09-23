@@ -34,7 +34,7 @@ type Aggregation struct {
 	Directories []PathHeat
 }
 
-// Aggregate combines parsed changes according to the legacy heat semantics.
+// Aggregate combines parsed changes according to the current heat semantics.
 func Aggregate(log Log, sortKind Sort) Aggregation {
 	collator := collate.New(language.AmericanEnglish)
 	files := aggregateFiles(log.Changes)

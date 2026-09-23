@@ -11,7 +11,7 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdRunParsesLegacyArguments(t *testing.T) {
+func TestNewCmdRunParsesCurrentArguments(t *testing.T) {
 	testCases := []struct {
 		arguments []string
 		want      string
@@ -43,7 +43,7 @@ func TestNewCmdRunParsesLegacyArguments(t *testing.T) {
 	}
 }
 
-func TestNewCmdRunReservesLegacyHelpOptions(t *testing.T) {
+func TestNewCmdRunReservesCurrentHelpOptions(t *testing.T) {
 	for _, arguments := range [][]string{{"--help"}, {"-h"}} {
 		t.Run(strings.Join(arguments, " "), func(t *testing.T) {
 			output := &bytes.Buffer{}

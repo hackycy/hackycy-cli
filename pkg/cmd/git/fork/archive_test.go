@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestParseArchiveMatchesTheLegacyTarShapes(t *testing.T) {
+func TestParseArchiveMatchesTheCurrentTarShapes(t *testing.T) {
 	longName := "root/very/long/path/to/file.txt"
 	archive := gzipArchive(t, appendTarRecords(
 		tarRecord("root/normal.txt", '0', []byte("normal")),
@@ -45,7 +45,7 @@ func TestParseArchiveMatchesTheLegacyTarShapes(t *testing.T) {
 	}
 }
 
-func TestParseArchivePreservesTheLegacyTruncatedTarOutcome(t *testing.T) {
+func TestParseArchivePreservesTheCurrentTruncatedTarOutcome(t *testing.T) {
 	entries, err := ParseArchive(gzipArchive(t, []byte("not a complete tar block")))
 	if err != nil {
 		t.Fatalf("ParseArchive() error = %v", err)

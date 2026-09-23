@@ -9,7 +9,7 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/appconfig"
 )
 
-func TestResolveRepositoryAcceptsTheLegacyInputForms(t *testing.T) {
+func TestResolveRepositoryAcceptsTheCurrentInputForms(t *testing.T) {
 	tests := []struct {
 		name   string
 		input  string

@@ -22,7 +22,7 @@ const (
 	archiveOther     ArchiveEntryType = "other"
 )
 
-// ArchiveEntry is one uncompressed TAR entry after the legacy parser's limited normalization.
+// ArchiveEntry is one uncompressed TAR entry after bounded normalization.
 type ArchiveEntry struct {
 	Name string
 	Size int
@@ -38,12 +38,12 @@ type ArchiveExtractor interface {
 // OSArchiveExtractor publishes archives through the local filesystem.
 type OSArchiveExtractor struct{}
 
-// Extract publishes one compressed archive using the legacy extraction behavior.
+// Extract publishes one compressed archive using the command extraction behavior.
 func (OSArchiveExtractor) Extract(destination string, compressed []byte) error {
 	return ExtractArchive(destination, compressed)
 }
 
-// ParseArchive decompresses a gzip TAR fully in memory and applies the legacy limited TAR parser.
+// ParseArchive decompresses a gzip TAR fully in memory and applies the bounded TAR parser.
 func ParseArchive(compressed []byte) ([]ArchiveEntry, error) {
 	reader, err := gzip.NewReader(bytes.NewReader(compressed))
 	if err != nil {
@@ -57,10 +57,10 @@ func ParseArchive(compressed []byte) ([]ArchiveEntry, error) {
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	return parseLegacyTar(decompressed), nil
+	return parseTar(decompressed), nil
 }
 
-// ExtractArchive writes the parsed archive with the legacy strip-one and entry-type behavior.
+// ExtractArchive writes the parsed archive with the command strip-one and entry-type behavior.
 func ExtractArchive(destination string, compressed []byte) error {
 	entries, err := ParseArchive(compressed)
 	if err != nil {
@@ -103,7 +103,7 @@ func ExtractArchive(destination string, compressed []byte) error {
 	return firstErr
 }
 
-func parseLegacyTar(data []byte) []ArchiveEntry {
+func parseTar(data []byte) []ArchiveEntry {
 	entries := make([]ArchiveEntry, 0)
 	offset := 0
 	longName := ""
@@ -118,7 +118,7 @@ func parseLegacyTar(data []byte) []ArchiveEntry {
 		}
 
 		header := data[offset : offset+tarBlockSize]
-		size, valid := parseLegacyOctal(tarString(header, 124, 12))
+		size, valid := parseOctal(tarString(header, 124, 12))
 		if !valid {
 			break
 		}
@@ -173,7 +173,7 @@ func tarString(header []byte, offset, length int) string {
 	return string(header[offset:end])
 }
 
-func parseLegacyOctal(value string) (int, bool) {
+func parseOctal(value string) (int, bool) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return 0, true

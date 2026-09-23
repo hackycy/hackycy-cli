@@ -35,7 +35,7 @@ type AddPrompter interface {
 	Password(AddTextPrompt) (value string, cancelled bool, err error)
 }
 
-// PromptAdd collects the legacy CM profile questions in their observable order.
+// PromptAdd collects the current CM profile questions in their observable order.
 func PromptAdd(prompter AddPrompter) (AddInput, bool, error) {
 	name, cancelled, err := prompter.Text(AddTextPrompt{
 		Message:     "Profile name",

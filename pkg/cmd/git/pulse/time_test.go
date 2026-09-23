@@ -28,7 +28,7 @@ func TestSinceBoundaryUsesInclusiveLocalDayPresets(t *testing.T) {
 	}
 }
 
-func TestSinceBoundaryPreservesLegacyZeroAndNegativeDays(t *testing.T) {
+func TestSinceBoundaryPreservesCurrentZeroAndNegativeDays(t *testing.T) {
 	now := time.Date(2026, time.August, 23, 18, 42, 7, 0, time.UTC)
 	if got, want := SinceBoundary(now, 0), "2026-08-24 00:00:00"; got != want {
 		t.Fatalf("zero-day boundary = %q, want %q", got, want)

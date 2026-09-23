@@ -20,7 +20,7 @@ func newTerminalDiscoveryAdapter(experience terminalexperience.Experience) Disco
 func (adapter terminalDiscoveryAdapter) PresentDiscovery(ctx context.Context, document DiscoveryDocument) error {
 	run := adapter.experience.Open(ctx)
 	presentation := terminalDiscoveryDocument(document)
-	presentErr := run.Finish(terminalexperience.Succeeded, &presentation)
+	presentErr := run.Finish(terminalexperience.FinishRequest{Outcome: terminalexperience.Succeeded}, &presentation)
 	return errors.Join(presentErr, run.Close())
 }
 

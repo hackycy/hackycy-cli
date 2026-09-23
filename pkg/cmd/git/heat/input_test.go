@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNormalizeInputAppliesLegacyDefaults(t *testing.T) {
+func TestNormalizeInputAppliesCurrentDefaults(t *testing.T) {
 	options, err := NormalizeInput(Input{})
 	if err != nil {
 		t.Fatalf("NormalizeInput() error = %v", err)

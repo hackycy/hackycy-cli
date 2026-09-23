@@ -88,7 +88,7 @@ func (module *Module) Run(ctx context.Context, input Input) (Result, error) {
 	return module.run(ctx, input, nil)
 }
 
-// run executes the established workflow. When observer is non-nil, legacy
+// run executes the established workflow. When observer is non-nil, current
 // Presenter calls are suppressed and phase boundaries are reported instead.
 func (module *Module) run(ctx context.Context, input Input, observer *runObserver) (Result, error) {
 	if ctx == nil {

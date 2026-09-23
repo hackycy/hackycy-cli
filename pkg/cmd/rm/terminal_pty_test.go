@@ -613,7 +613,7 @@ func TestRMRichPhaseSinkUsesOneWorkCatalogForEachRoute(t *testing.T) {
 				case terminaltest.WorkCloseOperation:
 					workClose++
 				case terminaltest.TrackOperation:
-					t.Fatalf("legacy Track operation = %#v", operations)
+					t.Fatalf("current Track operation = %#v", operations)
 				}
 			}
 			if startWork != 1 || workClose != 1 {

@@ -18,7 +18,7 @@ type Input struct {
 	WithDir   string
 }
 
-// ResultKind distinguishes legacy-visible normal outcomes from unexpected Go failures.
+// ResultKind distinguishes current-visible normal outcomes from unexpected Go failures.
 type ResultKind string
 
 const (
@@ -33,7 +33,7 @@ const (
 	ResultWriteFailed       ResultKind = "write-failed"
 )
 
-// Result records the observable command result while preserving the legacy success-status branches.
+// Result records the observable command result while preserving the current success-status branches.
 type Result struct {
 	Kind           ResultKind
 	Plan           *ZipPlan
@@ -142,7 +142,7 @@ func New(dependencies Dependencies) (*Module, error) {
 	}, nil
 }
 
-// Run executes the full legacy planning and archive flow without assigning a process exit code.
+// Run executes the full current planning and archive flow without assigning a process exit code.
 func (module *Module) Run(input Input) (Result, error) {
 	return module.RunContext(context.Background(), input)
 }

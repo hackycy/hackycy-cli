@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestPromptAddCollectsLegacyQuestionsInOrder(t *testing.T) {
+func TestPromptAddCollectsCurrentQuestionsInOrder(t *testing.T) {
 	prompter := &scriptedAddPrompter{
 		texts: []promptResponse{
 			{value: "work"},
@@ -122,7 +122,7 @@ func TestPromptAddStopsWhenAnyQuestionIsCancelled(t *testing.T) {
 	}
 }
 
-func TestValidateAddInputMatchesTheLegacyValidationBoundary(t *testing.T) {
+func TestValidateAddInputMatchesTheCurrentValidationBoundary(t *testing.T) {
 	valid := AddInput{
 		Alias:  "work",
 		Host:   "https://gitlab.example/path",
@@ -200,7 +200,7 @@ func (prompter *scriptedAddPrompter) next(responses *[]promptResponse) (string, 
 	return response.value, response.cancelled, response.err
 }
 
-func TestTextPromptValidationFunctionsExposeLegacyMessages(t *testing.T) {
+func TestTextPromptValidationFunctionsExposeCurrentMessages(t *testing.T) {
 	prompter := &scriptedAddPrompter{
 		texts:      []promptResponse{{value: "work"}, {value: "host"}},
 		selections: []promptResponse{{value: "gitlab"}, {value: "https"}},
