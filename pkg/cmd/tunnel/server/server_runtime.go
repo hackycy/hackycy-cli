@@ -88,6 +88,9 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	if err := syncLocalNodeProjection(ctx, runtime.state.database, options.Settings); err != nil {
+		return fail(err)
+	}
 	runtime.accounts, err = NewServerAccounts(ctx, ServerAccountsOptions{
 		Database:      runtime.state.database,
 		AdminUsername: options.Settings.AdminUser,

@@ -31,6 +31,22 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 		t.Fatalf("CurrentFRPArtifact() error = %v", err)
 	}
 	frpDirectory := filepath.Join(t.TempDir(), "frp", tunnelruntime.FRPVersion)
+	if sourceDirectory := os.Getenv("YCY_TUNNEL_TEST_FRP_RUNTIME_DIR"); sourceDirectory != "" {
+		fixturePaths := tunnelruntime.FRPRuntimePathsFor(frpDirectory, artifact.Target)
+		if err := os.MkdirAll(frpDirectory, 0o700); err != nil {
+			t.Fatalf("create FRP fixture directory: %v", err)
+		}
+		for _, target := range []string{fixturePaths.FRPC, fixturePaths.FRPS} {
+			name := filepath.Base(target)
+			binary, err := os.ReadFile(filepath.Join(sourceDirectory, name))
+			if err != nil {
+				t.Fatalf("read FRP fixture %s: %v", name, err)
+			}
+			if err := os.WriteFile(target, binary, 0o700); err != nil {
+				t.Fatalf("copy FRP fixture %s: %v", name, err)
+			}
+		}
+	}
 	paths, err := tunnelruntime.EnsureFRPRuntimeAt(ctx, frpDirectory, artifact)
 	if err != nil {
 		t.Fatalf("EnsureFRPRuntimeAt() error = %v", err)

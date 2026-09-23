@@ -61,10 +61,9 @@ type ServerControlPlaneOptions struct {
 // ServerControlPlane owns the durable desired-state transactions. It has no
 // HTTP, session, FRP, or command registration responsibilities.
 type ServerControlPlane struct {
-	database  *sql.DB
-	now       func() time.Time
-	random    io.Reader
-	portRange ServerPortRange
+	database *sql.DB
+	now      func() time.Time
+	random   io.Reader
 
 	observers      map[uint64]func(ServerControlPlaneEvent)
 	observersMu    sync.Mutex
@@ -85,11 +84,16 @@ func NewServerControlPlane(options ServerControlPlaneOptions) (*ServerControlPla
 	if err != nil {
 		return nil, err
 	}
+	if _, err := options.Database.Exec(`
+		INSERT INTO node_port_pools(node_id, port_start, port_end) VALUES('local', ?, ?)
+		ON CONFLICT(node_id) DO NOTHING
+	`, portRange.Start, portRange.End); err != nil {
+		return nil, fmt.Errorf("initialize Local Node port pool: %w", err)
+	}
 	return &ServerControlPlane{
 		database:  options.Database,
 		now:       options.Now,
 		random:    options.Random,
-		portRange: portRange,
 		observers: make(map[uint64]func(ServerControlPlaneEvent)),
 	}, nil
 }

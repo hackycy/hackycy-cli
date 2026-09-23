@@ -38,98 +38,95 @@ func TestOpenStateCreatesFreshGoSessionAndSQLitePrimitives(t *testing.T) {
 	assertDatabasePragmasAndSchema(t, state)
 }
 
-func TestInitializeDatabaseMigratesV1ToV2WithoutLosingData(t *testing.T) {
-	database := openRawTestDatabase(t)
-	if _, err := database.Exec(tunnelSchemaV1); err != nil {
-		t.Fatalf("create v1 schema: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO meta(key, value) VALUES('schema_version', '1')`); err != nil {
-		t.Fatalf("record v1 schema: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO accounts(internal_id, kind, username, username_key, role, password_hash, created_at, updated_at) VALUES('owner', 'local', 'owner', 'owner', 'admin', 'hash', 'now', 'now')`); err != nil {
-		t.Fatalf("insert v1 account: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO clients(internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision, created_at) VALUES('client', 'owner', 'kept', 'token', 4, 3, 'now')`); err != nil {
-		t.Fatalf("insert v1 client: %v", err)
-	}
-
-	if err := initializeDatabase(t.Context(), database); err != nil {
-		t.Fatalf("initializeDatabase() error = %v", err)
-	}
-	var remark string
-	var desired, completed int64
-	if err := database.QueryRow(`SELECT remark, desired_restart_generation, completed_restart_generation FROM clients WHERE internal_id = 'client'`).Scan(&remark, &desired, &completed); err != nil {
-		t.Fatalf("read migrated client: %v", err)
-	}
-	if remark != "kept" || desired != 0 || completed != 0 {
-		t.Fatalf("migrated client = (%q, %d, %d)", remark, desired, completed)
+func TestOpenStateRejectsOldAndUnknownSchemasWithoutChangingFiles(t *testing.T) {
+	for _, version := range []string{"1", "2", "99"} {
+		t.Run(version, func(t *testing.T) {
+			root := t.TempDir()
+			directory := filepath.Join(root, "go-v1")
+			if err := os.MkdirAll(directory, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, databaseFileName)
+			database, err := sql.Open("sqlite3", databaseFileURI(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.Exec(tunnelSchemaV1); err != nil {
+				t.Fatal(err)
+			}
+			if version == "2" {
+				if _, err := database.Exec(`ALTER TABLE clients ADD COLUMN desired_restart_generation INTEGER NOT NULL DEFAULT 0`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := database.Exec(`INSERT INTO meta(key, value) VALUES('schema_version', ?)`, version); err != nil {
+				t.Fatal(err)
+			}
+			before := databaseFileBytes(t, path)
+			if state, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
+				_ = state.Close()
+				t.Fatal("OpenState() accepted incompatible database")
+			}
+			assertDatabaseFilesUnchanged(t, path, before)
+			_ = database.Close()
+		})
 	}
 }
 
-func TestInitializeDatabaseRejectsUnknownSchemaVersion(t *testing.T) {
-	database := openRawTestDatabase(t)
-	if _, err := database.Exec(tunnelSchemaV1); err != nil {
-		t.Fatalf("create schema: %v", err)
+func TestOpenDatabaseRejectsUnknownWALWithoutChangingFiles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), databaseFileName)
+	database, err := sql.Open("sqlite3", databaseFileURI(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if _, err := database.Exec(`PRAGMA journal_mode = WAL`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := database.Exec(`INSERT INTO meta(key, value) VALUES('schema_version', '99')`); err != nil {
-		t.Fatalf("record schema: %v", err)
+		t.Fatal(err)
 	}
-	if err := initializeDatabase(t.Context(), database); err == nil {
-		t.Fatal("initializeDatabase() error = nil, want unknown schema rejection")
+	before := databaseFileBytes(t, path)
+	if opened, err := openDatabase(path, "test-controller-public-key"); err == nil {
+		_ = opened.Close()
+		t.Fatal("openDatabase() accepted unknown schema")
 	}
-	var version string
-	if err := database.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil || version != "99" {
-		t.Fatalf("schema version after rejection = (%q, %v)", version, err)
-	}
+	assertDatabaseFilesUnchanged(t, path, before)
 }
 
-func TestInitializeDatabaseRollsBackFailedV1Migration(t *testing.T) {
-	database := openRawTestDatabase(t)
-	if _, err := database.Exec(tunnelSchemaV1); err != nil {
-		t.Fatalf("create v1 schema: %v", err)
-	}
-	if _, err := database.Exec(`INSERT INTO meta(key, value) VALUES('schema_version', '1')`); err != nil {
-		t.Fatalf("record v1 schema: %v", err)
-	}
-	if _, err := database.Exec(`ALTER TABLE clients ADD COLUMN completed_restart_generation INTEGER NOT NULL DEFAULT 0`); err != nil {
-		t.Fatalf("create conflicting migration column: %v", err)
-	}
-	if err := initializeDatabase(t.Context(), database); err == nil {
-		t.Fatal("initializeDatabase() error = nil, want migration failure")
-	}
-	var version string
-	if err := database.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil || version != "1" {
-		t.Fatalf("schema version after rollback = (%q, %v)", version, err)
-	}
-	rows, err := database.Query(`PRAGMA table_info(clients)`)
-	if err != nil {
-		t.Fatalf("inspect clients columns: %v", err)
-	}
-	defer rows.Close()
-	foundDesired := false
-	for rows.Next() {
-		var index, notNull, primaryKey int
-		var name, columnType string
-		var defaultValue any
-		if err := rows.Scan(&index, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
-			t.Fatalf("scan clients column: %v", err)
-		}
-		foundDesired = foundDesired || name == "desired_restart_generation"
-	}
-	if foundDesired {
-		t.Fatal("failed migration left desired_restart_generation behind")
-	}
-}
-
-func openRawTestDatabase(t *testing.T) *sql.DB {
+func assertDatabaseFilesUnchanged(t *testing.T, path string, before map[string][]byte) {
 	t.Helper()
-	database, err := sql.Open("sqlite3", databaseFileURI(filepath.Join(t.TempDir(), "migration.sqlite")))
-	if err != nil {
-		t.Fatalf("open database: %v", err)
+	after := databaseFileBytes(t, path)
+	if len(after) != len(before) {
+		t.Fatalf("database file set changed: before %d, after %d", len(before), len(after))
 	}
-	database.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = database.Close() })
-	return database
+	for name, content := range before {
+		if string(after[name]) != string(content) {
+			t.Fatalf("%s changed during rejection", name)
+		}
+	}
+}
+
+func databaseFileBytes(t *testing.T, path string) map[string][]byte {
+	t.Helper()
+	result := make(map[string][]byte)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		content, err := os.ReadFile(path + suffix)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		result[suffix] = content
+	}
+	return result
 }
 
 func TestOpenStateRestartsOnlyFreshGoSessionAndSQLiteState(t *testing.T) {
@@ -171,6 +168,97 @@ func TestOpenStateRestartsOnlyFreshGoSessionAndSQLiteState(t *testing.T) {
 	if err := second.database.QueryRow(`SELECT value FROM meta WHERE key = 'fresh_go_marker'`).Scan(&marker); err != nil || marker != "present" {
 		t.Fatalf("fresh Go database marker = (%q, %v)", marker, err)
 	}
+}
+
+func TestOpenStateControllerIdentityMismatchAndMissingDoNotChangeDatabase(t *testing.T) {
+	for _, change := range []string{"missing", "mismatch"} {
+		t.Run(change, func(t *testing.T) {
+			root := t.TempDir()
+			state, err := OpenState(StateOptions{DataDirectory: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := state.databasePath
+			keyPath := filepath.Join(state.sessions.Directory(), controllerKeyFileName)
+			if err := state.Close(); err != nil {
+				t.Fatal(err)
+			}
+			key, err := os.ReadFile(keyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if change == "missing" {
+				if err := os.Remove(keyPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				key[0] ^= 0xff
+				if err := os.WriteFile(keyPath, key, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before := databaseFileBytes(t, path)
+			if reopened, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
+				_ = reopened.Close()
+				t.Fatal("OpenState() accepted missing or mismatched Controller identity")
+			}
+			assertDatabaseFilesUnchanged(t, path, before)
+		})
+	}
+}
+
+func TestOpenStateReusesControllerIdentityWhenOnlyDatabaseIsLost(t *testing.T) {
+	root := t.TempDir()
+	first, err := OpenState(StateOptions{DataDirectory: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(first.sessions.Directory(), controllerKeyFileName)
+	keyBefore, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := first.databasePath
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	second, err := OpenState(StateOptions{DataDirectory: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	keyAfter, err := os.ReadFile(keyPath)
+	if err != nil || string(keyBefore) != string(keyAfter) {
+		t.Fatalf("Controller identity changed after database recreation: %v", err)
+	}
+}
+
+func TestOpenStateRejectsIncompleteV3WithoutChangingFiles(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "go-v1")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, databaseFileName)
+	database, err := sql.Open("sqlite3", databaseFileURI(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec(`CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT INTO meta(key, value) VALUES('schema_version', '3')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	before := databaseFileBytes(t, path)
+	if state, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
+		_ = state.Close()
+		t.Fatal("OpenState() accepted incomplete v3")
+	}
+	assertDatabaseFilesUnchanged(t, path, before)
 }
 
 func TestOpenStateRejectsAnEmptyDirectory(t *testing.T) {

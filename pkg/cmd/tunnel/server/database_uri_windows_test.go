@@ -29,7 +29,7 @@ func TestOpenDatabaseSupportsSpacedUnicodeWindowsPath(t *testing.T) {
 		t.Fatalf("create test directory: %v", err)
 	}
 	path := filepath.Join(root, "tunnel.sqlite")
-	database, err := openDatabase(path)
+	database, err := openDatabase(path, "test-controller-public-key")
 	if err != nil {
 		t.Fatalf("openDatabase(%q): %v", path, err)
 	}

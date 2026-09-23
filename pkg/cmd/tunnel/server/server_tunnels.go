@@ -398,15 +398,19 @@ func (plane *ServerControlPlane) tunnelValuesWithOptions(ctx context.Context, co
 		return values, nil
 	}
 	serverPort := input.ServerPort
+	pool, err := localPortPool(ctx, connection)
+	if err != nil {
+		return normalizedTunnelValues{}, err
+	}
 	if serverPort == nil {
-		allocated, err := plane.availablePort(ctx, connection, protocol)
+		allocated, err := plane.availablePort(ctx, connection, protocol, pool)
 		if err != nil {
 			return normalizedTunnelValues{}, err
 		}
 		serverPort = &allocated
 	}
-	if *serverPort < plane.portRange.Start || *serverPort > plane.portRange.End {
-		return normalizedTunnelValues{}, serverDomainError("PORT_OUTSIDE_POOL", fmt.Sprintf("Server port must be inside %d-%d", plane.portRange.Start, plane.portRange.End))
+	if *serverPort < pool.Start || *serverPort > pool.End {
+		return normalizedTunnelValues{}, serverDomainError("PORT_OUTSIDE_POOL", fmt.Sprintf("Server port must be inside %d-%d", pool.Start, pool.End))
 	}
 	values.serverPort = serverPort
 	return values, nil
@@ -460,8 +464,16 @@ func tunnelMutationForPatch(current ServerTunnel, patch TunnelPatchInput) Tunnel
 	return input
 }
 
-func (plane *ServerControlPlane) availablePort(ctx context.Context, connection *sql.Conn, protocol tunnelruntime.TunnelProtocol) (int64, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT server_port FROM tunnels WHERE protocol = ? AND server_port BETWEEN ? AND ? ORDER BY server_port`, protocol, plane.portRange.Start, plane.portRange.End)
+func localPortPool(ctx context.Context, connection *sql.Conn) (ServerPortRange, error) {
+	var pool ServerPortRange
+	if err := connection.QueryRowContext(ctx, `SELECT port_start, port_end FROM node_port_pools WHERE node_id = 'local'`).Scan(&pool.Start, &pool.End); err != nil {
+		return ServerPortRange{}, fmt.Errorf("read Local Node port pool: %w", err)
+	}
+	return pool, nil
+}
+
+func (plane *ServerControlPlane) availablePort(ctx context.Context, connection *sql.Conn, protocol tunnelruntime.TunnelProtocol, pool ServerPortRange) (int64, error) {
+	rows, err := connection.QueryContext(ctx, `SELECT server_port FROM tunnels WHERE node_id = 'local' AND protocol = ? AND server_port BETWEEN ? AND ? ORDER BY server_port`, protocol, pool.Start, pool.End)
 	if err != nil {
 		return 0, fmt.Errorf("find available Tunnel server port: %w", err)
 	}
@@ -477,12 +489,12 @@ func (plane *ServerControlPlane) availablePort(ctx context.Context, connection *
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("iterate reserved Tunnel server ports: %w", err)
 	}
-	for candidate := plane.portRange.Start; candidate <= plane.portRange.End; candidate++ {
+	for candidate := pool.Start; candidate <= pool.End; candidate++ {
 		if _, found := reserved[candidate]; !found {
 			return candidate, nil
 		}
 	}
-	return 0, serverDomainError("PORT_POOL_EXHAUSTED", fmt.Sprintf("No %s server port is available in %d-%d", strings.ToUpper(string(protocol)), plane.portRange.Start, plane.portRange.End))
+	return 0, serverDomainError("PORT_POOL_EXHAUSTED", fmt.Sprintf("No %s server port is available in %d-%d", strings.ToUpper(string(protocol)), pool.Start, pool.End))
 }
 
 type normalizedTunnelValues struct {
@@ -557,7 +569,17 @@ func reserveTunnelHTTPRoutes(ctx context.Context, connection *sql.Conn, tunnelID
 		if values.location != nil {
 			location = *values.location
 		}
-		if _, err := connection.ExecContext(ctx, `INSERT INTO tunnel_http_routes(tunnel_id, hostname, location) VALUES(?, ?, ?)`, tunnelID, hostname, location); err != nil {
+		if _, err := connection.ExecContext(ctx, `
+			INSERT INTO hostname_owners(hostname_key, node_id)
+			SELECT ?, node_id FROM tunnels WHERE id = ?
+			ON CONFLICT(hostname_key) DO NOTHING
+		`, hostname, tunnelID); err != nil {
+			return err
+		}
+		if _, err := connection.ExecContext(ctx, `
+			INSERT INTO tunnel_http_routes(tunnel_id, node_id, hostname, location)
+			SELECT id, node_id, ?, ? FROM tunnels WHERE id = ?
+		`, hostname, location, tunnelID); err != nil {
 			return err
 		}
 	}
