@@ -150,6 +150,7 @@ func TestOfficialClientSwitchesAcrossNodesWithRealFRP(t *testing.T) {
 		t.Fatalf("offline pending assignment = (%+v, %v)", pending, err)
 	}
 	clientContext, cancelClient = context.WithCancel(ctx)
+	defer cancelClient()
 	clientDone = make(chan error, 1)
 	startClient(clientContext, clientDone)
 	waitCrossNodeClient(t, ctx, runtime, client.ID, clientRoot, remoteB.id, proxyPort)

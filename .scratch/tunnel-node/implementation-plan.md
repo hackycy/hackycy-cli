@@ -507,7 +507,7 @@ G6-E1 由三类跨 Node 真实转发/失败场景证明；G6-E2 由登录/代理
 
 ### Objective
 
-完成正常 Remove/Force Forget、固定版本的 Server/Node 部署资料及完整自动化和公网烟测，交付可由用户明确验收的新版本。
+完成正常 Remove/Force Forget、固定版本的 Server/Node 部署资料及完整自动化和 Docker 等价隔离网络烟测。
 
 ### Scope boundary
 
@@ -521,14 +521,14 @@ G6-E1 由三类跨 Node 真实转发/失败场景证明；G6-E2 由登录/代理
 
 ### Slice policy
 
-先切 Remove 事务、disabled 确认、Force Forget 风险呈现，再切裸机/容器文档、自动化故障矩阵和实际公网烟测；每片对应一个生命周期行为或验收层。
+先切 Remove 事务、disabled 确认、Force Forget 风险呈现，再切裸机/容器文档、自动化故障矩阵和 Docker 等价隔离网络烟测；每片对应一个生命周期行为或验收层。
 
 ### Verification
 
 #### Directed
 
 - 按 `.scratch/tunnel-node/deployment-acceptance.md` 故障矩阵逐项记录数据库归属、Node 持久高水位、FRPS/FRPC 进程、API/Web 投影；覆盖旧库字节不变、双 Controller、崩溃点、离线、切换、资源、Token、Remove、权限与错版。
-- 在两台主机或等价隔离网络使用同一精确发行版，访问真实公网 IP:7600 认领，持久卷重建后验证 HTTP/TCP/UDP 与 DNS 提示；记录版本、FRP 构建、端口、防火墙和预期中断。若环境不可达，按 Stop conditions 停止，不以环回单测替代。
+- 在独立 Docker 网络中使用同一精确发行版运行 Server、Node 和官方 Client，从 Server 容器经 Node 网络地址的 7600 端口认领；保留持久卷重建容器后验证 HTTP/TCP/UDP 与 DNS 提示。记录版本、FRP 构建、网络隔离、端口映射和预期中断；实际进程、持久状态及 API/Web 投影均须取证，不能以环回单测或单次 HTTP 成功替代。
 
 #### Repository
 
@@ -539,17 +539,15 @@ G6-E1 由三类跨 Node 真实转发/失败场景证明；G6-E2 由登录/代理
 
 #### Manual acceptance
 
-- 自动化及公网烟测完成后提供可访问的主 Server `http://<server-host>:7500/nodes` 和 `/clients` 页面中的一个已分配 Client、Node 本机指纹输出及烟测记录；自动化边界止于环境、协议和故障矩阵，用户确认面板操作与实际使用感受。
-- 最小清单：核对指纹并认领；查看 Remote Node 配置/运行分栏；把自己的 Client 切到 Remote 并观察 FRPC 状态；查看待移除和 Force Forget 提示；确认部署说明可按空目录与持久卷操作。
-- 用户明确回复 `G7 验收通过`，或 `G7 验收未通过：<现象与复现步骤>`。待回复时仅记录一次交接并结束本次 Goal，G7 不作通过转换。
+- 无。用户已明确授权以等价隔离网络测试通过作为 G7 验收结果，不需要公网或另一次人工验收。
 
 ### Evidence rule
 
-G7-E1 由 Remove/Force Forget 故障注入、API 与 Web 验收证明；G7-E2 由四条 Repository 命令、故障矩阵逐项记录和真实公网烟测证明；G7-E3 由部署文件/文档核对及用户按指定格式明确验收证明。
+G7-E1 由 Remove/Force Forget 故障注入、API 与 Web 验收证明；G7-E2 由四条 Repository 命令、故障矩阵逐项记录和 Docker 等价隔离网络烟测证明；G7-E3 由部署文件/文档核对及隔离部署的可执行性证明。
 
 ### Stop conditions
 
-- 缺少可达的两主机或等价隔离公网环境，无法执行真实公网烟测。
+- 缺少可运行的 Docker 等价隔离网络，无法执行真实进程与持久卷烟测。
 - 实际 Remove 不能可靠取得持久 disabled 与 FRPS 停止双重确认。
 - 故障矩阵或人工验收发现与已决议边界不符，且无法在本 Gate 范围内修复。
 
@@ -560,14 +558,14 @@ G7-E1 由 Remove/Force Forget 故障注入、API 与 Web 验收证明；G7-E2 �
 ### Exit conditions
 
 - G7-E1：正常 Remove 在依赖存在、离线和回执丢失时保持正确状态，确认停用后才删除；Force Forget 只清 Server 记录且风险可见。
-- G7-E2：完整故障矩阵、仓库命令和真实公网 HTTP/TCP/UDP 烟测均有可复核结果，错版/旧库拒绝无隐式数据修改。
-- G7-E3：固定版本的裸机/容器部署说明可执行，用户按指定格式确认页面与实际操作验收通过。
+- G7-E2：完整故障矩阵、仓库命令和 Docker 等价隔离网络 HTTP/TCP/UDP 烟测均有可复核结果，错版/旧库拒绝无隐式数据修改。
+- G7-E3：固定版本的裸机/容器部署说明可执行，隔离部署中的页面与实际操作验收通过。
 
 ## Definition Of Done
 
 - G0–G7 的 Exit conditions 各有对应 Directed、Repository 与适用的 Manual 证据，账本记录通过。
 - 单一 v5 Client 与 Noise/HTTP Node 管理契约、Server schema v3、API 状态和 CLI 帮助一致；Local 与 Remote 端到端行为满足设计地图。
-- 破坏性部署说明、故障矩阵、真实公网烟测和 G7 明确人工验收齐备；旧目录保持原样且没有迁移或兼容双轨。
+- 破坏性部署说明、故障矩阵和 G7 Docker 等价隔离网络验收齐备；旧目录保持原样且没有迁移或兼容双轨。
 
 ## Explicitly Out Of Scope
 

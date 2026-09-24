@@ -87,7 +87,7 @@ func tunnelAdapterRoute(path string) bool {
 }
 
 func tunnelShellRoute(path string) bool {
-	return path == "/" || path == "/clients" || strings.HasPrefix(path, "/clients/") || path == "/accounts" || path == "/server"
+	return path == "/" || path == "/clients" || strings.HasPrefix(path, "/clients/") || path == "/nodes" || strings.HasPrefix(path, "/nodes/") || path == "/accounts" || path == "/server"
 }
 
 // NewReadinessHandler creates the G19 static-only route harness for one
@@ -164,7 +164,7 @@ func tunnelReadinessHandler(site *Site) http.Handler {
 			return
 		}
 		if request.Method == http.MethodGet || request.Method == http.MethodHead {
-			if request.URL.Path == "/" || request.URL.Path == "/clients" || strings.HasPrefix(request.URL.Path, "/clients/") || request.URL.Path == "/accounts" || request.URL.Path == "/server" {
+			if tunnelShellRoute(request.URL.Path) {
 				site.ServeShell(writer, request, tunnelReadinessCSP)
 				return
 			}

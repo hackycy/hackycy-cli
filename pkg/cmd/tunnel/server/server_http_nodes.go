@@ -106,12 +106,31 @@ func (handler *ServerHTTPHandler) serveNode(writer http.ResponseWriter, request 
 		}{Version: 1, Node: node})
 		return
 	}
-	if request.Method != http.MethodPatch {
-		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use GET or PATCH")
+	if request.Method != http.MethodPatch && request.Method != http.MethodDelete {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use GET, PATCH or DELETE")
 		return
 	}
 	if !sameServerOrigin(request) {
 		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
+		return
+	}
+	if request.Method == http.MethodDelete {
+		revision, err := workspace.RemoveNode(request.Context(), nodeID)
+		if err != nil {
+			writeServerHTTPAuthenticatedDomainError(writer, session, err)
+			return
+		}
+		writeServerAuthenticatedJSON(writer, session, http.StatusAccepted, struct {
+			Version int    `json:"version"`
+			NodeID  string `json:"nodeId"`
+			Removal struct {
+				State           string `json:"state"`
+				DesiredRevision int64  `json:"desiredRevision"`
+			} `json:"removal"`
+		}{Version: 1, NodeID: nodeID, Removal: struct {
+			State           string `json:"state"`
+			DesiredRevision int64  `json:"desiredRevision"`
+		}{State: "pending", DesiredRevision: revision}})
 		return
 	}
 	var patch serverNodeMetadataPatch
@@ -222,6 +241,37 @@ func (handler *ServerHTTPHandler) serveNodeTokenRotation(writer http.ResponseWri
 		return
 	}
 	writeServerNodePendingResponse(writer, session, revision)
+}
+
+func (handler *ServerHTTPHandler) serveNodeForceForget(writer http.ResponseWriter, request *http.Request, nodeID string) {
+	session, workspace := handler.authenticatedWorkspace(writer, request)
+	if session == nil {
+		return
+	}
+	if request.Method != http.MethodPost {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use POST")
+		return
+	}
+	if !sameServerOrigin(request) {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
+		return
+	}
+	var input struct {
+		ConfirmNodeID string `json:"confirmNodeId"`
+	}
+	if err := decodeServerHTTPJSON(writer, request, &input); err != nil {
+		writeServerHTTPAuthenticatedInputError(writer, session, err)
+		return
+	}
+	if input.ConfirmNodeID != nodeID {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusBadRequest, "INVALID_REQUEST", "Confirmed Node ID must match")
+		return
+	}
+	if err := workspace.ForceForgetNode(request.Context(), nodeID); err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	writer.WriteHeader(http.StatusNoContent)
 }
 
 func writeServerNodePendingResponse(writer http.ResponseWriter, session *ServerSession, revision int64) {

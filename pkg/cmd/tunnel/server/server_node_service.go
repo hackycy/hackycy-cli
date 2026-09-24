@@ -153,3 +153,31 @@ func (service *serverNodeService) rotateToken(ctx context.Context, nodeID string
 	service.observations.notify()
 	return revision, nil
 }
+
+func (service *serverNodeService) requestRemoval(ctx context.Context, nodeID string) (int64, error) {
+	revision, err := service.registry.requestNodeRemoval(ctx, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	service.coordinator.Wake()
+	service.observations.notify()
+	return revision, nil
+}
+
+func (service *serverNodeService) forceForget(ctx context.Context, nodeID string) error {
+	service.coordinator.lifecycleMu.Lock()
+	defer service.coordinator.lifecycleMu.Unlock()
+	observation, err := service.observations.read(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	fault := observation.ManagementState == "unreachable" || observation.ManagementState == "identity_mismatch" || observation.ManagementState == "incompatible"
+	if err := service.registry.forceForget(ctx, nodeID, fault); err != nil {
+		return err
+	}
+	service.observations.mu.Lock()
+	delete(service.observations.fresh, nodeID)
+	service.observations.mu.Unlock()
+	service.observations.notify()
+	return nil
+}

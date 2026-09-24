@@ -67,6 +67,7 @@ var approvedPackageInventory = []string{
 	"pkg/cmd/run",
 	"pkg/cmd/tunnel",
 	"pkg/cmd/tunnel/connect",
+	"pkg/cmd/tunnel/node",
 	"pkg/cmd/tunnel/server",
 	"pkg/cmd/upgrade",
 	"pkg/cmd/zip",

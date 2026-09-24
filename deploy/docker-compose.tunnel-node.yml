@@ -1,0 +1,22 @@
+# Run on the Remote Node host with the exact YCY_VERSION used by the Server.
+# Keep this volume private to this Node, including on container replacement.
+services:
+  tunnel-node:
+    image: ghcr.io/hackycy/hackycy-cli:${YCY_VERSION:?pin-one-release}
+    command: [tunnel, node]
+    restart: unless-stopped
+    environment:
+      YCY_TUNNEL_NODE_DATA_DIR: /data
+      YCY_TUNNEL_NODE_MANAGEMENT_BIND_ADDRESS: 0.0.0.0
+      YCY_TUNNEL_NODE_MANAGEMENT_PORT: '7600'
+    volumes:
+      - tunnel-node-data:/data
+    ports:
+      - '7600:7600/tcp' # Server -> Node Noise/HTTP management
+      - '7000:7000/tcp' # Client FRPC -> Node FRPS
+      - '8080:8080/tcp' # HTTP Tunnel ingress
+      - '20000-20100:20000-20100/tcp'
+      - '20000-20100:20000-20100/udp'
+
+volumes:
+  tunnel-node-data:

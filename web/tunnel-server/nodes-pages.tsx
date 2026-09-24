@@ -2,7 +2,7 @@ import { ArrowRight, Network, Plus, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiJson } from './api'
 import { NodeClaimDialog } from './node-claim'
-import { NodeConfigurationEditor, NodeMetadataEditor, NodeReapplyButton, NodeTokenRotationButton } from './node-config'
+import { NodeConfigurationEditor, NodeMetadataEditor, NodeReapplyButton, NodeRemovalControls, NodeTokenRotationButton } from './node-config'
 import { EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, Status } from './ui'
 
 export interface NodeEndpoint {
@@ -222,10 +222,14 @@ export function NodeDetailPage({ id, refreshSequence, isAdmin }: { id: string, r
             {isAdmin && management && <NodeConfigurationEditor node={management} onSaved={() => void load()} />}
             {isAdmin && management && <NodeReapplyButton node={management} onSaved={() => void load()} />}
             {isAdmin && management && <NodeTokenRotationButton node={management} onSaved={() => void load()} />}
+            {isAdmin && management && <NodeRemovalControls node={management} onSaved={() => void load()} onForgotten={() => navigate('/nodes')} />}
           </div>
         )}
       />
       {error && <ErrorState message={error} onRetry={() => void load()} />}
+      {node.lifecycle === 'removing' && (
+        <p className="form-hint" role="status">Removal pending. The Node remains listed until its saved disabled state and stopped FRPS are confirmed. While management is offline, its old FRPS may still run.</p>
+      )}
       <section className="section-band node-detail-band">
         <div className="section-title">
           <h2>Connection</h2>

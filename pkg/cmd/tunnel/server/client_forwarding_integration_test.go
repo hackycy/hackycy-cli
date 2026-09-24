@@ -43,7 +43,7 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read FRP fixture %s: %v", name, err)
 			}
-			if err := os.WriteFile(target, binary, 0o700); err != nil {
+			if err := os.WriteFile(target, binary, 0o755); err != nil {
 				t.Fatalf("copy FRP fixture %s: %v", name, err)
 			}
 		}

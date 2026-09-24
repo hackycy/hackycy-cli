@@ -1,5 +1,5 @@
 import type { NodeManagementView } from './nodes-pages'
-import { KeyRound, MapPin, RotateCw, Save } from 'lucide-react'
+import { KeyRound, MapPin, RotateCw, Save, ShieldAlert, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { apiJson, jsonRequest } from './api'
 import { nodeActionError } from './node-claim'
@@ -28,7 +28,7 @@ export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagemen
     setPoolEnd(String(settings.portRangeEnd))
     setCustom404Page(settings.custom404Page)
   }, [node])
-  if (node.kind === 'local')
+  if (node.kind === 'local' || node.lifecycle === 'removing')
     return null
   const save = async (): Promise<void> => {
     setSaving(true)
@@ -115,7 +115,7 @@ export function NodeReapplyButton({ node, onSaved }: { node: NodeManagementView,
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const { notify } = useFeedback()
-  if (node.kind === 'local' || node.desired.mode !== 'running')
+  if (node.kind === 'local' || node.lifecycle === 'removing' || node.desired.mode !== 'running')
     return null
   const reapply = async (): Promise<void> => {
     setBusy(true)
@@ -148,7 +148,7 @@ export function NodeTokenRotationButton({ node, onSaved }: { node: NodeManagemen
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const { notify } = useFeedback()
-  if (node.kind === 'local' || node.desired.mode !== 'running')
+  if (node.kind === 'local' || node.lifecycle === 'removing' || node.desired.mode !== 'running')
     return null
   const rotate = async (): Promise<void> => {
     setBusy(true)
@@ -180,6 +180,114 @@ export function NodeTokenRotationButton({ node, onSaved }: { node: NodeManagemen
         onClose={() => setOpen(false)}
         onConfirm={() => void rotate()}
       />
+    </>
+  )
+}
+
+export function NodeRemovalControls({ node, onSaved, onForgotten }: { node: NodeManagementView, onSaved: () => void, onForgotten: () => void }): React.JSX.Element | null {
+  const [removeOpen, setRemoveOpen] = useState(false)
+  const [forgetOpen, setForgetOpen] = useState(false)
+  const [confirmation, setConfirmation] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const { notify } = useFeedback()
+  if (node.kind === 'local')
+    return null
+
+  const canForget = node.lifecycle === 'removing' || ['unreachable', 'identity_mismatch', 'incompatible'].includes(node.management.state)
+  const remove = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiJson(`/api/nodes/${encodeURIComponent(node.id)}`, { method: 'DELETE' })
+      setRemoveOpen(false)
+      notify('Node removal pending remote shutdown')
+      onSaved()
+    }
+    catch (cause) {
+      setError(nodeActionError(cause))
+    }
+    finally {
+      setBusy(false)
+    }
+  }
+  const forget = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiJson(`/api/nodes/${encodeURIComponent(node.id)}/force-forget`, jsonRequest('POST', { confirmNodeId: confirmation.trim() }))
+      setForgetOpen(false)
+      notify('Server Node record removed')
+      onForgotten()
+    }
+    catch (cause) {
+      setError(nodeActionError(cause))
+    }
+    finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      {node.lifecycle === 'active' && (
+        <button
+          type="button"
+          onClick={() => {
+            setError('')
+            setRemoveOpen(true)
+          }}
+        >
+          <Trash2 size={15} />
+          Remove Node
+        </button>
+      )}
+      {canForget && (
+        <button
+          className="danger"
+          type="button"
+          onClick={() => {
+            setError('')
+            setConfirmation('')
+            setForgetOpen(true)
+          }}
+        >
+          <ShieldAlert size={15} />
+          Force Forget
+        </button>
+      )}
+      <ConfirmDialog
+        open={removeOpen}
+        message="Remove this Node after it has no assigned or pending Clients? The Node stays listed until it confirms durable shutdown of FRPS. If it is offline, its old FRPS may still be running."
+        busy={busy}
+        error={error}
+        onClose={() => setRemoveOpen(false)}
+        onConfirm={() => void remove()}
+      />
+      <DialogShell
+        open={forgetOpen}
+        title="Force Forget Node"
+        busy={busy}
+        onOpenChange={next => !next && setForgetOpen(false)}
+        onSubmit={(event) => {
+          event.preventDefault()
+          void forget()
+        }}
+      >
+        <p>Only the Server record will be deleted. The remote FRPS may continue running, old credentials may still work, and the Node remains bound to this Controller.</p>
+        <label>
+          Enter the full Node ID to confirm
+          <span className="mono break">{node.id}</span>
+          <input required autoComplete="off" spellCheck={false} value={confirmation} onChange={event => setConfirmation(event.target.value)} />
+        </label>
+        {error && <ErrorState message={error} />}
+        <div className="modal-actions">
+          <button type="button" disabled={busy} onClick={() => setForgetOpen(false)}>Cancel</button>
+          <button className="danger" type="submit" disabled={busy || confirmation.trim() !== node.id}>
+            {busy ? <Spinner /> : <ShieldAlert size={15} />}
+            Force Forget
+          </button>
+        </div>
+      </DialogShell>
     </>
   )
 }

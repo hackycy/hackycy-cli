@@ -22,6 +22,7 @@ type serverNodeCoordinator struct {
 	cancel       context.CancelFunc
 	done         chan struct{}
 	startOnce    sync.Once
+	lifecycleMu  sync.Mutex
 }
 
 func newServerNodeCoordinator(directory string, registry *serverNodeRegistry, observations *serverNodeObservations) (*serverNodeCoordinator, error) {
@@ -84,6 +85,14 @@ func (coordinator *serverNodeCoordinator) reconcile(ctx context.Context) error {
 }
 
 func (coordinator *serverNodeCoordinator) reconcileNode(ctx context.Context, record serverNodeRecord) {
+	coordinator.lifecycleMu.Lock()
+	defer coordinator.lifecycleMu.Unlock()
+	// A Force Forget may have removed this row after listRemote read it.
+	current, err := coordinator.registry.get(ctx, record.ID)
+	if err != nil {
+		return
+	}
+	record = current
 	if record.PendingManagementAddress != "" {
 		if coordinator.verifyCandidate(ctx, record) {
 			record.ManagementAddress = record.PendingManagementAddress
@@ -103,11 +112,14 @@ func (coordinator *serverNodeCoordinator) reconcileNode(ctx context.Context, rec
 		return
 	}
 	coordinator.observeNodeStatus(ctx, record.ID, status)
-	if !record.DesiredSnapshot.Valid || !record.DesiredHash.Valid || record.Lifecycle != "active" {
+	if !record.DesiredSnapshot.Valid || !record.DesiredHash.Valid {
 		return
 	}
 	digest := sha256.Sum256([]byte(record.DesiredSnapshot.String))
 	if hex.EncodeToString(digest[:]) != record.DesiredHash.String {
+		return
+	}
+	if record.Lifecycle == "removing" && coordinator.finishNodeRemoval(ctx, record, status) {
 		return
 	}
 	if status.HighestAcceptedRevision > record.DesiredRevision || status.HighestAcceptedRevision == record.DesiredRevision && status.SHA256 != record.DesiredHash.String {
@@ -120,6 +132,9 @@ func (coordinator *serverNodeCoordinator) reconcileNode(ctx context.Context, rec
 	nodeID, status, err = coordinator.wire.status(ctx, record.ManagementAddress, coordinator.privateKey, record.PublicKey)
 	if err == nil && nodeID == record.ID {
 		coordinator.observeNodeStatus(ctx, record.ID, status)
+		if record.Lifecycle == "removing" {
+			coordinator.finishNodeRemoval(ctx, record, status)
+		}
 	}
 }
 

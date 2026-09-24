@@ -496,6 +496,26 @@ func (workspace *ServerWorkspace) RotateNodeToken(ctx context.Context, nodeID st
 	return workspace.nodes.rotateToken(ctx, nodeID, expectedRevision)
 }
 
+func (workspace *ServerWorkspace) RemoveNode(ctx context.Context, nodeID string) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.requestRemoval(ctx, nodeID)
+}
+
+func (workspace *ServerWorkspace) ForceForgetNode(ctx context.Context, nodeID string) error {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return err
+	}
+	if workspace.nodes == nil {
+		return serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.forceForget(ctx, nodeID)
+}
+
 func (workspace *ServerWorkspace) ListNodes(ctx context.Context) ([]serverNodeSummary, error) {
 	if _, err := workspace.currentAccount(ctx); err != nil {
 		return nil, err
