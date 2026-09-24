@@ -1856,6 +1856,68 @@
       ]
     },
     {
+      "path": "ycy tunnel node",
+      "use": "node",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "data-dir",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "management-bind-address",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "management-port",
+          "type": "string",
+          "default": "",
+          "scope": "local"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
       "path": "ycy tunnel server",
       "use": "server",
       "aliases": [],

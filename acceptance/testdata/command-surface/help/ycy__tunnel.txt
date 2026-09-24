@@ -4,6 +4,7 @@ Usage:
   ycy tunnel [flags]
 Commands:
   connect	Connect a native trusted client to a Tunnel Control Plane
+  node	Run a remote Tunnel Node management listener
   server	Run the Tunnel Control Plane and supervised frps process
 Flags:
   -h, --help	help for tunnel

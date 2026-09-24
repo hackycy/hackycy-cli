@@ -15,6 +15,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20260714215040-dc233986426f
 	github.com/chromedp/chromedp v0.16.0
 	github.com/creack/pty v1.1.24
+	github.com/flynn/noise v1.1.0
 	github.com/gen2brain/gav1d v0.2.5
 	github.com/gen2brain/vpx v0.2.1
 	github.com/go-git/go-git/v5 v5.19.2

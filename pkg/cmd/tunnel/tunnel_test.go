@@ -10,12 +10,12 @@ import (
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 )
 
-func TestNewCmdTunnelRegistersServerAndConnect(t *testing.T) {
+func TestNewCmdTunnelRegistersServerConnectAndNode(t *testing.T) {
 	command := NewCmdTunnel(newTunnelTestFactory())
 	output := &bytes.Buffer{}
 	command.SetOut(output)
 	command.SetArgs([]string{"--help"})
-	if err := command.Execute(); err != nil || !strings.Contains(output.String(), "server") || !strings.Contains(output.String(), "connect") {
+	if err := command.Execute(); err != nil || !strings.Contains(output.String(), "server") || !strings.Contains(output.String(), "connect") || !strings.Contains(output.String(), "node") {
 		t.Fatalf("help execution = (%v, %q)", err, output.String())
 	}
 }

@@ -165,7 +165,7 @@ func (app *App) rootCommandWithPresentationError(controls diagnosticControls, ca
 	root.SetErr(app.diagnostics())
 	root.PersistentPreRunE = func(command *cobra.Command, _ []string) error {
 		switch command.CommandPath() {
-		case "ycy diff", "ycy fs", "ycy rm", "ycy export env", "ycy run", "ycy zip", "ycy tunnel server", "ycy tunnel connect",
+		case "ycy diff", "ycy fs", "ycy rm", "ycy export env", "ycy run", "ycy zip", "ycy tunnel server", "ycy tunnel connect", "ycy tunnel node",
 			"ycy upgrade",
 			"ycy git heat", "ycy git pulse", "ycy git fork", "ycy git cm",
 			"ycy config fork list", "ycy config fork add", "ycy config fork remove",

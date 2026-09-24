@@ -10,7 +10,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +21,86 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+func TestTunnelNodeStandaloneBinaryIdentityAndCLI(t *testing.T) {
+	binary := buildDiffStandaloneBinary(t)
+	environment := environmentWith(map[string]string{
+		"YCY_TUNNEL_NODE_MANAGEMENT_BIND_ADDRESS": "127.0.0.1",
+		"YCY_TUNNEL_NODE_MANAGEMENT_PORT":         "7600",
+		"YCY_TUNNEL_NODE_DATA_DIR":                filepath.Join(t.TempDir(), "node"),
+	})
+	help, err := runDiffStandalone(binary, t.TempDir(), environment, "tunnel", "node", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, flag := range []string{"--management-bind-address", "--management-port", "--data-dir"} {
+		if !bytes.Contains(help, []byte(flag)) {
+			t.Fatalf("Node help omitted %s: %s", flag, help)
+		}
+	}
+	for _, commandName := range []string{"reset", "rebind", "claim", "stop"} {
+		if bytes.Contains(help, []byte("  "+commandName+" ")) {
+			t.Fatalf("Node help exposed %s: %s", commandName, help)
+		}
+	}
+	for _, argument := range [][]string{{"--management-port", "0"}, {"--management-port", "65536"}, {"--management-bind-address", ""}, {"--data-dir", ""}} {
+		output, err := runDiffStandalone(binary, t.TempDir(), environment, append([]string{"tunnel", "node"}, argument...)...)
+		if exitCode(err) != 1 || len(output) == 0 {
+			t.Fatalf("invalid Node arguments %v = (%v, %s)", argument, err, output)
+		}
+	}
+	portListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portListener.Addr().(*net.TCPAddr).Port
+	_ = portListener.Close()
+	directory := filepath.Join(t.TempDir(), "node")
+	fingerprintPattern := regexp.MustCompile(`SHA256:[A-Za-z0-9_-]{43}`)
+	startAndStop := func() string {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, resolveStandaloneBinary(binary), "tunnel", "node", "--management-bind-address", "127.0.0.1", "--management-port", strconv.Itoa(port), "--data-dir", directory)
+		command.Env = environment
+		var output bytes.Buffer
+		command.Stdout, command.Stderr = &output, &output
+		if err := command.Start(); err != nil {
+			t.Fatal(err)
+		}
+		ready := false
+		client := &http.Client{Timeout: time.Second}
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+			response, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+			if err == nil {
+				var body bytes.Buffer
+				_, _ = body.ReadFrom(response.Body)
+				_ = response.Body.Close()
+				ready = response.StatusCode == http.StatusOK && bytes.Contains(body.Bytes(), []byte(`"protocolVersion":1`)) && !bytes.Contains(body.Bytes(), []byte("SHA256"))
+				if ready {
+					break
+				}
+			}
+		}
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		if !ready {
+			t.Fatalf("Node process did not become healthy: %s", output.String())
+		}
+		fingerprint := fingerprintPattern.FindString(output.String())
+		if fingerprint == "" {
+			t.Fatalf("Node did not print full fingerprint: %s", output.String())
+		}
+		return fingerprint
+	}
+	first := startAndStop()
+	if second := startAndStop(); first != second {
+		t.Fatalf("Node fingerprint changed after process restart: %q != %q", first, second)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "node.sqlite")); err != nil {
+		t.Fatalf("Node did not persist identity: %v", err)
+	}
+}
 
 func TestTunnelServerStandaloneBinaryPreservesCLIValidation(t *testing.T) {
 	binary := buildDiffStandaloneBinary(t)
