@@ -90,7 +90,7 @@ func TestTunnelRouteMatrix(t *testing.T) {
 		t.Fatalf("New returned an error: %v", err)
 	}
 
-	for _, path := range []string{"/", "/clients", "/clients/client-1", "/accounts", "/server"} {
+	for _, path := range []string{"/", "/clients", "/clients/client-1", "/nodes", "/nodes/node-1", "/accounts", "/server"} {
 		t.Run("GET "+path, func(t *testing.T) {
 			assertShell(t, routeResponse(handler, http.MethodGet, path), "HACKYCY CLI - TUNNEL CONTROL PLANE", tunnelContentSecurityPolicy)
 		})

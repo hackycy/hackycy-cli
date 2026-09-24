@@ -40,7 +40,7 @@ export interface TunnelImportPreview {
 }
 
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly code?: string, public readonly details?: Record<string, unknown>) {
     super(message)
   }
 }
@@ -68,7 +68,7 @@ export async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok && response.status === 401)
     window.dispatchEvent(new Event('tunnel-authentication-required'))
   if (!response.ok)
-    throw new ApiError(response.status, body?.error?.message ?? `Request failed (${response.status})`)
+    throw new ApiError(response.status, body?.error?.message ?? `Request failed (${response.status})`, body?.error?.code, body?.error?.details)
   return body as T
 }
 

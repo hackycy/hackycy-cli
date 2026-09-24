@@ -54,6 +54,7 @@ type ServerHTTPOptions struct {
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
 	AgentGateway        *ServerAgentGateway
+	Nodes               *serverNodeService
 	ServerState         ServerHTTPStateProvider
 }
 
@@ -106,6 +107,7 @@ type ServerHTTPHandler struct {
 	frpsChanges         ServerFRPSChangeObserver
 	agentGateway        *ServerAgentGateway
 	serverState         ServerHTTPStateProvider
+	nodes               *serverNodeService
 }
 
 func NewServerHTTPHandler(options ServerHTTPOptions) (*ServerHTTPHandler, error) {
@@ -128,6 +130,7 @@ func NewServerHTTPHandler(options ServerHTTPOptions) (*ServerHTTPHandler, error)
 		frpsChanges:         options.FRPSChanges,
 		agentGateway:        options.AgentGateway,
 		serverState:         options.ServerState,
+		nodes:               options.Nodes,
 	}, nil
 }
 
@@ -159,6 +162,10 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 		handler.serveAccounts(writer, request)
 	case "/api/clients":
 		handler.serveClients(writer, request)
+	case "/api/nodes/claim-previews":
+		handler.serveNodeClaimPreviews(writer, request)
+	case "/api/nodes":
+		handler.serveNodes(writer, request)
 	default:
 		if accountID, found := serverClientRouteID(request.URL.Path, "/api/accounts/", "/password"); found {
 			handler.serveAccountPassword(writer, request, accountID)
@@ -190,6 +197,22 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 		}
 		if clientID, found := serverClientRouteID(request.URL.Path, "/api/clients/", ""); found {
 			handler.serveClient(writer, request, clientID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/desired"); found {
+			handler.serveNodeDesired(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/reapply"); found {
+			handler.serveNodeReapply(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/management"); found {
+			handler.serveNodeManagement(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", ""); found {
+			handler.serveNode(writer, request, nodeID)
 			return
 		}
 		if tunnelID, found := serverClientRouteID(request.URL.Path, "/api/tunnels/", ""); found {
@@ -1140,6 +1163,7 @@ func (handler *ServerHTTPHandler) authenticatedWorkspace(writer http.ResponseWri
 		Custom404PageWriter: handler.custom404PageWriter,
 		FRPSChanges:         handler.frpsChanges,
 		AgentChanges:        handler.agentGateway,
+		Nodes:               handler.nodes,
 	}, session.Token)
 	if err != nil {
 		writeServerHTTPDomainError(writer, err)
@@ -1851,32 +1875,51 @@ func writeServerHTTPDomainError(writer http.ResponseWriter, err error) {
 		return
 	}
 	status, found := map[string]int{
-		"ACCOUNT_NOT_EMPTY":        http.StatusConflict,
-		"ACTIVATION_FAILED":        http.StatusInternalServerError,
-		"AUTHENTICATION_FAILED":    http.StatusUnauthorized,
-		"AUTHENTICATION_REQUIRED":  http.StatusUnauthorized,
-		"CLIENT_OFFLINE":           http.StatusConflict,
-		"CONFIGURATION_FAILED":     http.StatusInternalServerError,
-		"FORBIDDEN":                http.StatusForbidden,
-		"FRPS_UNAVAILABLE":         http.StatusServiceUnavailable,
-		"INVALID_ACCOUNT":          http.StatusBadRequest,
-		"INVALID_CLIENT_REMARK":    http.StatusBadRequest,
-		"INVALID_CONFIG":           http.StatusBadRequest,
-		"INVALID_CUSTOM_404_PAGE":  http.StatusBadRequest,
-		"INVALID_CURRENT_PASSWORD": http.StatusBadRequest,
-		"INVALID_HOSTNAME":         http.StatusBadRequest,
-		"INVALID_HTTP_ROUTE":       http.StatusBadRequest,
-		"INVALID_LOCAL_ENDPOINT":   http.StatusBadRequest,
-		"INVALID_PROTOCOL":         http.StatusBadRequest,
-		"INVALID_REVISION":         http.StatusBadRequest,
-		"INVALID_TUNNEL":           http.StatusBadRequest,
-		"MANAGED_ACCOUNT":          http.StatusConflict,
-		"NOT_FOUND":                http.StatusNotFound,
-		"PORT_OUTSIDE_POOL":        http.StatusBadRequest,
-		"PORT_POOL_EXHAUSTED":      http.StatusConflict,
-		"RESOURCE_RESERVED":        http.StatusConflict,
-		"SESSION_UNAVAILABLE":      http.StatusServiceUnavailable,
-		"USERNAME_TAKEN":           http.StatusConflict,
+		"ACCOUNT_NOT_EMPTY":          http.StatusConflict,
+		"ACTIVATION_FAILED":          http.StatusInternalServerError,
+		"AUTHENTICATION_FAILED":      http.StatusUnauthorized,
+		"AUTHENTICATION_REQUIRED":    http.StatusUnauthorized,
+		"CLIENT_OFFLINE":             http.StatusConflict,
+		"CONFIGURATION_FAILED":       http.StatusInternalServerError,
+		"FORBIDDEN":                  http.StatusForbidden,
+		"FRPS_UNAVAILABLE":           http.StatusServiceUnavailable,
+		"INVALID_ACCOUNT":            http.StatusBadRequest,
+		"INVALID_CLIENT_REMARK":      http.StatusBadRequest,
+		"INVALID_CONFIG":             http.StatusBadRequest,
+		"INVALID_CUSTOM_404_PAGE":    http.StatusBadRequest,
+		"INVALID_CURRENT_PASSWORD":   http.StatusBadRequest,
+		"INVALID_HOSTNAME":           http.StatusBadRequest,
+		"INVALID_HTTP_ROUTE":         http.StatusBadRequest,
+		"INVALID_LOCAL_ENDPOINT":     http.StatusBadRequest,
+		"INVALID_PROTOCOL":           http.StatusBadRequest,
+		"INVALID_REVISION":           http.StatusBadRequest,
+		"INVALID_TUNNEL":             http.StatusBadRequest,
+		"MANAGED_ACCOUNT":            http.StatusConflict,
+		"NOT_FOUND":                  http.StatusNotFound,
+		"INVALID_MANAGEMENT_ADDRESS": http.StatusBadRequest,
+		"INVALID_NODE":               http.StatusBadRequest,
+		"INVALID_NODE_ENDPOINT":      http.StatusBadRequest,
+		"INVALID_NODE_SETTINGS":      http.StatusBadRequest,
+		"NODE_ALREADY_CLAIMED":       http.StatusConflict,
+		"NODE_ALREADY_REGISTERED":    http.StatusConflict,
+		"NODE_CLAIM_OUTCOME_UNKNOWN": http.StatusServiceUnavailable,
+		"NODE_CONFIG_REJECTED":       http.StatusConflict,
+		"NODE_IDENTITY_MISMATCH":     http.StatusConflict,
+		"NODE_PREVIEW_EXPIRED":       http.StatusConflict,
+		"NODE_PROTOCOL_INCOMPATIBLE": http.StatusServiceUnavailable,
+		"NODE_RESOURCE_CONFLICT":     http.StatusConflict,
+		"NODE_REVISION_CONFLICT":     http.StatusConflict,
+		"NODE_REVISION_STALE":        http.StatusConflict,
+		"NODE_ROLLBACK_FAILED":       http.StatusServiceUnavailable,
+		"NODE_SNAPSHOT_INVALID":      http.StatusBadRequest,
+		"NODE_SNAPSHOT_TOO_LARGE":    http.StatusBadRequest,
+		"NODE_UNREACHABLE":           http.StatusServiceUnavailable,
+		"REVISION_CONFLICT":          http.StatusConflict,
+		"PORT_OUTSIDE_POOL":          http.StatusBadRequest,
+		"PORT_POOL_EXHAUSTED":        http.StatusConflict,
+		"RESOURCE_RESERVED":          http.StatusConflict,
+		"SESSION_UNAVAILABLE":        http.StatusServiceUnavailable,
+		"USERNAME_TAKEN":             http.StatusConflict,
 	}[domainError.Code]
 	if !found {
 		writeServerHTTPError(writer, http.StatusInternalServerError, "INTERNAL_ERROR", "The tunnel control request failed")

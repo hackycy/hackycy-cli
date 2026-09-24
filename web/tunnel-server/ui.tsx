@@ -14,11 +14,11 @@ export function navigate(path: string): void {
 }
 
 function statusClass(value: string): string {
-  if (['connected', 'running', 'Applied'].includes(value))
+  if (['connected', 'running', 'available', 'converged', 'Applied'].includes(value))
     return 'status status-good'
   if (['recovering', 'Pending', 'pending', 'revocation_pending'].includes(value))
     return 'status status-warn'
-  if (['incompatible', 'configuration_failed', 'Error', 'failed'].includes(value))
+  if (['incompatible', 'identity_mismatch', 'protocol_incompatible', 'configuration_failed', 'rollback_failed', 'Error', 'failed'].includes(value))
     return 'status status-error'
   return 'status status-muted'
 }

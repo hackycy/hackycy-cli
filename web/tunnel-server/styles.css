@@ -422,6 +422,75 @@ th:last-child {
   height: 64px;
 }
 
+.nodes-table td:first-child {
+  min-width: 180px;
+}
+
+.nodes-table .mono {
+  overflow-wrap: anywhere;
+}
+
+.node-kind,
+.node-observed {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-kind {
+  text-transform: capitalize;
+}
+
+.node-detail-band {
+  margin-top: 20px;
+}
+
+.node-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.node-action-stack {
+  display: grid;
+  gap: 4px;
+}
+
+.form-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.node-claim-preview {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.node-claim-fingerprint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.node-claim-fingerprint code {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.node-claim-confirm {
+  display: flex !important;
+  align-items: center;
+  gap: 10px !important;
+}
+
 .client-identity {
   display: grid;
   align-content: center;
