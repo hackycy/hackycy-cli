@@ -25,14 +25,15 @@ import (
 
 const nodeDatabaseFile = "node.sqlite"
 const nodeInitializedFile = "node.initialized"
-const nodeSchemaVersion = "1"
+const nodeSchemaVersion = "3"
 
 type State struct {
-	db      *sql.DB
-	lock    *tunnelruntime.StateDirectoryLock
-	private []byte
-	public  []byte
-	nodeID  string
+	db        *sql.DB
+	lock      *tunnelruntime.StateDirectoryLock
+	directory string
+	private   []byte
+	public    []byte
+	nodeID    string
 }
 
 func OpenState(directory string) (_ *State, err error) {
@@ -118,7 +119,7 @@ func OpenState(directory string) (_ *State, err error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	state := &State{db: db, lock: lock}
+	state := &State{db: db, lock: lock, directory: directory}
 	if err = state.initialize(exists); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -237,6 +238,30 @@ func inspectNodeDatabase(path string) (bool, error) {
 	if _, err := copyDB.Exec(`SELECT controller_public FROM binding WHERE id=1`); err != nil {
 		return false, fmt.Errorf("Node database binding schema is damaged; inspect the existing directory")
 	}
+	var running runtimeRecord
+	if err := copyDB.QueryRow(`SELECT highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(
+		&running.HighestRevision, &running.HighestDigest, &running.Candidate, &running.Phase, &running.AppliedRevision, &running.LastGood, &running.BootDisabled, &running.DisabledComplete, &running.FailureCode, &running.OwnerPID, &running.OwnerStarted, &running.OwnerBinary, &running.OwnerConfig); err != nil {
+		return false, fmt.Errorf("Node database runtime schema is damaged; inspect the existing directory")
+	}
+	if running.HighestRevision < running.AppliedRevision || running.HighestRevision < 0 || running.OwnerPID < 0 || (running.OwnerPID == 0 && (running.OwnerStarted != "" || running.OwnerBinary != "" || running.OwnerConfig != "")) || (running.OwnerPID > 0 && (running.OwnerStarted == "" || running.OwnerBinary == "" || running.OwnerConfig == "")) || (running.DisabledComplete && (!running.BootDisabled || len(running.LastGood) != 0)) {
+		return false, fmt.Errorf("Node database runtime state is inconsistent; inspect the existing directory")
+	}
+	if running.HighestRevision == 0 {
+		if running.HighestDigest != "" || len(running.Candidate) != 0 || running.AppliedRevision != 0 || len(running.LastGood) != 0 {
+			return false, fmt.Errorf("Node database runtime state is inconsistent; inspect the existing directory")
+		}
+	} else {
+		snapshot, err := decodeDesiredSnapshot(running.Candidate, nodeID)
+		if err != nil || snapshot.Revision != running.HighestRevision || snapshotDigest(running.Candidate) != running.HighestDigest {
+			return false, fmt.Errorf("Node database runtime snapshot is damaged; inspect the existing directory")
+		}
+	}
+	if len(running.LastGood) != 0 {
+		snapshot, err := decodeDesiredSnapshot(running.LastGood, nodeID)
+		if err != nil || snapshot.State != "running" || snapshot.Revision != running.AppliedRevision {
+			return false, fmt.Errorf("Node database last good snapshot is damaged; inspect the existing directory")
+		}
+	}
 	return true, nil
 }
 
@@ -264,6 +289,8 @@ func (state *State) initialize(exists bool) error {
 			`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
 			`CREATE TABLE identity (id INTEGER PRIMARY KEY CHECK(id=1), node_id TEXT NOT NULL, private_key BLOB NOT NULL, public_key BLOB NOT NULL)`,
 			`CREATE TABLE binding (id INTEGER PRIMARY KEY CHECK(id=1), controller_public BLOB NOT NULL CHECK(length(controller_public)=32))`,
+			`CREATE TABLE node_runtime (id INTEGER PRIMARY KEY CHECK(id=1), highest_revision INTEGER NOT NULL DEFAULT 0, highest_digest TEXT NOT NULL DEFAULT '', candidate BLOB, phase TEXT NOT NULL DEFAULT 'idle', applied_revision INTEGER NOT NULL DEFAULT 0, last_good BLOB, boot_disabled INTEGER NOT NULL DEFAULT 0, disabled_complete INTEGER NOT NULL DEFAULT 0, failure_code TEXT NOT NULL DEFAULT '', owner_pid INTEGER NOT NULL DEFAULT 0, owner_started TEXT NOT NULL DEFAULT '', owner_binary TEXT NOT NULL DEFAULT '', owner_config TEXT NOT NULL DEFAULT '')`,
+			`INSERT INTO node_runtime(id) VALUES(1)`,
 		} {
 			if _, err := transaction.Exec(statement); err != nil {
 				return fmt.Errorf("create Node schema: %w", err)

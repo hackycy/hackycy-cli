@@ -3,6 +3,7 @@ package node
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -120,6 +121,44 @@ func TestNodeStateDoesNotReplaceIdentityWhenOnlyDatabaseIsLost(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(directory, nodeDatabaseFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing database was recreated: %v", err)
+	}
+}
+
+func TestNodeStateRejectsIncompleteRuntimeWithoutChangingDatabase(t *testing.T) {
+	for _, statement := range []string{`DELETE FROM node_runtime`, `UPDATE node_runtime SET highest_revision=1, highest_digest='wrong', candidate='{}' WHERE id=1`} {
+		t.Run(statement, func(t *testing.T) {
+			directory := filepath.Join(t.TempDir(), "node")
+			state, err := OpenState(directory)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := state.Close(); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, nodeDatabaseFile)
+			db, err := sql.Open("sqlite3", nodeDatabaseURI(path))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := db.Exec(statement); err != nil {
+				_ = db.Close()
+				t.Fatal(err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := OpenState(directory); err == nil {
+				t.Fatal("damaged runtime was accepted")
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("runtime rejection changed database: %v", err)
+			}
+		})
 	}
 }
 

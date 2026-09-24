@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -36,10 +37,33 @@ type managementSession struct {
 	peer     []byte
 	created  time.Time
 	lastUsed time.Time
+	transfer *snapshotTransfer
+}
+
+type snapshotTransfer struct {
+	requestID string
+	revision  int64
+	total     int64
+	digest    string
+	file      *os.File
+	received  int64
+}
+
+type snapshotFrame struct {
+	Phase         string `json:"phase"`
+	Revision      int64  `json:"revision,omitempty"`
+	NodeID        string `json:"nodeId,omitempty"`
+	TotalBytes    int64  `json:"totalBytes,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	FormatVersion int    `json:"formatVersion,omitempty"`
+	FRPVersion    string `json:"frpVersion,omitempty"`
+	Offset        int64  `json:"offset,omitempty"`
+	Bytes         string `json:"bytes,omitempty"`
 }
 
 type managementHandler struct {
 	state      *State
+	runtime    *nodeRuntime
 	mu         sync.Mutex
 	handshakes map[string]handshakeEntry
 	sessions   map[string]*managementSession
@@ -212,28 +236,35 @@ func (handler *managementHandler) message(writer http.ResponseWriter, request *h
 	}
 	plaintext, err := session.toNode.Decrypt(nil, nil, ciphertext)
 	if err != nil {
+		session.closeTransfer()
 		delete(handler.sessions, frame.SessionID)
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "BAD_FRAME"})
 		return
 	}
 	var message secureMessage
 	if err := json.Unmarshal(plaintext, &message); err != nil || message.Version != managementVersion || message.SessionID != frame.SessionID || message.NodeID != handler.state.nodeID || message.RequestID == "" || len(message.RequestID) > 128 || message.Operation == "" {
+		session.closeTransfer()
 		delete(handler.sessions, frame.SessionID)
 		writeJSON(writer, http.StatusBadRequest, map[string]string{"error": "BAD_FRAME"})
 		return
 	}
 	session.lastUsed = handler.now()
 	response := secureMessage{Version: managementVersion, SessionID: frame.SessionID, NodeID: handler.state.nodeID, Operation: message.Operation, RequestID: message.RequestID}
-	response.Error = handler.dispatch(session, message, &response)
+	keep := false
+	response.Error, keep = handler.dispatch(session, message, &response)
 	contents, err := json.Marshal(response)
 	if err != nil {
+		session.closeTransfer()
 		delete(handler.sessions, frame.SessionID)
 		writeWireError(writer, err)
 		return
 	}
 	seq := session.fromNode.Nonce()
 	encrypted, err := session.fromNode.Encrypt(nil, nil, contents)
-	delete(handler.sessions, frame.SessionID)
+	if !keep || response.Error != "" {
+		delete(handler.sessions, frame.SessionID)
+		session.closeTransfer()
+	}
 	if err != nil {
 		writeWireError(writer, err)
 		return
@@ -241,33 +272,58 @@ func (handler *managementHandler) message(writer http.ResponseWriter, request *h
 	writeJSON(writer, http.StatusOK, messageFrame{SessionID: frame.SessionID, Seq: seq, Ciphertext: base64.RawURLEncoding.EncodeToString(encrypted)})
 }
 
-func (handler *managementHandler) dispatch(session *managementSession, message secureMessage, response *secureMessage) string {
+func (handler *managementHandler) dispatch(session *managementSession, message secureMessage, response *secureMessage) (string, bool) {
 	switch message.Operation {
 	case "claim":
 		if !bytes.Equal(bytes.TrimSpace(message.Body), []byte("{}")) {
-			return "BAD_FRAME"
+			return "BAD_FRAME", false
 		}
 		claimed, err := handler.state.Claim(context.Background(), session.peer)
 		if err != nil {
-			return "UNAVAILABLE"
+			return "UNAVAILABLE", false
 		}
 		if !claimed {
-			return "NODE_ALREADY_CLAIMED"
+			return "NODE_ALREADY_CLAIMED", false
 		}
 		response.Body = json.RawMessage(`{"claimed":true}`)
-		return ""
+		return "", false
 	case "status":
 		matched, err := handler.state.ControllerMatches(context.Background(), session.peer)
 		if err != nil {
-			return "UNAVAILABLE"
+			return "UNAVAILABLE", false
 		}
 		if !matched {
-			return "NODE_ALREADY_CLAIMED"
+			return "NODE_ALREADY_CLAIMED", false
 		}
-		response.Body = json.RawMessage(`{"claimed":true}`)
-		return ""
+		record, err := handler.state.readRuntime(context.Background())
+		if err != nil {
+			return "UNAVAILABLE", false
+		}
+		process := "unknown"
+		var processPID *int
+		recoveryCode := ""
+		failedRevision := int64(0)
+		if record.Phase == "failed" {
+			failedRevision = record.HighestRevision
+		}
+		if handler.runtime != nil {
+			processState := handler.runtime.processState()
+			process, processPID = string(processState.State), processState.PID
+			recoveryCode = handler.runtime.recoveryCode()
+		}
+		response.Body, _ = json.Marshal(map[string]any{"claimed": true, "highestAcceptedRevision": record.HighestRevision, "sha256": record.HighestDigest, "appliedRevision": record.AppliedRevision, "failedRevision": failedRevision, "phase": record.Phase, "failureCode": record.FailureCode, "recoveryError": recoveryCode, "bootDisabled": record.BootDisabled, "disabledComplete": record.DisabledComplete, "frpsProcess": process, "frpsPID": processPID, "observedAt": handler.now().UTC().Format(time.RFC3339Nano)})
+		return "", false
+	case "applySnapshot":
+		matched, err := handler.state.ControllerMatches(context.Background(), session.peer)
+		if err != nil {
+			return "UNAVAILABLE", false
+		}
+		if !matched {
+			return "NODE_ALREADY_CLAIMED", false
+		}
+		return handler.applySnapshot(session, message, response)
 	default:
-		return "NODE_OPERATION_UNAVAILABLE"
+		return "NODE_OPERATION_UNAVAILABLE", false
 	}
 }
 
@@ -280,9 +336,20 @@ func (handler *managementHandler) expire() {
 	}
 	for id, session := range handler.sessions {
 		if now.Sub(session.lastUsed) >= sessionIdleLifetime || now.Sub(session.created) >= sessionMaximumLifetime {
+			session.closeTransfer()
 			delete(handler.sessions, id)
 		}
 	}
+}
+
+func (session *managementSession) closeTransfer() {
+	if session.transfer == nil {
+		return
+	}
+	path := session.transfer.file.Name()
+	_ = session.transfer.file.Close()
+	_ = os.Remove(path)
+	session.transfer = nil
 }
 
 func randomHandle() (string, error) {

@@ -20,12 +20,15 @@ func Run(ctx context.Context, config Config, output io.Writer) error {
 		return err
 	}
 	defer state.Close()
+	runtime := newNodeRuntime(state)
+	runtime.recoveryError = runtime.recover(ctx)
 	listener, err := net.Listen("tcp", net.JoinHostPort(config.ManagementBindAddress, strconv.Itoa(config.ManagementPort)))
 	if err != nil {
 		return fmt.Errorf("listen for Node management: %w", err)
 	}
 	defer listener.Close()
 	handler := newManagementHandler(state)
+	handler.runtime = runtime
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
 	if output != nil {
 		_, _ = fmt.Fprintf(output, "Node fingerprint: %s\nManagement listener: http://%s\n", state.Fingerprint(), listener.Addr())
