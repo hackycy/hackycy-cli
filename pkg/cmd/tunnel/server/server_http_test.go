@@ -3034,11 +3034,11 @@ func TestServerHTTPHandlerServesNonUpgradeAgentBearerProbe(t *testing.T) {
 
 	availability.set(tunnelruntime.FRPProcessStopped)
 	unavailable := request(http.MethodGet, "Bearer "+client.Token)
-	if unavailable.Code != http.StatusServiceUnavailable {
+	if unavailable.Code != http.StatusUpgradeRequired {
 		t.Fatalf("unavailable GET /api/agent = (%d, %s)", unavailable.Code, unavailable.Body.String())
 	}
-	assertServerHTTPAgentHeaders(t, unavailable.Result())
-	assertServerHTTPError(t, unavailable.Body.Bytes(), "FRPS_UNAVAILABLE")
+	assertServerHTTPHeaders(t, unavailable.Result())
+	assertServerHTTPError(t, unavailable.Body.Bytes(), "UPGRADE_REQUIRED")
 	availability.set(tunnelruntime.FRPProcessRunning)
 
 	pending, err := gateway.Authorize(ctx, "Bearer "+client.Token)

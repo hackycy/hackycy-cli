@@ -192,6 +192,38 @@ func (handler *ServerHTTPHandler) serveNodeReapply(writer http.ResponseWriter, r
 	writeServerNodePendingResponse(writer, session, revision)
 }
 
+func (handler *ServerHTTPHandler) serveNodeTokenRotation(writer http.ResponseWriter, request *http.Request, nodeID string) {
+	session, workspace := handler.authenticatedWorkspace(writer, request)
+	if session == nil {
+		return
+	}
+	if request.Method != http.MethodPost {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use POST")
+		return
+	}
+	if !sameServerOrigin(request) {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
+		return
+	}
+	var input struct {
+		ExpectedRevision *int64 `json:"expectedRevision"`
+	}
+	if err := decodeServerHTTPJSON(writer, request, &input); err != nil {
+		writeServerHTTPAuthenticatedInputError(writer, session, err)
+		return
+	}
+	if input.ExpectedRevision == nil {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusBadRequest, "INVALID_REQUEST", "Expected Node revision is required")
+		return
+	}
+	revision, err := workspace.RotateNodeToken(request.Context(), nodeID, *input.ExpectedRevision)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	writeServerNodePendingResponse(writer, session, revision)
+}
+
 func writeServerNodePendingResponse(writer http.ResponseWriter, session *ServerSession, revision int64) {
 	writeServerAuthenticatedJSON(writer, session, http.StatusOK, struct {
 		Version         int    `json:"version"`

@@ -36,9 +36,6 @@ func TestServerAgentGatewayAuthorizesBearerTokensAndReleasesPendingSlots(t *test
 		t.Fatalf("CreateClient() error = %v", err)
 	}
 
-	_, err = gateway.Authorize(context.Background(), "Bearer "+client.Token)
-	assertServerDomainCode(t, err, "FRPS_UNAVAILABLE")
-	availability.set(tunnelruntime.FRPProcessRunning)
 	for _, authorization := range []string{"", "Basic " + client.Token, "Bearer", "Bearer    ", "Bearer invalid-token"} {
 		_, err := gateway.Authorize(context.Background(), authorization)
 		assertServerDomainCode(t, err, "AUTHENTICATION_FAILED")

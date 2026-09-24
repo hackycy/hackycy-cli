@@ -1,9 +1,9 @@
 import type { NodeManagementView } from './nodes-pages'
-import { MapPin, RotateCw, Save } from 'lucide-react'
+import { KeyRound, MapPin, RotateCw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { apiJson, jsonRequest } from './api'
 import { nodeActionError } from './node-claim'
-import { DialogShell } from './primitives'
+import { ConfirmDialog, DialogShell } from './primitives'
 import { ErrorState, Spinner, useFeedback } from './ui'
 
 export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagementView, onSaved: () => void }): React.JSX.Element | null {
@@ -140,6 +140,47 @@ export function NodeReapplyButton({ node, onSaved }: { node: NodeManagementView,
       </button>
       {error && <small className="runtime-error">{error}</small>}
     </div>
+  )
+}
+
+export function NodeTokenRotationButton({ node, onSaved }: { node: NodeManagementView, onSaved: () => void }): React.JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const { notify } = useFeedback()
+  if (node.kind === 'local' || node.desired.mode !== 'running')
+    return null
+  const rotate = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await apiJson(`/api/nodes/${encodeURIComponent(node.id)}/token-rotation`, jsonRequest('POST', { expectedRevision: node.desired.revision }))
+      setOpen(false)
+      notify('Node Token rotation queued')
+      onSaved()
+    }
+    catch (cause) {
+      setError(nodeActionError(cause))
+    }
+    finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <>
+      <button type="button" disabled={node.tokenRotation.state !== 'idle'} onClick={() => setOpen(true)}>
+        <KeyRound size={15} />
+        Rotate FRP Token
+      </button>
+      <ConfirmDialog
+        open={open}
+        message="Assigned Clients may briefly disconnect while this Node applies its new shared FRP Token. Continue?"
+        busy={busy}
+        error={error}
+        onClose={() => setOpen(false)}
+        onConfirm={() => void rotate()}
+      />
+    </>
   )
 }
 

@@ -141,9 +141,14 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 	if hasCurrent && desired.normalizedRuntime().Revision == current.normalizedRuntime().Revision && !runtimeIsEqual(desired.normalizedRuntime(), current.normalizedRuntime()) {
 		return result, clientReconciliationError("PROTOCOL_FAILED", fmt.Errorf("desired runtime digest changed at revision %d", desired.normalizedRuntime().Revision))
 	}
+	crossNode := hasCurrent && desired.normalizedRuntime().NodeID != current.normalizedRuntime().NodeID
 	if !hasHighestAccepted || !runtimeIsEqual(desired.normalizedRuntime(), highestAccepted.normalizedRuntime()) {
 		accepted := ClientAppliedState{ClientDesiredConfiguration: desired, Revision: desired.normalizedRuntime().Revision}
 		if err := WriteClientAcceptedState(reconciler.stateDirectory, accepted); err != nil {
+			if crossNode {
+				err = errors.Join(err, reconciler.runtime.Stop())
+				reconciler.activated = false
+			}
 			return result, clientReconciliationError("STATE_FAILED", fmt.Errorf("persist highest accepted runtime: %w", err))
 		}
 	}
@@ -151,6 +156,12 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 		result.Skipped = true
 		result.SkipReason = "duplicate-revision"
 		return result, nil
+	}
+	if crossNode {
+		if err := reconciler.runtime.Stop(); err != nil {
+			return result, clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("stop previous Node frpc: %w", err))
+		}
+		reconciler.activated = false
 	}
 
 	runtime := desired.normalizedRuntime()
@@ -183,19 +194,30 @@ func (reconciler *ClientReconciler) ApplyWithResult(ctx context.Context, desired
 	if err != nil {
 		return result, clientReconciliationError("ACTIVATION_FAILED", err)
 	}
-	if err := reconciler.runtime.Stop(); err != nil {
-		return result, clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("stop previous frpc: %w", err))
+	if !crossNode {
+		if err := reconciler.runtime.Stop(); err != nil {
+			return result, clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("stop previous frpc: %w", err))
+		}
 	}
 	if err := writeClientFileAtomically(activePath, []byte(configuration)); err != nil {
+		if crossNode {
+			return result, clientReconciliationError("ACTIVATION_FAILED", err)
+		}
 		return result, reconciler.rollbackActivation(current, hasCurrent, previousConfiguration, hasPreviousConfiguration, clientReconciliationError("ACTIVATION_FAILED", err))
 	}
 	if enabled {
 		if err := reconciler.runtime.Start(activePath); err != nil {
+			if crossNode {
+				return result, clientReconciliationError("ACTIVATION_FAILED", errors.Join(fmt.Errorf("start frpc: %w", err), reconciler.runtime.Stop()))
+			}
 			return result, reconciler.rollbackActivation(current, hasCurrent, previousConfiguration, hasPreviousConfiguration, clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("start frpc: %w", err)))
 		}
 	}
 	state := ClientAppliedState{ClientDesiredConfiguration: desired, Revision: runtime.Revision}
 	if err := WriteClientAppliedState(reconciler.stateDirectory, state); err != nil {
+		if crossNode {
+			return result, clientReconciliationError("ACTIVATION_FAILED", errors.Join(err, reconciler.runtime.Stop()))
+		}
 		return result, reconciler.rollbackActivation(current, hasCurrent, previousConfiguration, hasPreviousConfiguration, clientReconciliationError("ACTIVATION_FAILED", err))
 	}
 	reconciler.activated = true
@@ -240,6 +262,13 @@ func (reconciler *ClientReconciler) Restart() error {
 	current, found := ReadClientAppliedState(reconciler.stateDirectory)
 	if !found || !clientDesiredStateHasEnabledTunnel(current.ClientDesiredConfiguration) {
 		return nil
+	}
+	accepted, found, err := loadClientAcceptedState(reconciler.stateDirectory)
+	if err != nil {
+		return clientReconciliationError("STATE_CORRUPT", err)
+	}
+	if found && !runtimeIsEqual(current.normalizedRuntime(), accepted.normalizedRuntime()) {
+		return clientReconciliationError("ACTIVATION_FAILED", fmt.Errorf("last applied runtime is behind the accepted target"))
 	}
 	restarter, supported := reconciler.runtime.(interface{ Restart() error })
 	if !supported {

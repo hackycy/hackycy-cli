@@ -130,6 +130,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	runtime.nodeCoordinator.controlPlane = runtime.controlPlane
 	internalFRPToken, err := resolveServerInternalFRPToken(ctx, runtime.state.database, options.FRPToken)
 	if err != nil {
 		return fail(err)

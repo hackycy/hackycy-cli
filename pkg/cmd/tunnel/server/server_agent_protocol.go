@@ -47,9 +47,6 @@ func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source
 	if protocolError != nil {
 		return protocolError
 	}
-	if connection.gateway.frps.FRPSState().State != tunnelruntime.FRPProcessRunning {
-		return &ServerAgentProtocolError{CloseCode: serverAgentCloseFRPSUnavailable, Message: "Managed frps is not running"}
-	}
 	if hello.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion {
 		return &ServerAgentProtocolError{
 			CloseCode: serverAgentCloseIncompatible,
@@ -262,6 +259,10 @@ func (connection *ServerAgentConnection) expectedRuntime(ctx context.Context) (t
 // BuildWelcome composes the one successful hello response. The HTTP adapter
 // owns writing the frame, and later slices own subsequent server messages.
 func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, requestHost string) (tunnelruntime.AgentWelcome, *ServerAgentProtocolError) {
+	return connection.buildWelcome(ctx, requestHost, true)
+}
+
+func (connection *ServerAgentConnection) buildWelcome(ctx context.Context, requestHost string, applyPending bool) (tunnelruntime.AgentWelcome, *ServerAgentProtocolError) {
 	if connection == nil || connection.gateway == nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent session is unavailable"}
 	}
@@ -273,9 +274,6 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 	hello := connection.hello
 	welcomeSource := connection.gateway.welcomeSource
 	connection.helloMu.Unlock()
-	if connection.gateway.frps.FRPSState().State != tunnelruntime.FRPProcessRunning {
-		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseFRPSUnavailable, Message: "Managed frps is not running"}
-	}
 	if welcomeSource == nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server welcome configuration is unavailable"}
 	}
@@ -287,7 +285,9 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 	if err != nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseIncompatible, Message: "Client platform is incompatible"}
 	}
-	connection.gateway.tryPendingClientNode(ctx, connection.clientID)
+	if applyPending {
+		connection.gateway.tryPendingClientNode(ctx, connection.clientID)
+	}
 	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.clientID)
 	if err != nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
@@ -319,12 +319,19 @@ func (connection *ServerAgentConnection) PresentWelcome(ctx context.Context, req
 	if connection == nil || connection.gateway == nil || writeFrame == nil {
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent presentation is unavailable"}
 	}
+	connection.helloMu.Lock()
+	helloAccepted := connection.helloAccepted
+	connection.helloMu.Unlock()
+	if !helloAccepted {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
+	}
+	connection.gateway.tryPendingClientNode(ctx, connection.clientID)
 	connection.presentationMu.Lock()
 	defer connection.presentationMu.Unlock()
 	if connection.closed {
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent session is unavailable"}
 	}
-	welcome, protocolError := connection.BuildWelcome(ctx, requestHost)
+	welcome, protocolError := connection.buildWelcome(ctx, requestHost, false)
 	if protocolError != nil {
 		return protocolError
 	}

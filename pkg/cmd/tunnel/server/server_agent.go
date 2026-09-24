@@ -632,10 +632,6 @@ func (connection *ServerAgentConnection) AttachCloser(closeSocket func(*ServerAg
 // pending control-session slot. WebSocket upgrade handling is intentionally
 // separate so a non-upgrade request can release this reservation first.
 func (gateway *ServerAgentGateway) Authorize(ctx context.Context, authorization string) (*ServerAgentReservation, error) {
-	if gateway.frps.FRPSState().State != tunnelruntime.FRPProcessRunning {
-		gateway.warning("frps", "frps")
-		return nil, serverDomainError("FRPS_UNAVAILABLE", "Managed frps is not running")
-	}
 	token := parseServerAgentBearerToken(authorization)
 	if token == "" {
 		gateway.warning("authentication", "authentication")

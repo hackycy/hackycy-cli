@@ -40,23 +40,17 @@ func TestServerAgentConnectionAcceptsOnlyOneValidInitialHello(t *testing.T) {
 }
 
 func TestServerAgentConnectionRejectsIncompatibleHello(t *testing.T) {
-	validHello := []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`)
 	for _, test := range []struct {
 		name      string
 		message   []byte
-		configure func(*serverAgentTestFRPSAvailability)
 		closeCode int
 	}{
 		{name: "protocol version", message: []byte(`{"type":"hello","tunnelProtocolVersion":3,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`), closeCode: serverAgentCloseIncompatible},
 		{name: "unsupported platform", message: []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"freebsd","architecture":"x64","lastAccepted":{"revision":0,"nodeId":"","digest":""},"lastApplied":{"revision":0,"nodeId":"","digest":""}}`), closeCode: serverAgentCloseIncompatible},
 		{name: "future applied revision", message: []byte(`{"type":"hello","tunnelProtocolVersion":5,"ycyVersion":"0.0.0-dev","platform":"linux","architecture":"x64","lastAccepted":{"revision":1,"nodeId":"local","digest":"sha256:test"},"lastApplied":{"revision":1,"nodeId":"local","digest":"sha256:test"}}`), closeCode: serverAgentCloseIncompatible},
-		{name: "frps stopped after authorization", message: validHello, configure: func(availability *serverAgentTestFRPSAvailability) { availability.set(tunnelruntime.FRPProcessStopped) }, closeCode: serverAgentCloseFRPSUnavailable},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			connection, availability := openServerAgentProtocolConnection(t)
-			if test.configure != nil {
-				test.configure(availability)
-			}
+			connection, _ := openServerAgentProtocolConnection(t)
 			err := connection.AcceptHello(context.Background(), test.message)
 			if err == nil || err.CloseCode != test.closeCode {
 				t.Fatalf("AcceptHello(%s) = %v, want close code %d", test.message, err, test.closeCode)
@@ -66,7 +60,8 @@ func TestServerAgentConnectionRejectsIncompatibleHello(t *testing.T) {
 }
 
 func TestServerAgentConnectionBuildsWelcomeAfterHello(t *testing.T) {
-	connection, _ := openServerAgentProtocolConnection(t)
+	connection, availability := openServerAgentProtocolConnection(t)
+	availability.set(tunnelruntime.FRPProcessStopped)
 	connection.gateway.welcomeSource = serverAgentTestWelcomeSource{settings: ServerAgentWelcomeSettings{
 		AdvertisedFRPHost: "frp.example.test",
 		AdvertisedFRPPort: 7001,

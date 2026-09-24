@@ -2,7 +2,7 @@ import { ArrowRight, Network, Plus, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiJson } from './api'
 import { NodeClaimDialog } from './node-claim'
-import { NodeConfigurationEditor, NodeMetadataEditor, NodeReapplyButton } from './node-config'
+import { NodeConfigurationEditor, NodeMetadataEditor, NodeReapplyButton, NodeTokenRotationButton } from './node-config'
 import { EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, Status } from './ui'
 
 export interface NodeEndpoint {
@@ -52,6 +52,7 @@ export interface NodeManagementView extends NodeSummary {
     stale: boolean
     error?: { code: string, phase: string, revision: number }
   }
+  tokenRotation: { state: 'idle' | 'pending_node' | 'apply_failed' | 'publishing_clients', revision?: number }
 }
 
 function endpoint(value: NodeEndpoint | null): string {
@@ -220,6 +221,7 @@ export function NodeDetailPage({ id, refreshSequence, isAdmin }: { id: string, r
             {isAdmin && management && <NodeMetadataEditor node={management} onSaved={() => void load()} />}
             {isAdmin && management && <NodeConfigurationEditor node={management} onSaved={() => void load()} />}
             {isAdmin && management && <NodeReapplyButton node={management} onSaved={() => void load()} />}
+            {isAdmin && management && <NodeTokenRotationButton node={management} onSaved={() => void load()} />}
           </div>
         )}
       />
@@ -312,6 +314,21 @@ export function NodeDetailPage({ id, refreshSequence, isAdmin }: { id: string, r
               <dd className="tabular">{management.observed.highestAcceptedRevision}</dd>
               <dt>Applied by Node</dt>
               <dd className="tabular">{management.observed.appliedRevision}</dd>
+              {management.kind === 'remote' && (
+                <>
+                  <dt>FRP Token rotation</dt>
+                  <dd>
+                    <Status value={management.tokenRotation.state} />
+                    {management.tokenRotation.revision && (
+                      <span className="node-observed">
+                        Revision
+                        {' '}
+                        {management.tokenRotation.revision}
+                      </span>
+                    )}
+                  </dd>
+                </>
+              )}
               {management.observed.failedRevision > 0 && (
                 <>
                   <dt>Failed revision</dt>

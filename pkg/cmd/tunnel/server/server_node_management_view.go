@@ -42,7 +42,8 @@ type serverNodeManagementView struct {
 	Desired                  serverNodeDesiredView  `json:"desired"`
 	Observed                 serverNodeObservedView `json:"observed"`
 	TokenRotation            struct {
-		State string `json:"state"`
+		State    string `json:"state"`
+		Revision int64  `json:"revision,omitempty"`
 	} `json:"tokenRotation"`
 	Removal struct {
 		State string `json:"state"`
@@ -77,6 +78,10 @@ func (service *serverNodeService) managementView(ctx context.Context, nodeID str
 	}
 	view.ControllerFingerprint = nodeKeyFingerprint(key.PublicKey().Bytes())
 	view.Desired = serverNodeDesiredView{Revision: record.DesiredRevision, Mode: "unconfigured"}
+	if record.StagedTokenRevision.Valid {
+		view.TokenRotation.State = "pending_node"
+		view.TokenRotation.Revision = record.StagedTokenRevision.Int64
+	}
 	if record.DesiredSnapshot.Valid {
 		var snapshot serverDesiredNodeSnapshot
 		if err := json.Unmarshal([]byte(record.DesiredSnapshot.String), &snapshot); err != nil {
@@ -104,6 +109,14 @@ func (service *serverNodeService) managementView(ctx context.Context, nodeID str
 		return view, nil
 	}
 	status := observation.Status
+	if record.StagedTokenRevision.Valid {
+		switch {
+		case status.FailedRevision == record.StagedTokenRevision.Int64 && status.Phase == "failed":
+			view.TokenRotation.State = "apply_failed"
+		case status.AppliedRevision == record.StagedTokenRevision.Int64 && status.HighestAcceptedRevision == record.StagedTokenRevision.Int64 && status.SHA256 == record.DesiredHash.String && status.Phase == "applied":
+			view.TokenRotation.State = "publishing_clients"
+		}
+	}
 	view.Observed.Stale = false
 	view.Observed.Configuration = nodeConfigurationState(record, *status, summary.FRPS.State)
 	if code := safeNodeManagementCode(status.FailureCode); code != "" && status.FailedRevision > 0 {

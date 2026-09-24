@@ -486,6 +486,16 @@ func (workspace *ServerWorkspace) ReapplyNode(ctx context.Context, nodeID string
 	return workspace.nodes.reapply(ctx, nodeID)
 }
 
+func (workspace *ServerWorkspace) RotateNodeToken(ctx context.Context, nodeID string, expectedRevision int64) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.rotateToken(ctx, nodeID, expectedRevision)
+}
+
 func (workspace *ServerWorkspace) ListNodes(ctx context.Context) ([]serverNodeSummary, error) {
 	if _, err := workspace.currentAccount(ctx); err != nil {
 		return nil, err

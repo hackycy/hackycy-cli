@@ -26,6 +26,7 @@ type serverNodeRecord struct {
 	DesiredRevision          int64
 	DesiredHash              sql.NullString
 	DesiredSnapshot          sql.NullString
+	StagedTokenRevision      sql.NullInt64
 	FRPBindPort              int64
 	HTTPVhostPort            int64
 	PortStart                int64
@@ -87,10 +88,10 @@ func (registry *serverNodeRegistry) register(ctx context.Context, nodeID, name, 
 }
 
 func (registry *serverNodeRegistry) get(ctx context.Context, nodeID string) (serverNodeRecord, error) {
-	row := registry.database.QueryRowContext(ctx, `SELECT n.node_id,n.kind,n.name,n.lifecycle,n.advertised_frp_host,n.advertised_frp_port,n.http_ingress_host,n.http_ingress_port,n.created_at,n.updated_at,r.node_public_key,r.management_address,r.desired_revision,r.desired_hash,r.desired_snapshot,r.frp_bind_port,r.http_vhost_port,r.port_start,r.port_end FROM nodes n JOIN remote_nodes r ON r.node_id=n.node_id WHERE n.node_id=?`, nodeID)
+	row := registry.database.QueryRowContext(ctx, `SELECT n.node_id,n.kind,n.name,n.lifecycle,n.advertised_frp_host,n.advertised_frp_port,n.http_ingress_host,n.http_ingress_port,n.created_at,n.updated_at,r.node_public_key,r.management_address,r.desired_revision,r.desired_hash,r.desired_snapshot,r.staged_token_revision,r.frp_bind_port,r.http_vhost_port,r.port_start,r.port_end FROM nodes n JOIN remote_nodes r ON r.node_id=n.node_id WHERE n.node_id=?`, nodeID)
 	var record serverNodeRecord
 	var publicHex string
-	if err := row.Scan(&record.ID, &record.Kind, &record.Name, &record.Lifecycle, &record.AdvertisedFRPHost, &record.AdvertisedFRPPort, &record.HTTPIngressHost, &record.HTTPIngressPort, &record.CreatedAt, &record.UpdatedAt, &publicHex, &record.ManagementAddress, &record.DesiredRevision, &record.DesiredHash, &record.DesiredSnapshot, &record.FRPBindPort, &record.HTTPVhostPort, &record.PortStart, &record.PortEnd); err != nil {
+	if err := row.Scan(&record.ID, &record.Kind, &record.Name, &record.Lifecycle, &record.AdvertisedFRPHost, &record.AdvertisedFRPPort, &record.HTTPIngressHost, &record.HTTPIngressPort, &record.CreatedAt, &record.UpdatedAt, &publicHex, &record.ManagementAddress, &record.DesiredRevision, &record.DesiredHash, &record.DesiredSnapshot, &record.StagedTokenRevision, &record.FRPBindPort, &record.HTTPVhostPort, &record.PortStart, &record.PortEnd); err != nil {
 		if err == sql.ErrNoRows {
 			return serverNodeRecord{}, serverDomainError("NOT_FOUND", "Node not found")
 		}

@@ -20,22 +20,28 @@ type serverNodeMetadataPatch struct {
 }
 
 func (registry *serverNodeRegistry) patchMetadata(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) error {
+	_, err := registry.patchMetadataWithEvents(ctx, nodeID, patch)
+	return err
+}
+
+func (registry *serverNodeRegistry) patchMetadataWithEvents(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) ([]ServerControlPlaneEvent, error) {
 	var address string
 	if patch.ManagementAddress != nil {
 		var err error
 		address, err = normalizeNodeManagementAddress(*patch.ManagementAddress)
 		if err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if patch.Name != nil && (strings.TrimSpace(*patch.Name) == "" || utf16CodeUnitCount(strings.TrimSpace(*patch.Name)) > 100) {
-		return serverDomainError("INVALID_NODE", "Node display name is invalid")
+		return nil, serverDomainError("INVALID_NODE", "Node display name is invalid")
 	}
 	for _, endpoint := range []*serverNodeEndpoint{patch.AdvertisedFRPAddress, patch.HTTPIngressAddress} {
 		if endpoint != nil && (!localEndpointHostPattern.MatchString(endpoint.Host) || strings.TrimSpace(endpoint.Host) == "" || !validServerNodePort(endpoint.Port)) {
-			return serverDomainError("INVALID_NODE_ENDPOINT", "Node public endpoint is invalid")
+			return nil, serverDomainError("INVALID_NODE_ENDPOINT", "Node public endpoint is invalid")
 		}
 	}
+	var events []ServerControlPlaneEvent
 	_, err := withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (struct{}, error) {
 		var currentAddress, currentHost string
 		var currentPort sql.NullInt64
@@ -61,6 +67,24 @@ func (registry *serverNodeRegistry) patchMetadata(ctx context.Context, nodeID st
 				if _, err := connection.ExecContext(ctx, `UPDATE clients SET desired_revision=desired_revision+1 WHERE node_id=?`, nodeID); err != nil {
 					return struct{}{}, err
 				}
+				rows, err := connection.QueryContext(ctx, `SELECT internal_id,owner_account_id FROM clients WHERE node_id=?`, nodeID)
+				if err != nil {
+					return struct{}{}, err
+				}
+				for rows.Next() {
+					var event ServerControlPlaneEvent
+					if err := rows.Scan(&event.ClientID, &event.OwnerAccountID); err != nil {
+						_ = rows.Close()
+						return struct{}{}, err
+					}
+					event.Type = serverDesiredState
+					events = append(events, event)
+				}
+				if err := rows.Err(); err != nil {
+					_ = rows.Close()
+					return struct{}{}, err
+				}
+				_ = rows.Close()
 			}
 		}
 		if patch.HTTPIngressAddress != nil {
@@ -82,5 +106,8 @@ func (registry *serverNodeRegistry) patchMetadata(ctx context.Context, nodeID st
 		_, err = connection.ExecContext(ctx, `UPDATE nodes SET updated_at=? WHERE node_id=?`, formatServerTimestamp(time.Now()), nodeID)
 		return struct{}{}, err
 	})
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return events, nil
 }

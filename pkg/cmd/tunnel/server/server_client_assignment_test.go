@@ -149,7 +149,13 @@ func TestClientPendingNodeRechecksFreshObservationOnWelcome(t *testing.T) {
 	if err := connection.AcceptHello(t.Context(), hello); err != nil {
 		t.Fatal(err)
 	}
-	welcome, protocolError := connection.BuildWelcome(t.Context(), "request.example.test")
+	var welcome tunnelruntime.AgentWelcome
+	protocolError := connection.PresentWelcome(t.Context(), "request.example.test", func(frame any) error {
+		if first, ok := frame.(tunnelruntime.AgentWelcome); ok {
+			welcome = first
+		}
+		return nil
+	})
 	if protocolError != nil {
 		t.Fatal(protocolError)
 	}

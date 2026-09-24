@@ -44,7 +44,8 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 	return withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (int64, error) {
 		var current int64
 		var token, lifecycle string
-		err := connection.QueryRowContext(ctx, `SELECT r.desired_revision,r.active_token,n.lifecycle FROM remote_nodes r JOIN nodes n ON n.node_id=r.node_id WHERE r.node_id=?`, nodeID).Scan(&current, &token, &lifecycle)
+		var stagedToken sql.NullString
+		err := connection.QueryRowContext(ctx, `SELECT r.desired_revision,r.active_token,n.lifecycle,r.staged_token FROM remote_nodes r JOIN nodes n ON n.node_id=r.node_id WHERE r.node_id=?`, nodeID).Scan(&current, &token, &lifecycle, &stagedToken)
 		if err == sql.ErrNoRows {
 			return 0, serverDomainError("NOT_FOUND", "Remote Node not found")
 		}
@@ -66,13 +67,16 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 			return 0, err
 		}
 		revision := current + 1
+		if stagedToken.Valid {
+			token = stagedToken.String
+		}
 		snapshot := serverDesiredNodeSnapshot{FormatVersion: 1, FRPVersion: tunnelruntime.FRPVersion, NodeID: nodeID, Revision: revision, State: "running", BindAddress: settings.BindAddress, BindPort: settings.BindPort, VhostHTTPPort: settings.VhostHTTPPort, PortRangeStart: settings.PortRangeStart, PortRangeEnd: settings.PortRangeEnd, Token: token, Custom404Page: settings.Custom404Page}
 		contents, err := json.Marshal(snapshot)
 		if err != nil || len(contents) > nodeSnapshotLimit {
 			return 0, serverDomainError("NODE_SNAPSHOT_TOO_LARGE", "Node configuration is too large")
 		}
 		digest := sha256.Sum256(contents)
-		if _, err := connection.ExecContext(ctx, `UPDATE remote_nodes SET frp_bind_port=?,http_vhost_port=?,port_start=?,port_end=?,desired_revision=?,desired_hash=?,desired_snapshot=? WHERE node_id=?`, settings.BindPort, settings.VhostHTTPPort, settings.PortRangeStart, settings.PortRangeEnd, revision, hex.EncodeToString(digest[:]), string(contents), nodeID); err != nil {
+		if _, err := connection.ExecContext(ctx, `UPDATE remote_nodes SET frp_bind_port=?,http_vhost_port=?,port_start=?,port_end=?,desired_revision=?,desired_hash=?,desired_snapshot=?,staged_token_revision=CASE WHEN staged_token IS NOT NULL THEN ? ELSE staged_token_revision END WHERE node_id=?`, settings.BindPort, settings.VhostHTTPPort, settings.PortRangeStart, settings.PortRangeEnd, revision, hex.EncodeToString(digest[:]), string(contents), revision, nodeID); err != nil {
 			return 0, fmt.Errorf("save Node desired snapshot: %w", err)
 		}
 		if _, err := connection.ExecContext(ctx, `UPDATE node_port_pools SET port_start=?,port_end=? WHERE node_id=?`, settings.PortRangeStart, settings.PortRangeEnd, nodeID); err != nil {

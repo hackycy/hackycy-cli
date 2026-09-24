@@ -110,8 +110,14 @@ func (service *serverNodeService) register(ctx context.Context, sessionToken, pr
 }
 
 func (service *serverNodeService) patch(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) (serverNodeRecord, error) {
-	if err := service.registry.patchMetadata(ctx, nodeID, patch); err != nil {
+	events, err := service.registry.patchMetadataWithEvents(ctx, nodeID, patch)
+	if err != nil {
 		return serverNodeRecord{}, err
+	}
+	if service.coordinator.controlPlane != nil {
+		for _, event := range events {
+			service.coordinator.controlPlane.emit(event)
+		}
 	}
 	service.coordinator.Wake()
 	service.observations.notify()
@@ -130,6 +136,16 @@ func (service *serverNodeService) saveDesired(ctx context.Context, nodeID string
 
 func (service *serverNodeService) reapply(ctx context.Context, nodeID string) (int64, error) {
 	revision, err := service.registry.reapply(ctx, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	service.coordinator.Wake()
+	service.observations.notify()
+	return revision, nil
+}
+
+func (service *serverNodeService) rotateToken(ctx context.Context, nodeID string, expectedRevision int64) (int64, error) {
+	revision, err := service.registry.stageTokenRotation(ctx, nodeID, expectedRevision)
 	if err != nil {
 		return 0, err
 	}

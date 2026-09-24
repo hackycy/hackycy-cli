@@ -15,6 +15,7 @@ import (
 type serverNodeCoordinator struct {
 	registry     *serverNodeRegistry
 	observations *serverNodeObservations
+	controlPlane *ServerControlPlane
 	wire         *nodeManagementWire
 	privateKey   []byte
 	wake         chan struct{}
@@ -101,7 +102,7 @@ func (coordinator *serverNodeCoordinator) reconcileNode(ctx context.Context, rec
 		_ = coordinator.observations.recordFailure(ctx, record.ID, code)
 		return
 	}
-	_ = coordinator.observations.recordStatus(ctx, record.ID, status)
+	coordinator.observeNodeStatus(ctx, record.ID, status)
 	if !record.DesiredSnapshot.Valid || !record.DesiredHash.Valid || record.Lifecycle != "active" {
 		return
 	}
@@ -118,8 +119,22 @@ func (coordinator *serverNodeCoordinator) reconcileNode(ctx context.Context, rec
 	_, _ = coordinator.wire.applySnapshot(ctx, record.ManagementAddress, coordinator.privateKey, record.PublicKey, record.ID, record.DesiredRevision, []byte(record.DesiredSnapshot.String))
 	nodeID, status, err = coordinator.wire.status(ctx, record.ManagementAddress, coordinator.privateKey, record.PublicKey)
 	if err == nil && nodeID == record.ID {
-		_ = coordinator.observations.recordStatus(ctx, record.ID, status)
+		coordinator.observeNodeStatus(ctx, record.ID, status)
 	}
+}
+
+func (coordinator *serverNodeCoordinator) observeNodeStatus(ctx context.Context, nodeID string, status nodeStatus) {
+	_ = coordinator.observations.recordStatus(ctx, nodeID, status)
+	promotion, err := coordinator.registry.promoteTokenRotation(ctx, nodeID, status)
+	if err != nil || !promotion.Promoted {
+		return
+	}
+	if coordinator.controlPlane != nil {
+		for _, event := range promotion.Events {
+			coordinator.controlPlane.emit(event)
+		}
+	}
+	coordinator.observations.notify()
 }
 
 func (coordinator *serverNodeCoordinator) verifyCandidate(ctx context.Context, record serverNodeRecord) bool {

@@ -969,6 +969,7 @@ func (reporter *clientProcessStateReporter) PublishFRPCStatus() error {
 		proxies = nil
 	}
 	if len(proxies) == 0 {
+		proxies = make([]tunnelruntime.ProxyState, 0)
 		for _, tunnel := range runtime.Tunnels {
 			if tunnel.Enabled {
 				proxies = append(proxies, tunnelruntime.ProxyState{TunnelID: tunnel.ID, State: "unknown"})

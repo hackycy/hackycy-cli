@@ -46,6 +46,64 @@ func startNodeForMetadataTest(t *testing.T, directory string) (string, func()) {
 	}
 }
 
+func TestServerNodeEndpointPatchNotifiesAssignedOnlineClient(t *testing.T) {
+	state := openServerDomainState(t)
+	registry, err := newServerNodeRegistry(state.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observations, err := newServerNodeObservations(state.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator, err := newServerNodeCoordinator(state.sessions.Directory(), registry, observations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plane := openServerControlPlane(t, state)
+	coordinator.controlPlane = plane
+	service := newServerNodeService(registry, observations, coordinator)
+	id := "fabcde0123456789abcdef0123456789"
+	if _, err := registry.register(t.Context(), id, "Remote", "http://127.0.0.1:7600", make([]byte, 32), 0); err != nil {
+		t.Fatal(err)
+	}
+	client, err := plane.CreateClient(t.Context(), environmentAdministratorID, "endpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err = plane.AssignClientNode(t.Context(), client.ID, id, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan ServerControlPlaneEvent, 2)
+	unsubscribe := plane.Subscribe(func(event ServerControlPlaneEvent) { events <- event })
+	defer unsubscribe()
+	endpoint := &serverNodeEndpoint{Host: "remote.example.test", Port: 7000}
+	if _, err := service.patch(t.Context(), id, serverNodeMetadataPatch{AdvertisedFRPAddress: endpoint}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		if event.ClientID != client.ID || event.Type != serverDesiredState {
+			t.Fatalf("endpoint event = %+v", event)
+		}
+	default:
+		t.Fatal("endpoint update did not notify assigned Client")
+	}
+	if _, err := service.patch(t.Context(), id, serverNodeMetadataPatch{AdvertisedFRPAddress: endpoint}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("unchanged endpoint emitted %+v", event)
+	default:
+	}
+	updated, err := plane.GetClient(t.Context(), client.ID)
+	if err != nil || updated.DesiredRevision != client.DesiredRevision+1 {
+		t.Fatalf("assigned Client revision = (%d, %v)", updated.DesiredRevision, err)
+	}
+}
+
 func TestServerNodeManagementAddressRequiresOriginalIdentity(t *testing.T) {
 	state := openServerDomainState(t)
 	registry, err := newServerNodeRegistry(state.database)
