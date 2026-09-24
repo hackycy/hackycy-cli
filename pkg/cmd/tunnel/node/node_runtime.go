@@ -26,13 +26,14 @@ type nodeRuntime struct {
 	beforeCandidateStart func()
 	beforeDisableStop    func()
 	checkpoint           func(string)
+	processInspector     tunnelruntime.ProcessInspector
 	ownerUnknown         bool
 	recoveryError        string
 	activeConfig         string
 }
 
 func newNodeRuntime(state *State) *nodeRuntime {
-	return &nodeRuntime{state: state, ensureBinary: func(ctx context.Context) (string, error) {
+	return &nodeRuntime{state: state, processInspector: tunnelruntime.DefaultProcessInspector(), ensureBinary: func(ctx context.Context) (string, error) {
 		artifact, err := tunnelruntime.CurrentFRPArtifact()
 		if err != nil {
 			return "", err
@@ -81,6 +82,9 @@ func (runtime *nodeRuntime) trackRecovery(pid int) {
 		return
 	}
 	if err := runtime.rememberOwner(context.Background(), runtime.activeConfig); err != nil {
+		if errors.Is(err, tunnelruntime.ErrProcessNotFound) {
+			return
+		}
 		runtime.ownerUnknown = true
 	}
 }
@@ -362,26 +366,36 @@ func (runtime *nodeRuntime) rememberOwner(ctx context.Context, config string) er
 	if state.PID == nil {
 		return fmt.Errorf("FRPS activation has no process")
 	}
-	process, err := inspectFRPSProcess(*state.PID)
+	binary := runtime.supervisor.BinaryPath()
+	owner, err := runtime.captureOwner(*state.PID, binary, config)
 	if err != nil {
 		return err
 	}
-	if process == nil {
-		return nil
-	} // Windows Job Object owns the process until Node exits.
-	binary := runtime.supervisor.BinaryPath()
-	if process.PGID != process.PID || process.Command != strings.Join(strings.Fields(binary+" -c "+config), " ") {
-		return fmt.Errorf("FRPS process identity is uncertain")
-	}
 	return runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=?, owner_started=?, owner_binary=?, owner_config=? WHERE id=1`, process.PID, process.Started, binary, config)
+		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=?, owner_create_time=?, owner_started='', owner_binary=?, owner_config=? WHERE id=1`, owner.PID, owner.CreateTimeUnixMs, owner.BinaryPath, owner.ConfigPath)
 		return err
 	})
 }
 
+func (runtime *nodeRuntime) captureOwner(pid int, binary, config string) (tunnelruntime.ProcessOwner, error) {
+	deadline := time.Now().Add(2 * time.Second)
+	var lastErr error
+	for {
+		owner, err := tunnelruntime.CaptureFRPSOwner(runtime.processInspector, pid, binary, config)
+		if err == nil {
+			return owner, nil
+		}
+		lastErr = err
+		if errors.Is(err, tunnelruntime.ErrProcessNotFound) || time.Now().After(deadline) {
+			return tunnelruntime.ProcessOwner{}, lastErr
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func (runtime *nodeRuntime) clearOwner(ctx context.Context) error {
 	return runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=0, owner_started='', owner_binary='', owner_config='' WHERE id=1`)
+		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=0, owner_create_time=0, owner_started='', owner_binary='', owner_config='' WHERE id=1`)
 		return err
 	})
 }
@@ -407,32 +421,19 @@ func (runtime *nodeRuntime) recover(ctx context.Context) string {
 		return ""
 	}
 	if record.OwnerPID != 0 {
-		process, err := inspectFRPSProcess(record.OwnerPID)
-		if err != nil {
-			return "UNAVAILABLE"
-		}
-		if process != nil {
-			expectedCommand := strings.Join(strings.Fields(record.OwnerBinary+" -c "+record.OwnerConfig), " ")
-			if process.Started != record.OwnerStarted || process.Command != expectedCommand || process.PGID != record.OwnerPID {
+		owner := tunnelruntime.ProcessOwner{PID: record.OwnerPID, CreateTimeUnixMs: record.OwnerCreateTime, BinaryPath: record.OwnerBinary, ConfigPath: record.OwnerConfig}
+		if _, err := tunnelruntime.VerifyFRPSOwner(runtime.processInspector, owner); err != nil {
+			if !errors.Is(err, tunnelruntime.ErrProcessNotFound) {
 				runtime.ownerUnknown = true
 				return "FRPS_OWNERSHIP_UNKNOWN"
 			}
-			if err := terminateOwnedFRPS(*process); err != nil {
-				runtime.ownerUnknown = true
-				return "FRPS_OWNERSHIP_UNKNOWN"
-			}
+		} else if err := tunnelruntime.TerminateOwnedFRPS(owner); err != nil {
+			runtime.ownerUnknown = true
+			return "FRPS_OWNERSHIP_UNKNOWN"
 		}
 		if err := runtime.clearOwner(ctx); err != nil {
 			return "UNAVAILABLE"
 		}
-	}
-	residual, err := findNodeFRPSProcesses(runtime.state.directory)
-	if err != nil {
-		return "UNAVAILABLE"
-	}
-	if len(residual) != 0 {
-		runtime.ownerUnknown = true
-		return "FRPS_OWNERSHIP_UNKNOWN"
 	}
 	if record.BootDisabled {
 		if !record.DisabledComplete {

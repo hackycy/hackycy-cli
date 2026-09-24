@@ -162,6 +162,57 @@ func TestNodeStateRejectsIncompleteRuntimeWithoutChangingDatabase(t *testing.T) 
 	}
 }
 
+func TestNodeStateMigratesSchemaV3OwnerRecord(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "node")
+	state, err := OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite3", nodeDatabaseURI(filepath.Join(directory, nodeDatabaseFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		UPDATE meta SET value='3' WHERE key='schema_version';
+		ALTER TABLE node_runtime RENAME TO node_runtime_v4;
+		CREATE TABLE node_runtime (id INTEGER PRIMARY KEY CHECK(id=1), highest_revision INTEGER NOT NULL DEFAULT 0, highest_digest TEXT NOT NULL DEFAULT '', candidate BLOB, phase TEXT NOT NULL DEFAULT 'idle', applied_revision INTEGER NOT NULL DEFAULT 0, last_good BLOB, boot_disabled INTEGER NOT NULL DEFAULT 0, disabled_complete INTEGER NOT NULL DEFAULT 0, failure_code TEXT NOT NULL DEFAULT '', owner_pid INTEGER NOT NULL DEFAULT 0, owner_started TEXT NOT NULL DEFAULT '', owner_binary TEXT NOT NULL DEFAULT '', owner_config TEXT NOT NULL DEFAULT '');
+		INSERT INTO node_runtime(id, highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config)
+		SELECT id, highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config FROM node_runtime_v4;
+		DROP TABLE node_runtime_v4;
+		UPDATE node_runtime SET owner_pid=12345, owner_started='legacy start', owner_binary='/tmp/frps', owner_config='/tmp/frps.toml' WHERE id=1;
+	`); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	state, err = OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	var version string
+	if err := state.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != nodeSchemaVersion {
+		t.Fatalf("schema version = %q, want %q", version, nodeSchemaVersion)
+	}
+	var createTime int64
+	var ownerPID int
+	var ownerStarted, ownerBinary, ownerConfig string
+	if err := state.db.QueryRow(`SELECT owner_pid, owner_create_time, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(&ownerPID, &createTime, &ownerStarted, &ownerBinary, &ownerConfig); err != nil {
+		t.Fatal(err)
+	}
+	if ownerPID != 12345 || createTime != 0 || ownerStarted != "legacy start" || ownerBinary != "/tmp/frps" || ownerConfig != "/tmp/frps.toml" {
+		t.Fatalf("migrated owner = (%d, %d, %q, %q, %q)", ownerPID, createTime, ownerStarted, ownerBinary, ownerConfig)
+	}
+}
+
 func TestNodeHealthContainsNoIdentityOrState(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "node")
 	probe, err := net.Listen("tcp", "127.0.0.1:0")

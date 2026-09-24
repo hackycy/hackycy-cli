@@ -23,6 +23,7 @@ type runtimeRecord struct {
 	DisabledComplete bool
 	FailureCode      string
 	OwnerPID         int
+	OwnerCreateTime  int64
 	OwnerStarted     string
 	OwnerBinary      string
 	OwnerConfig      string
@@ -30,8 +31,8 @@ type runtimeRecord struct {
 
 func (state *State) readRuntime(ctx context.Context) (runtimeRecord, error) {
 	var result runtimeRecord
-	err := state.db.QueryRowContext(ctx, `SELECT highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(
-		&result.HighestRevision, &result.HighestDigest, &result.Candidate, &result.Phase, &result.AppliedRevision, &result.LastGood, &result.BootDisabled, &result.DisabledComplete, &result.FailureCode, &result.OwnerPID, &result.OwnerStarted, &result.OwnerBinary, &result.OwnerConfig)
+	err := state.db.QueryRowContext(ctx, `SELECT highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_create_time, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(
+		&result.HighestRevision, &result.HighestDigest, &result.Candidate, &result.Phase, &result.AppliedRevision, &result.LastGood, &result.BootDisabled, &result.DisabledComplete, &result.FailureCode, &result.OwnerPID, &result.OwnerCreateTime, &result.OwnerStarted, &result.OwnerBinary, &result.OwnerConfig)
 	return result, err
 }
 
@@ -49,8 +50,8 @@ func (state *State) acceptCandidate(ctx context.Context, contents []byte) (runti
 	}
 	defer tx.Rollback()
 	var result runtimeRecord
-	err = tx.QueryRowContext(ctx, `SELECT highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(
-		&result.HighestRevision, &result.HighestDigest, &result.Candidate, &result.Phase, &result.AppliedRevision, &result.LastGood, &result.BootDisabled, &result.DisabledComplete, &result.FailureCode, &result.OwnerPID, &result.OwnerStarted, &result.OwnerBinary, &result.OwnerConfig)
+	err = tx.QueryRowContext(ctx, `SELECT highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_create_time, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(
+		&result.HighestRevision, &result.HighestDigest, &result.Candidate, &result.Phase, &result.AppliedRevision, &result.LastGood, &result.BootDisabled, &result.DisabledComplete, &result.FailureCode, &result.OwnerPID, &result.OwnerCreateTime, &result.OwnerStarted, &result.OwnerBinary, &result.OwnerConfig)
 	if err != nil {
 		return runtimeRecord{}, err
 	}

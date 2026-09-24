@@ -213,7 +213,7 @@ func TestNodeSIGKILLRecoveryAtRuntimeCommitBoundaries(t *testing.T) {
 	}
 }
 
-func TestNodeUnknownResidualFRPSIsPreserved(t *testing.T) {
+func TestNodeIgnoresUnrecordedResidualFRPS(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	artifact, err := tunnelruntime.CurrentFRPArtifact()
@@ -272,11 +272,11 @@ func TestNodeUnknownResidualFRPSIsPreserved(t *testing.T) {
 			break
 		}
 	}
-	if code := runtime.recover(ctx); code != "FRPS_OWNERSHIP_UNKNOWN" {
-		t.Fatalf("unknown residual = %s", code)
+	if code := runtime.recover(ctx); code != "" {
+		t.Fatalf("unrecorded residual recovery = %s", code)
 	}
-	if runtime.processState().State != "unknown" {
-		t.Fatalf("unknown state = %+v", runtime.processState())
+	if runtime.processState().State != tunnelruntime.FRPProcessStopped {
+		t.Fatalf("unrecorded residual state = %+v", runtime.processState())
 	}
 	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports[0])), time.Second)
 	if err != nil {

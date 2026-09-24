@@ -9,9 +9,6 @@ COPY docker-assets/ycy-linux-arm64 /tmp/ycy-linux-arm64
 COPY .tmp/docker/frp /tmp/frp
 
 RUN set -eux; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends procps; \
-    rm -rf /var/lib/apt/lists/*; \
     install -d /opt/ycy/frp/0.70.1 /usr/local/bin; \
     case "$TARGETARCH" in \
       amd64) cp /tmp/ycy-linux-x64 /usr/local/bin/ycy; cp /tmp/frp/linux-x64/frpc /opt/ycy/frp/0.70.1/frpc; cp /tmp/frp/linux-x64/frps /opt/ycy/frp/0.70.1/frps ;; \
