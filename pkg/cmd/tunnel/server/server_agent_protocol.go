@@ -180,7 +180,7 @@ func (connection *ServerAgentConnection) recordApplyResult(ctx context.Context, 
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Apply result does not match the current runtime"}
 	}
 	if result.Success {
-		if err := connection.gateway.controlPlane.RecordAppliedRevision(ctx, connection.clientID, result.Revision); err != nil {
+		if err := connection.gateway.controlPlane.RecordAppliedRevision(ctx, connection.clientID, result.Revision, result.NodeID); err != nil {
 			return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid Applied Revision"}
 		}
 		accepted, changed, recovered := connection.gateway.recordApplyResult(connection.clientID, connection.slot, result)
@@ -287,6 +287,7 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 	if err != nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseIncompatible, Message: "Client platform is incompatible"}
 	}
+	connection.gateway.tryPendingClientNode(ctx, connection.clientID)
 	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.clientID)
 	if err != nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}

@@ -5,6 +5,7 @@ package web
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -21,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
 	cdplog "github.com/chromedp/cdproto/log"
 	"github.com/chromedp/cdproto/network"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
@@ -66,12 +68,14 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 			if testCase.browserSessionFor != nil {
 				browserSession = testCase.browserSessionFor(t, pageURL)
 			}
+			var browserClientID string
 			if testCase.name == "tunnel" {
-				createTunnelBrowserClient(t, pageURL, browserSession)
+				browserClientID = createTunnelBrowserClient(t, pageURL, browserSession)
 			}
 			assertBrowserJourney(t, pageURL, testCase.readyText, testCase.apiPaths, browserSession)
 			if testCase.name == "tunnel" {
 				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
+				assertTunnelClientAssignmentPage(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 			}
 			if err := service.stop(); err != nil {
 				t.Fatalf("clean shutdown: %v", err)
@@ -195,7 +199,7 @@ func signInTunnelBrowserSession(t *testing.T, pageURL string) *http.Cookie {
 	return nil
 }
 
-func createTunnelBrowserClient(t *testing.T, pageURL string, session *http.Cookie) {
+func createTunnelBrowserClient(t *testing.T, pageURL string, session *http.Cookie) string {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, pageURL+"/api/clients", strings.NewReader(`{"remark":"Browser dialog client"}`))
 	if err != nil {
@@ -216,6 +220,34 @@ func createTunnelBrowserClient(t *testing.T, pageURL string, session *http.Cooki
 	if response.StatusCode != http.StatusCreated {
 		t.Fatalf("create Tunnel browser client: got %s\n%s", response.Status, body)
 	}
+	var created struct {
+		Client struct {
+			ID string `json:"id"`
+		} `json:"client"`
+	}
+	if err := json.Unmarshal(body, &created); err != nil || created.Client.ID == "" {
+		t.Fatalf("decode Tunnel browser client: %v\n%s", err, body)
+	}
+	request, err = http.NewRequest(http.MethodPost, pageURL+"/api/clients/"+created.Client.ID+"/tunnels", strings.NewReader(`{"protocol":"http","customDomains":["browser.example.test"],"localPort":3000}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", pageURL)
+	request.AddCookie(session)
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("create browser HTTP Tunnel: %v", err)
+	}
+	defer response.Body.Close()
+	body, err = io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("create browser HTTP Tunnel: got %s\n%s", response.Status, body)
+	}
+	return created.Client.ID
 }
 
 func startService(t *testing.T, binary, directory string, environment []string, arguments ...string) *runningService {
@@ -475,6 +507,59 @@ func assertTunnelDialogRestoresPointerEvents(t *testing.T, pageURL string, brows
 	run("read Tunnel body pointer events", chromedp.Evaluate(`document.body.style.pointerEvents`, &pointerEvents))
 	if pointerEvents != "" {
 		t.Fatalf("closing a row-action dialog left body pointer events locked: %q", pointerEvents)
+	}
+}
+
+func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSession *http.Cookie, clientID string) {
+	t.Helper()
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	allocatorOptions = append(allocatorOptions, chromedp.ExecPath(chromeExecutable(t)), chromedp.Flag("disable-gpu", true), chromedp.Flag("headless", true))
+	allocatorContext, closeAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer closeAllocator()
+	browserContext, closeBrowser := chromedp.NewContext(allocatorContext)
+	defer closeBrowser()
+	ctx, cancel := context.WithTimeout(browserContext, browserReadyTimeout)
+	defer cancel()
+	if err := chromedp.Run(ctx,
+		network.Enable(),
+		network.SetCookie(browserSession.Name, browserSession.Value).WithURL(pageURL).WithHTTPOnly(browserSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
+		chromedp.Navigate(pageURL+"/clients/"+clientID),
+		chromedp.WaitVisible(`[aria-label="Choose Client Node"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("open Client assignment page: %v", err)
+	}
+	for _, viewport := range []struct{ width, height int64 }{{1280, 800}, {390, 844}} {
+		if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(viewport.width, viewport.height, 1, false)); err != nil {
+			t.Fatalf("set Client viewport %d: %v", viewport.width, err)
+		}
+		var result struct {
+			Labels     []string `json:"labels"`
+			DNS        string   `json:"dns"`
+			NodeOption string   `json:"nodeOption"`
+			Overflow   bool     `json:"overflow"`
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+			labels: [...document.querySelectorAll('.client-assignment .summary-fact > span')].map(element => element.textContent.trim()),
+			dns: document.querySelector('.client-assignment-dns strong')?.textContent.trim() ?? '',
+			nodeOption: document.querySelector('[aria-label="Choose Client Node"] option:checked')?.textContent.trim() ?? '',
+			overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+		}))()`, &result)); err != nil {
+			t.Fatalf("inspect Client viewport %d: %v", viewport.width, err)
+		}
+		for _, label := range []string{"Current Node", "Pending Node", "Client applied Node", "Target application", "FRPC connection", "Proxy observation"} {
+			found := false
+			for _, actual := range result.Labels {
+				if actual == label {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Client viewport %d omitted %q: %+v", viewport.width, label, result)
+			}
+		}
+		if result.DNS == "" || result.NodeOption == "" || result.Overflow {
+			t.Fatalf("Client viewport %d DNS, Node selection or layout: %+v", viewport.width, result)
+		}
 	}
 }
 

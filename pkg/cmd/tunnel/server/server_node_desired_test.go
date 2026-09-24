@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/json"
+	"sync"
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
@@ -65,6 +66,72 @@ func TestServerNodeDesiredSaveUpdatesPoolAtomically(t *testing.T) {
 	record, err = registry.get(context.Background(), id)
 	if err != nil || record.DesiredRevision != 1 || record.PortEnd != 30000 {
 		t.Fatalf("failed writes changed desired state: (%+v, %v)", record, err)
+	}
+}
+
+func TestServerNodePoolShrinkRacesPortAllocationAtomically(t *testing.T) {
+	state := openServerDomainState(t)
+	registry, err := newServerNodeRegistry(state.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "fedcba9876543210fedcba9876543210"
+	if _, err := registry.register(t.Context(), id, "Remote", "http://127.0.0.1:7600", make([]byte, 32), 0); err != nil {
+		t.Fatal(err)
+	}
+	settings := serverNodeSettings{BindAddress: "127.0.0.1", BindPort: 7000, VhostHTTPPort: 8080, PortRangeStart: 20000, PortRangeEnd: 20001}
+	if _, err := registry.saveDesired(t.Context(), id, 0, settings); err != nil {
+		t.Fatal(err)
+	}
+	plane := openServerControlPlane(t, state)
+	client, err := plane.CreateClient(t.Context(), environmentAdministratorID, "shrink race")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plane.AssignClientNode(t.Context(), client.ID, id, true, true); err != nil {
+		t.Fatal(err)
+	}
+	port := int64(20000)
+	settings.PortRangeStart = 20001
+	results := make(chan error, 2)
+	var wait sync.WaitGroup
+	wait.Add(2)
+	go func() {
+		defer wait.Done()
+		_, err := registry.saveDesired(context.Background(), id, 1, settings)
+		results <- err
+	}()
+	go func() {
+		defer wait.Done()
+		_, err := plane.CreateTunnel(context.Background(), client.ID, TunnelMutationInput{Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port, LocalPort: 9000})
+		results <- err
+	}()
+	wait.Wait()
+	close(results)
+	successes, failures := 0, 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else {
+			failures++
+		}
+	}
+	if successes != 1 || failures != 1 {
+		t.Fatalf("concurrent pool shrink and allocation = %d successes, %d failures", successes, failures)
+	}
+	var poolStart, tunnelCount int64
+	if err := state.database.QueryRow(`SELECT port_start FROM node_port_pools WHERE node_id=?`, id).Scan(&poolStart); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE node_id=? AND server_port=?`, id, port).Scan(&tunnelCount); err != nil {
+		t.Fatal(err)
+	}
+	record, err := registry.get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poolStart == 20001 && (tunnelCount != 0 || record.DesiredRevision != 2) || poolStart == 20000 && (tunnelCount != 1 || record.DesiredRevision != 1) || poolStart != 20000 && poolStart != 20001 {
+		t.Fatalf("pool race left inconsistent state: start=%d tunnels=%d desired=%d", poolStart, tunnelCount, record.DesiredRevision)
 	}
 }
 

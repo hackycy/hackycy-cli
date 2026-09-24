@@ -41,6 +41,7 @@ type ServerAgentGatewayOptions struct {
 	ControlPlane  *ServerControlPlane
 	FRPS          ServerAgentFRPSStateProvider
 	WelcomeSource ServerAgentWelcomeSource
+	Nodes         *serverNodeService
 	Logger        logging.Logger
 }
 
@@ -52,6 +53,7 @@ type ServerAgentGateway struct {
 	controlPlane  *ServerControlPlane
 	frps          ServerAgentFRPSStateProvider
 	welcomeSource ServerAgentWelcomeSource
+	nodes         *serverNodeService
 	logger        logging.Logger
 	warningMu     sync.Mutex
 	warnings      map[string]bool
@@ -101,6 +103,7 @@ func NewServerAgentGateway(options ServerAgentGatewayOptions) (*ServerAgentGatew
 		controlPlane:  options.ControlPlane,
 		frps:          options.FRPS,
 		welcomeSource: options.WelcomeSource,
+		nodes:         options.Nodes,
 		logger:        options.Logger,
 		slots:         make(map[string]serverAgentSlot),
 		runtime:       make(map[string]serverAgentRuntime),
@@ -362,6 +365,23 @@ func (gateway *ServerAgentGateway) FRPCObservation(clientID string) tunnelruntim
 	result := runtime.frpcStatus
 	result.Proxies = append([]tunnelruntime.ProxyState(nil), result.Proxies...)
 	return result
+}
+
+// A pending target is rechecked on every authenticated welcome. Failure
+// leaves the saved current assignment and pending target untouched.
+func (gateway *ServerAgentGateway) tryPendingClientNode(ctx context.Context, clientID string) {
+	if gateway == nil || gateway.nodes == nil {
+		return
+	}
+	client, err := gateway.controlPlane.GetClient(ctx, clientID)
+	if err != nil || client.PendingNodeID == nil {
+		return
+	}
+	target, err := gateway.nodes.summary(ctx, *client.PendingNodeID)
+	if err != nil || !target.Selectability.Selectable {
+		return
+	}
+	_, _ = gateway.controlPlane.AssignClientNode(ctx, clientID, target.ID, true, true)
 }
 
 func (gateway *ServerAgentGateway) recordFRPCStatus(clientID string, slot uint64, status tunnelruntime.FRPCStatus) bool {

@@ -172,6 +172,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 		ControlPlane:  runtime.controlPlane,
 		FRPS:          runtime.frps,
 		WelcomeSource: runtime.frps,
+		Nodes:         runtime.nodeService,
 		Logger:        options.LifecycleLogger,
 	})
 	if err != nil {

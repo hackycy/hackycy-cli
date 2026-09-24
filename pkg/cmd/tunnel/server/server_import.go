@@ -168,14 +168,14 @@ func (plane *ServerControlPlane) ImportFRPCTunnels(ctx context.Context, clientID
 			}
 			disabled := false
 			input.Enabled = &disabled
-			values, err := plane.tunnelValues(ctx, connection, input)
+			values, err := plane.tunnelValues(ctx, connection, input, client.NodeID)
 			if err != nil {
 				return struct {
 					tunnels []tunnelruntime.TunnelDefinition
 					owner   string
 				}{}, err
 			}
-			if err := insertTunnel(ctx, connection, tunnelID, clientID, values, formatServerTimestamp(plane.now())); err != nil {
+			if err := insertTunnel(ctx, connection, tunnelID, clientID, client.NodeID, values, formatServerTimestamp(plane.now())); err != nil {
 				return struct {
 					tunnels []tunnelruntime.TunnelDefinition
 					owner   string

@@ -104,6 +104,7 @@ type TunnelHTTPOptionsInput struct {
 type ServerTunnel struct {
 	tunnelruntime.TunnelDefinition
 	ClientID string
+	NodeID   string
 }
 
 const serverDesiredState = "desired_state"
@@ -137,14 +138,14 @@ func (plane *ServerControlPlane) CreateTunnel(ctx context.Context, clientID stri
 				owner  string
 			}{}, err
 		}
-		value, err := plane.tunnelValues(ctx, connection, input)
+		value, err := plane.tunnelValues(ctx, connection, input, client.NodeID)
 		if err != nil {
 			return struct {
 				tunnel ServerTunnel
 				owner  string
 			}{}, err
 		}
-		if err := insertTunnel(ctx, connection, tunnelID, clientID, value, timestamp); err != nil {
+		if err := insertTunnel(ctx, connection, tunnelID, clientID, client.NodeID, value, timestamp); err != nil {
 			return struct {
 				tunnel ServerTunnel
 				owner  string
@@ -237,7 +238,7 @@ func (plane *ServerControlPlane) ListTunnels(ctx context.Context, clientID strin
 	if _, err := plane.GetClient(ctx, clientID); err != nil {
 		return nil, err
 	}
-	rows, err := plane.database.QueryContext(ctx, `SELECT id, client_internal_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at FROM tunnels WHERE client_internal_id = ? ORDER BY created_at, id`, clientID)
+	rows, err := plane.database.QueryContext(ctx, `SELECT id, client_internal_id, node_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at FROM tunnels WHERE client_internal_id = ? ORDER BY created_at, id`, clientID)
 	if err != nil {
 		return nil, fmt.Errorf("list Tunnel Definitions: %w", err)
 	}
@@ -309,7 +310,7 @@ func (plane *ServerControlPlane) DeleteTunnel(ctx context.Context, tunnelID stri
 	return nil
 }
 
-func (plane *ServerControlPlane) RecordAppliedRevision(ctx context.Context, clientID string, revision int64) error {
+func (plane *ServerControlPlane) RecordAppliedRevision(ctx context.Context, clientID string, revision int64, reportedNodeID ...string) error {
 	if revision < 0 {
 		return serverDomainError("INVALID_REVISION", "Applied Revision must be a non-negative integer")
 	}
@@ -325,10 +326,17 @@ func (plane *ServerControlPlane) RecordAppliedRevision(ctx context.Context, clie
 		if revision > client.DesiredRevision {
 			return appliedResult{}, serverDomainError("INVALID_REVISION", "Applied Revision cannot exceed Desired Revision")
 		}
-		if revision <= client.LastAppliedRevision {
+		nodeID := client.NodeID
+		if len(reportedNodeID) != 0 {
+			nodeID = reportedNodeID[0]
+		}
+		if nodeID != client.NodeID {
+			return appliedResult{}, serverDomainError("INVALID_REVISION", "Applied Node does not match current Client assignment")
+		}
+		if revision < client.LastAppliedRevision || revision == client.LastAppliedRevision && client.LastAppliedNodeID != nil && *client.LastAppliedNodeID == nodeID {
 			return appliedResult{client: client}, nil
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE clients SET last_applied_revision = ? WHERE internal_id = ?`, revision, clientID); err != nil {
+		if _, err := connection.ExecContext(ctx, `UPDATE clients SET last_applied_revision = ?, last_applied_node_id = ? WHERE internal_id = ?`, revision, nodeID, clientID); err != nil {
 			return appliedResult{}, fmt.Errorf("record Applied Revision: %w", err)
 		}
 		updated, err := selectClient(ctx, connection, clientID)
@@ -346,7 +354,7 @@ func (plane *ServerControlPlane) RecordAppliedRevision(ctx context.Context, clie
 	return nil
 }
 
-func (plane *ServerControlPlane) tunnelValues(ctx context.Context, connection *sql.Conn, input TunnelMutationInput) (normalizedTunnelValues, error) {
+func (plane *ServerControlPlane) tunnelValues(ctx context.Context, connection *sql.Conn, input TunnelMutationInput, nodeID string) (normalizedTunnelValues, error) {
 	protocol, err := normalizeTunnelProtocol(input.Protocol)
 	if err != nil {
 		return normalizedTunnelValues{}, err
@@ -355,7 +363,7 @@ func (plane *ServerControlPlane) tunnelValues(ctx context.Context, connection *s
 	if err != nil {
 		return normalizedTunnelValues{}, err
 	}
-	return plane.tunnelValuesWithOptions(ctx, connection, input, protocol, options)
+	return plane.tunnelValuesWithOptions(ctx, connection, input, protocol, options, nodeID)
 }
 
 func (plane *ServerControlPlane) patchTunnelValues(ctx context.Context, connection *sql.Conn, current ServerTunnel, patch TunnelPatchInput) (normalizedTunnelValues, error) {
@@ -368,10 +376,10 @@ func (plane *ServerControlPlane) patchTunnelValues(ctx context.Context, connecti
 	if err != nil {
 		return normalizedTunnelValues{}, err
 	}
-	return plane.tunnelValuesWithOptions(ctx, connection, input, protocol, options)
+	return plane.tunnelValuesWithOptions(ctx, connection, input, protocol, options, current.NodeID)
 }
 
-func (plane *ServerControlPlane) tunnelValuesWithOptions(ctx context.Context, connection *sql.Conn, input TunnelMutationInput, protocol tunnelruntime.TunnelProtocol, options tunnelruntime.TunnelOptions) (normalizedTunnelValues, error) {
+func (plane *ServerControlPlane) tunnelValuesWithOptions(ctx context.Context, connection *sql.Conn, input TunnelMutationInput, protocol tunnelruntime.TunnelProtocol, options tunnelruntime.TunnelOptions, nodeID string) (normalizedTunnelValues, error) {
 	label, err := normalizeTunnelLabel(input.Label)
 	if err != nil {
 		return normalizedTunnelValues{}, err
@@ -398,12 +406,12 @@ func (plane *ServerControlPlane) tunnelValuesWithOptions(ctx context.Context, co
 		return values, nil
 	}
 	serverPort := input.ServerPort
-	pool, err := localPortPool(ctx, connection)
+	pool, err := nodePortPool(ctx, connection, nodeID)
 	if err != nil {
 		return normalizedTunnelValues{}, err
 	}
 	if serverPort == nil {
-		allocated, err := plane.availablePort(ctx, connection, protocol, pool)
+		allocated, err := plane.availablePort(ctx, connection, nodeID, protocol, pool)
 		if err != nil {
 			return normalizedTunnelValues{}, err
 		}
@@ -464,16 +472,16 @@ func tunnelMutationForPatch(current ServerTunnel, patch TunnelPatchInput) Tunnel
 	return input
 }
 
-func localPortPool(ctx context.Context, connection *sql.Conn) (ServerPortRange, error) {
+func nodePortPool(ctx context.Context, connection *sql.Conn, nodeID string) (ServerPortRange, error) {
 	var pool ServerPortRange
-	if err := connection.QueryRowContext(ctx, `SELECT port_start, port_end FROM node_port_pools WHERE node_id = 'local'`).Scan(&pool.Start, &pool.End); err != nil {
-		return ServerPortRange{}, fmt.Errorf("read Local Node port pool: %w", err)
+	if err := connection.QueryRowContext(ctx, `SELECT port_start, port_end FROM node_port_pools WHERE node_id = ?`, nodeID).Scan(&pool.Start, &pool.End); err != nil {
+		return ServerPortRange{}, fmt.Errorf("read Node port pool: %w", err)
 	}
 	return pool, nil
 }
 
-func (plane *ServerControlPlane) availablePort(ctx context.Context, connection *sql.Conn, protocol tunnelruntime.TunnelProtocol, pool ServerPortRange) (int64, error) {
-	rows, err := connection.QueryContext(ctx, `SELECT server_port FROM tunnels WHERE node_id = 'local' AND protocol = ? AND server_port BETWEEN ? AND ? ORDER BY server_port`, protocol, pool.Start, pool.End)
+func (plane *ServerControlPlane) availablePort(ctx context.Context, connection *sql.Conn, nodeID string, protocol tunnelruntime.TunnelProtocol, pool ServerPortRange) (int64, error) {
+	rows, err := connection.QueryContext(ctx, `SELECT server_port FROM tunnels WHERE node_id = ? AND protocol = ? AND server_port BETWEEN ? AND ? ORDER BY server_port`, nodeID, protocol, pool.Start, pool.End)
 	if err != nil {
 		return 0, fmt.Errorf("find available Tunnel server port: %w", err)
 	}
@@ -509,15 +517,15 @@ type normalizedTunnelValues struct {
 	options       tunnelruntime.TunnelOptions
 }
 
-func insertTunnel(ctx context.Context, connection *sql.Conn, tunnelID, clientID string, values normalizedTunnelValues, timestamp string) error {
+func insertTunnel(ctx context.Context, connection *sql.Conn, tunnelID, clientID, nodeID string, values normalizedTunnelValues, timestamp string) error {
 	optionsJSON, customDomains, location, err := encodedTunnelValues(values)
 	if err != nil {
 		return err
 	}
 	if _, err := connection.ExecContext(ctx, `
-		INSERT INTO tunnels(id, client_internal_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, tunnelID, clientID, values.label, values.protocol, customDomains, location, values.serverPort, values.localHost, values.localPort, boolToSQLite(values.enabled), optionsJSON, timestamp, timestamp); err != nil {
+		INSERT INTO tunnels(id, client_internal_id, node_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, tunnelID, clientID, nodeID, values.label, values.protocol, customDomains, location, values.serverPort, values.localHost, values.localPort, boolToSQLite(values.enabled), optionsJSON, timestamp, timestamp); err != nil {
 		return err
 	}
 	return reserveTunnelHTTPRoutes(ctx, connection, tunnelID, values)
@@ -598,7 +606,7 @@ type tunnelQueryer interface {
 }
 
 func selectTunnel(ctx context.Context, queryer tunnelQueryer, tunnelID string) (ServerTunnel, error) {
-	tunnel, err := scanTunnel(queryer.QueryRowContext(ctx, `SELECT id, client_internal_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at FROM tunnels WHERE id = ?`, tunnelID))
+	tunnel, err := scanTunnel(queryer.QueryRowContext(ctx, `SELECT id, client_internal_id, node_id, label, protocol, custom_domains, location, server_port, local_host, local_port, enabled, options_json, created_at, updated_at FROM tunnels WHERE id = ?`, tunnelID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ServerTunnel{}, serverDomainError("NOT_FOUND", "Tunnel Definition was not found")
 	}
@@ -610,7 +618,7 @@ func selectTunnel(ctx context.Context, queryer tunnelQueryer, tunnelID string) (
 
 func selectTunnelForOwner(ctx context.Context, queryer tunnelQueryer, tunnelID, ownerAccountID string) (ServerTunnel, error) {
 	return scanTunnel(queryer.QueryRowContext(ctx, `
-		SELECT tunnels.id, tunnels.client_internal_id, tunnels.label, tunnels.protocol, tunnels.custom_domains, tunnels.location, tunnels.server_port, tunnels.local_host, tunnels.local_port, tunnels.enabled, tunnels.options_json, tunnels.created_at, tunnels.updated_at
+		SELECT tunnels.id, tunnels.client_internal_id, tunnels.node_id, tunnels.label, tunnels.protocol, tunnels.custom_domains, tunnels.location, tunnels.server_port, tunnels.local_host, tunnels.local_port, tunnels.enabled, tunnels.options_json, tunnels.created_at, tunnels.updated_at
 		FROM tunnels JOIN clients ON clients.internal_id = tunnels.client_internal_id
 		WHERE tunnels.id = ? AND clients.owner_account_id = ?
 	`, tunnelID, ownerAccountID))
@@ -628,7 +636,7 @@ func scanTunnel(scanner tunnelScanner) (ServerTunnel, error) {
 	var serverPort sql.NullInt64
 	var enabled int
 	var optionsJSON string
-	if err := scanner.Scan(&tunnel.ID, &tunnel.ClientID, &tunnel.Label, &protocol, &customDomains, &location, &serverPort, &tunnel.LocalHost, &tunnel.LocalPort, &enabled, &optionsJSON, &tunnel.CreatedAt, &tunnel.UpdatedAt); err != nil {
+	if err := scanner.Scan(&tunnel.ID, &tunnel.ClientID, &tunnel.NodeID, &tunnel.Label, &protocol, &customDomains, &location, &serverPort, &tunnel.LocalHost, &tunnel.LocalPort, &enabled, &optionsJSON, &tunnel.CreatedAt, &tunnel.UpdatedAt); err != nil {
 		return ServerTunnel{}, err
 	}
 	tunnel.Protocol = tunnelruntime.TunnelProtocol(protocol)

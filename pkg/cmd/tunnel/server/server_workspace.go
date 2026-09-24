@@ -225,6 +225,20 @@ func (workspace *ServerWorkspace) GetClient(ctx context.Context, clientID string
 	return workspace.controlPlane.GetClientForOwner(ctx, clientID, account.ID)
 }
 
+func (workspace *ServerWorkspace) AssignClientNode(ctx context.Context, clientID, nodeID string, online, targetReady bool) (TrustedTunnelClient, error) {
+	if _, err := workspace.GetClient(ctx, clientID); err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	return workspace.controlPlane.AssignClientNode(ctx, clientID, nodeID, online, targetReady)
+}
+
+func (workspace *ServerWorkspace) CancelPendingClientNode(ctx context.Context, clientID string) (TrustedTunnelClient, error) {
+	if _, err := workspace.GetClient(ctx, clientID); err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	return workspace.controlPlane.CancelPendingClientNode(ctx, clientID)
+}
+
 func (workspace *ServerWorkspace) CreateClient(ctx context.Context, remark string) (TrustedTunnelClient, error) {
 	account, err := workspace.currentAccount(ctx)
 	if err != nil {

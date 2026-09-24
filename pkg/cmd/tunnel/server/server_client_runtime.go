@@ -56,8 +56,20 @@ func (plane *ServerControlPlane) BuildClientRuntime(ctx context.Context, clientI
 		if err := connection.QueryRowContext(ctx, `SELECT node_id FROM clients WHERE internal_id = ?`, clientID).Scan(&nodeID); err != nil {
 			return tunnelruntime.ClientRuntime{}, fmt.Errorf("read Client Node: %w", err)
 		}
+		if nodeID != "local" {
+			var nodeHost string
+			var nodePort int64
+			var nodeToken string
+			if err := connection.QueryRowContext(ctx, `
+				SELECT n.advertised_frp_host, n.advertised_frp_port, r.active_token
+				FROM nodes n JOIN remote_nodes r ON r.node_id = n.node_id
+				WHERE n.node_id = ? AND n.lifecycle = 'active'`, nodeID).Scan(&nodeHost, &nodePort, &nodeToken); err != nil {
+				return tunnelruntime.ClientRuntime{}, serverDomainError("NODE_TARGET_UNAVAILABLE", "Assigned Node has no complete FRP runtime projection")
+			}
+			advertisedHost, advertisedPort, frpToken = nodeHost, nodePort, nodeToken
+		}
 		rows, err := connection.QueryContext(ctx, `
-			SELECT id, client_internal_id, label, protocol, custom_domains, location, server_port,
+			SELECT id, client_internal_id, node_id, label, protocol, custom_domains, location, server_port,
 			       local_host, local_port, enabled, options_json, created_at, updated_at
 			FROM tunnels WHERE client_internal_id = ? ORDER BY created_at, id
 		`, clientID)

@@ -21,6 +21,10 @@ import (
 type TrustedTunnelClient struct {
 	ID                         string
 	OwnerAccountID             string
+	NodeID                     string
+	PendingNodeID              *string
+	PendingSince               *string
+	LastAppliedNodeID          *string
 	Remark                     string
 	Token                      string
 	DesiredRevision            int64
@@ -47,7 +51,7 @@ const (
 	serverClientRestart = "client_restart"
 )
 
-const serverClientColumns = `internal_id, owner_account_id, remark, token, desired_revision, last_applied_revision,
+const serverClientColumns = `internal_id, owner_account_id, node_id, pending_node_id, pending_since, last_applied_node_id, remark, token, desired_revision, last_applied_revision,
 	desired_restart_generation, completed_restart_generation, restart_error_generation, restart_error_code, restart_error_message,
 	revocation_pending, created_at, rotated_at`
 
@@ -189,6 +193,185 @@ func (plane *ServerControlPlane) GetClientForOwner(ctx context.Context, clientID
 		return TrustedTunnelClient{}, serverDomainError("NOT_FOUND", "Trusted Tunnel Client was not found")
 	}
 	return client, err
+}
+
+// AssignClientNode commits an online assignment after an external, fresh
+// target health check, or records an offline pending target. The targetReady
+// flag is intentionally supplied by the caller because management and FRPS
+// checks must never run inside the database transaction.
+func (plane *ServerControlPlane) AssignClientNode(ctx context.Context, clientID, nodeID string, online, targetReady bool) (TrustedTunnelClient, error) {
+	var previousRevision int64
+	result, err := withImmediateTransaction(ctx, plane.database, func(connection *sql.Conn) (TrustedTunnelClient, error) {
+		client, err := selectClient(ctx, connection, clientID)
+		if err != nil {
+			return TrustedTunnelClient{}, err
+		}
+		previousRevision = client.DesiredRevision
+		if strings.TrimSpace(nodeID) == "" {
+			return TrustedTunnelClient{}, serverDomainError("INVALID_NODE", "Client Node is required")
+		}
+		var lifecycle string
+		if err := connection.QueryRowContext(ctx, `SELECT lifecycle FROM nodes WHERE node_id = ?`, nodeID).Scan(&lifecycle); errors.Is(err, sql.ErrNoRows) {
+			return TrustedTunnelClient{}, serverDomainError("NOT_FOUND", "Target Node was not found")
+		} else if err != nil {
+			return TrustedTunnelClient{}, fmt.Errorf("read target Node: %w", err)
+		}
+		if lifecycle != "active" {
+			return TrustedTunnelClient{}, serverDomainError("NODE_REMOVE_PENDING", "Target Node is pending removal")
+		}
+		if client.NodeID == nodeID {
+			if client.PendingNodeID == nil {
+				return client, nil
+			}
+			if _, err := connection.ExecContext(ctx, `UPDATE clients SET pending_node_id = NULL, pending_since = NULL WHERE internal_id = ?`, clientID); err != nil {
+				return TrustedTunnelClient{}, fmt.Errorf("clear completed Client Node assignment: %w", err)
+			}
+			return selectClient(ctx, connection, clientID)
+		}
+		if !online {
+			timestamp := formatServerTimestamp(plane.now())
+			if _, err := connection.ExecContext(ctx, `UPDATE clients SET pending_node_id = ?, pending_since = ? WHERE internal_id = ?`, nodeID, timestamp, clientID); err != nil {
+				return TrustedTunnelClient{}, fmt.Errorf("save pending Client Node assignment: %w", err)
+			}
+			return selectClient(ctx, connection, clientID)
+		}
+		if !targetReady {
+			return TrustedTunnelClient{}, serverDomainError("NODE_TARGET_UNAVAILABLE", "Target Node management and FRPS observation are not fresh and running")
+		}
+		if err := migrateClientNode(ctx, connection, client, nodeID); err != nil {
+			return TrustedTunnelClient{}, err
+		}
+		return selectClient(ctx, connection, clientID)
+	})
+	if err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	plane.emit(ServerControlPlaneEvent{Type: serverClientUpdated, ClientID: result.ID, OwnerAccountID: result.OwnerAccountID})
+	if result.DesiredRevision != previousRevision {
+		plane.emit(ServerControlPlaneEvent{Type: serverDesiredState, ClientID: result.ID, OwnerAccountID: result.OwnerAccountID})
+	}
+	return result, nil
+}
+
+// CancelPendingClientNode removes only the pending target and leaves the
+// current assignment, resources, and applied runtime untouched.
+func (plane *ServerControlPlane) CancelPendingClientNode(ctx context.Context, clientID string) (TrustedTunnelClient, error) {
+	result, err := withImmediateTransaction(ctx, plane.database, func(connection *sql.Conn) (TrustedTunnelClient, error) {
+		if _, err := selectClient(ctx, connection, clientID); err != nil {
+			return TrustedTunnelClient{}, err
+		}
+		if _, err := connection.ExecContext(ctx, `UPDATE clients SET pending_node_id = NULL, pending_since = NULL WHERE internal_id = ?`, clientID); err != nil {
+			return TrustedTunnelClient{}, fmt.Errorf("cancel pending Client Node assignment: %w", err)
+		}
+		return selectClient(ctx, connection, clientID)
+	})
+	if err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	plane.emit(ServerControlPlaneEvent{Type: serverClientUpdated, ClientID: result.ID, OwnerAccountID: result.OwnerAccountID})
+	return result, nil
+}
+
+func migrateClientNode(ctx context.Context, connection *sql.Conn, client TrustedTunnelClient, targetNodeID string) error {
+	pool, err := nodePortPool(ctx, connection, targetNodeID)
+	if err != nil {
+		return serverDomainError("NODE_TARGET_UNAVAILABLE", "Target Node has no saved port pool")
+	}
+	tunnelRows, err := connection.QueryContext(ctx, `SELECT id, protocol, server_port FROM tunnels WHERE client_internal_id = ? ORDER BY id`, client.ID)
+	if err != nil {
+		return fmt.Errorf("read Client Tunnel resources for Node assignment: %w", err)
+	}
+	defer tunnelRows.Close()
+	for tunnelRows.Next() {
+		var id, protocol string
+		var port sql.NullInt64
+		if err := tunnelRows.Scan(&id, &protocol, &port); err != nil {
+			return err
+		}
+		if (protocol == string(tunnelruntime.TunnelProtocolTCP) || protocol == string(tunnelruntime.TunnelProtocolUDP)) && (!port.Valid || port.Int64 < pool.Start || port.Int64 > pool.End) {
+			return serverDomainError("NODE_RESOURCE_CONFLICT", fmt.Sprintf("Tunnel %s uses a port outside the target Node pool %d-%d", id, pool.Start, pool.End))
+		}
+	}
+	if err := tunnelRows.Err(); err != nil {
+		return err
+	}
+	hostRows, err := connection.QueryContext(ctx, `
+		SELECT DISTINCT r.hostname
+		FROM tunnel_http_routes r JOIN tunnels t ON t.id = r.tunnel_id AND t.node_id = r.node_id
+		WHERE t.client_internal_id = ? ORDER BY r.hostname`, client.ID)
+	if err != nil {
+		return fmt.Errorf("read Client hostname resources for Node assignment: %w", err)
+	}
+	defer hostRows.Close()
+	var hostnames []string
+	for hostRows.Next() {
+		var hostname string
+		if err := hostRows.Scan(&hostname); err != nil {
+			return err
+		}
+		hostnames = append(hostnames, hostname)
+	}
+	if err := hostRows.Err(); err != nil {
+		return err
+	}
+	for _, hostname := range hostnames {
+		var ownerNode string
+		err := connection.QueryRowContext(ctx, `SELECT node_id FROM hostname_owners WHERE hostname_key = ?`, hostname).Scan(&ownerNode)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if ownerNode != client.NodeID && ownerNode != targetNodeID {
+			return serverDomainError("NODE_RESOURCE_CONFLICT", fmt.Sprintf("HTTP hostname %s belongs to another Node", hostname))
+		}
+		if ownerNode == client.NodeID {
+			var remaining int
+			if err := connection.QueryRowContext(ctx, `
+				SELECT count(*) FROM tunnel_http_routes r
+				JOIN tunnels t ON t.id = r.tunnel_id AND t.node_id = r.node_id
+				WHERE r.hostname = ? AND r.node_id = ? AND t.client_internal_id <> ?`, hostname, client.NodeID, client.ID).Scan(&remaining); err != nil {
+				return err
+			}
+			if remaining != 0 {
+				return serverDomainError("NODE_RESOURCE_CONFLICT", fmt.Sprintf("HTTP hostname %s has routes remaining on the current Node", hostname))
+			}
+		}
+	}
+	if _, err := connection.ExecContext(ctx, `UPDATE clients SET node_id = ?, pending_node_id = NULL, pending_since = NULL, desired_revision = desired_revision + 1 WHERE internal_id = ?`, targetNodeID, client.ID); err != nil {
+		return fmt.Errorf("update Client Node assignment: %w", err)
+	}
+	if _, err := connection.ExecContext(ctx, `UPDATE tunnels SET node_id = ? WHERE client_internal_id = ?`, targetNodeID, client.ID); err != nil {
+		return mapClientAssignmentConstraintError(err)
+	}
+	if _, err := connection.ExecContext(ctx, `UPDATE tunnel_http_routes SET node_id = ? WHERE tunnel_id IN (SELECT id FROM tunnels WHERE client_internal_id = ?)`, targetNodeID, client.ID); err != nil {
+		return mapClientAssignmentConstraintError(err)
+	}
+	for _, hostname := range hostnames {
+		result, err := connection.ExecContext(ctx, `UPDATE hostname_owners SET node_id = ? WHERE hostname_key = ? AND node_id = ?`, targetNodeID, hostname, client.NodeID)
+		if err != nil {
+			return mapClientAssignmentConstraintError(err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			if _, err := connection.ExecContext(ctx, `INSERT INTO hostname_owners(hostname_key, node_id) VALUES(?, ?) ON CONFLICT(hostname_key) DO NOTHING`, hostname, targetNodeID); err != nil {
+				return mapClientAssignmentConstraintError(err)
+			}
+		}
+	}
+	return nil
+}
+
+func mapClientAssignmentConstraintError(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "tunnels_unique_transport_port") || strings.Contains(message, "tunnel_http_routes") || strings.Contains(message, "hostname_owners") || strings.Contains(message, "unique") {
+		return serverDomainError("NODE_RESOURCE_CONFLICT", "Target Node already owns a conflicting Tunnel resource")
+	}
+	return err
 }
 
 func (plane *ServerControlPlane) FindClientByToken(ctx context.Context, token string) (*TrustedTunnelClient, error) {
@@ -423,10 +606,11 @@ type clientScanner interface {
 func scanClient(scanner clientScanner) (TrustedTunnelClient, error) {
 	var client TrustedTunnelClient
 	var revocationPending int
+	var pendingNodeID, pendingSince, lastAppliedNodeID sql.NullString
 	var rotatedAt sql.NullString
 	var restartErrorGeneration sql.NullInt64
 	var restartErrorCode, restartErrorMessage sql.NullString
-	if err := scanner.Scan(&client.ID, &client.OwnerAccountID, &client.Remark, &client.Token, &client.DesiredRevision, &client.LastAppliedRevision,
+	if err := scanner.Scan(&client.ID, &client.OwnerAccountID, &client.NodeID, &pendingNodeID, &pendingSince, &lastAppliedNodeID, &client.Remark, &client.Token, &client.DesiredRevision, &client.LastAppliedRevision,
 		&client.DesiredRestartGeneration, &client.CompletedRestartGeneration, &restartErrorGeneration, &restartErrorCode, &restartErrorMessage,
 		&revocationPending, &client.CreatedAt, &rotatedAt); err != nil {
 		return TrustedTunnelClient{}, err
@@ -435,6 +619,15 @@ func scanClient(scanner clientScanner) (TrustedTunnelClient, error) {
 		client.RestartError = &tunnelruntime.StructuredRuntimeError{Code: restartErrorCode.String, Message: restartErrorMessage.String}
 	}
 	client.RevocationPending = revocationPending == 1
+	if pendingNodeID.Valid {
+		client.PendingNodeID = &pendingNodeID.String
+	}
+	if pendingSince.Valid {
+		client.PendingSince = &pendingSince.String
+	}
+	if lastAppliedNodeID.Valid {
+		client.LastAppliedNodeID = &lastAppliedNodeID.String
+	}
 	if rotatedAt.Valid {
 		client.RotatedAt = &rotatedAt.String
 	}
