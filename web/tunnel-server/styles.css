@@ -422,6 +422,75 @@ th:last-child {
   height: 64px;
 }
 
+.nodes-table td:first-child {
+  min-width: 180px;
+}
+
+.nodes-table .mono {
+  overflow-wrap: anywhere;
+}
+
+.node-kind,
+.node-observed {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.node-kind {
+  text-transform: capitalize;
+}
+
+.node-detail-band {
+  margin-top: 20px;
+}
+
+.node-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.node-action-stack {
+  display: grid;
+  gap: 4px;
+}
+
+.form-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.node-claim-preview {
+  display: grid;
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+
+.node-claim-fingerprint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--text-secondary);
+}
+
+.node-claim-fingerprint code {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.node-claim-confirm {
+  display: flex !important;
+  align-items: center;
+  gap: 10px !important;
+}
+
 .client-identity {
   display: grid;
   align-content: center;
@@ -674,6 +743,57 @@ th:last-child {
 .client-summary-facts {
   display: grid;
   grid-template-columns: minmax(188px, 1.5fr) repeat(4, minmax(0, 1fr));
+}
+
+.client-assignment {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--border);
+}
+
+.client-assignment-dns,
+.client-assignment-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+}
+
+.client-assignment-dns {
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+}
+
+.client-assignment-dns span,
+.client-assignment-actions label span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.client-assignment-dns strong,
+.client-assignment-dns small {
+  overflow-wrap: anywhere;
+}
+
+.client-assignment-actions {
+  grid-column: 1 / -1;
+}
+
+.client-assignment-actions label {
+  display: flex;
+  min-width: 220px;
+  align-items: center;
+  gap: 10px;
+}
+
+.client-assignment-actions select {
+  min-width: 0;
+  max-width: 320px;
 }
 
 .summary-fact {
@@ -1394,6 +1514,10 @@ th:last-child {
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   }
 
+  .client-assignment {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .tunnel-details dl {
     grid-template-columns: minmax(120px, 1fr) minmax(180px, 2fr) minmax(120px, 1fr) minmax(180px, 2fr);
   }
@@ -1553,6 +1677,17 @@ th:last-child {
 
   .client-summary-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-assignment-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .client-assignment-actions label,
+  .client-assignment-actions select {
+    width: 100%;
+    max-width: none;
   }
 
   .summary-fact {

@@ -122,17 +122,13 @@ func TestAcquireClientInstanceCleansOnlyExpiredUnlockedVersionedDirectories(t *t
 func TestClientAppliedStateRoundTripsAtomicallyAndIgnoresInvalidCache(t *testing.T) {
 	directory := t.TempDir()
 	state := ClientAppliedState{
-		ClientDesiredConfiguration: ClientDesiredConfiguration{
-			AdvertisedFRPHost: "frp.example.test",
-			AdvertisedFRPPort: 7000,
-			InternalFRPToken:  "internal-token",
-			Snapshot: tunnelruntime.TunnelSnapshot{
-				ClientKey: "client-id",
-				Revision:  4,
-			},
-		},
+		ClientDesiredConfiguration: clientDesiredConfigurationFromRuntime(tunnelruntime.ClientRuntime{
+			AdvertisedFRPHost: "frp.example.test", AdvertisedFRPPort: 7000, FRPToken: "internal-token",
+			ClientKey: "client-id", NodeID: "local", Revision: 4,
+		}),
 		Revision: 4,
 	}
+	state.Runtime.Digest, _ = tunnelruntime.RuntimeDigest(state.Runtime)
 	if err := WriteClientAppliedState(directory, state); err != nil {
 		t.Fatalf("WriteClientAppliedState() error = %v", err)
 	}
@@ -143,9 +139,12 @@ func TestClientAppliedStateRoundTripsAtomicallyAndIgnoresInvalidCache(t *testing
 	if !strings.HasSuffix(string(contents), "\n") || !strings.Contains(string(contents), "\n  \"revision\": 4\n") {
 		t.Fatalf("persisted state = %q, want pretty JSON plus newline", contents)
 	}
+	if strings.Contains(string(contents), `"snapshot"`) || strings.Contains(string(contents), `"internalFrpToken"`) || strings.Count(string(contents), "internal-token") != 1 {
+		t.Fatalf("persisted state contains legacy or duplicated runtime fields: %s", contents)
+	}
 	assertClientPrivateFile(t, clientAppliedStatePath(directory), 0o600)
 	loaded, ok := ReadClientAppliedState(directory)
-	if !ok || loaded == nil || loaded.Revision != 4 || loaded.Snapshot.Revision != 4 || loaded.InternalFRPToken != "internal-token" {
+	if !ok || loaded == nil || loaded.Revision != 4 || loaded.Runtime.Revision != 4 || loaded.Runtime.FRPToken != "internal-token" {
 		t.Fatalf("ReadClientAppliedState() = (%#v, %t)", loaded, ok)
 	}
 

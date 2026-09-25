@@ -149,7 +149,7 @@ func (runtime *clientRunRuntimeStub) releaseRestart() {
 func TestRunClientReconnectsWithoutRestartingAnAppliedFRPC(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		if index == 1 {
 			_ = socket.Close()
 			return
@@ -172,7 +172,7 @@ func TestRunClientReconnectsWithoutRestartingAnAppliedFRPC(t *testing.T) {
 		t.Fatalf("hello count = %d, want 2", got)
 	}
 	values := hellos()
-	if values[0].LastAppliedRevision != 0 || values[1].LastAppliedRevision != 1 {
+	if values[0].LastApplied.Revision != 0 || values[1].LastApplied.Revision != 1 {
 		t.Fatalf("hello applied revisions = %#v", values)
 	}
 	verified, started, _, restarted := runtime.counts()
@@ -195,7 +195,7 @@ func TestRunClientRecoversFromHalfOpenControlSocket(t *testing.T) {
 		if index == 1 {
 			socket.SetPingHandler(func(string) error { return nil })
 		}
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		if index == 1 {
 			for {
 				if _, _, err := socket.ReadMessage(); err != nil {
@@ -230,7 +230,7 @@ func TestRunClientResetsReconnectBackoffOnlyAfterStableWindow(t *testing.T) {
 	stableClosedAt := make(chan time.Time, 1)
 	thirdConnectedAt := make(chan time.Time, 1)
 	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		switch index {
 		case 1:
 			_ = socket.Close()
@@ -268,7 +268,7 @@ func TestRunClientStopsOnRejectedReconnectionProbe(t *testing.T) {
 		}
 		return http.StatusUnauthorized
 	}, func(_ int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		_ = socket.Close()
 	})
 	defer server.Close()
@@ -287,7 +287,7 @@ func TestRunClientStopsAndReleasesItsInstanceOnContextCancellation(t *testing.T)
 	desired := clientDesiredState(1, true)
 	started := make(chan struct{})
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		close(started)
 		for {
 			if _, _, err := socket.ReadMessage(); err != nil {
@@ -329,8 +329,8 @@ func TestRunClientStopsAndReleasesItsInstanceOnContextCancellation(t *testing.T)
 func TestRunClientDispatchesDurableRestartGeneration(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
-		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write restart: %v", err)
 			return
 		}
@@ -356,8 +356,8 @@ func TestRunClientCoalescesGenerationObservedDuringRestart(t *testing.T) {
 	runtime.restartStarted = make(chan struct{})
 	runtime.restartRelease = make(chan struct{})
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
-		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write first restart generation: %v", err)
 			return
 		}
@@ -367,7 +367,7 @@ func TestRunClientCoalescesGenerationObservedDuringRestart(t *testing.T) {
 			t.Error("client did not start restart")
 			return
 		}
-		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 2}); err != nil {
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 2}); err != nil {
 			t.Errorf("write coalesced restart generation: %v", err)
 			return
 		}
@@ -393,9 +393,9 @@ func TestRunClientReplaysPersistedRestartResultWithoutRepeatingRestart(t *testin
 	runtime.restartStarted = make(chan struct{})
 	runtime.restartRelease = make(chan struct{})
 	server, hellos := clientRunControlServer(t, desired, func(index int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		if index == 1 {
-			if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+			if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 1}); err != nil {
 				t.Errorf("write restart generation: %v", err)
 				return
 			}
@@ -409,7 +409,7 @@ func TestRunClientReplaysPersistedRestartResultWithoutRepeatingRestart(t *testin
 			runtime.releaseRestart()
 			return
 		}
-		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write replayed restart generation: %v", err)
 			return
 		}
@@ -446,8 +446,8 @@ func TestClientEqualJitterStaysInUpperHalf(t *testing.T) {
 func TestRunClientReportsDeterministicRestartFailureWithoutStoppingControlSession(t *testing.T) {
 	desired := clientDesiredState(1, true)
 	server, _ := clientRunControlServer(t, desired, func(_ int, socket *websocket.Conn) {
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
-		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Snapshot: desired.Snapshot, DesiredRestartGeneration: 1}); err != nil {
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
+		if err := socket.WriteJSON(tunnelruntime.DesiredState{Type: "desired_state", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Runtime: desired.normalizedRuntime(), DesiredRestartGeneration: 1}); err != nil {
 			t.Errorf("write restart: %v", err)
 			return
 		}
@@ -477,7 +477,7 @@ func TestRunClientUsesCacheOnlyForHelloUntilWelcome(t *testing.T) {
 	}
 	root := t.TempDir()
 	instanceID := clientTestInstanceID('c')
-	if err := WriteClientAppliedState(filepath.Join(root, instanceID), ClientAppliedState{ClientDesiredConfiguration: desired, Revision: desired.Snapshot.Revision}); err != nil {
+	if err := WriteClientAppliedState(filepath.Join(root, instanceID), ClientAppliedState{ClientDesiredConfiguration: desired, Revision: desired.Runtime.Revision}); err != nil {
 		t.Fatalf("WriteClientAppliedState() error = %v", err)
 	}
 	helloReceived := make(chan tunnelruntime.AgentHello, 1)
@@ -505,15 +505,12 @@ func TestRunClientUsesCacheOnlyForHelloUntilWelcome(t *testing.T) {
 			TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 			RequiredFRPVersion:    tunnelruntime.FRPVersion,
 			Artifact:              artifact.Description,
-			AdvertisedFRPHost:     desired.AdvertisedFRPHost,
-			AdvertisedFRPPort:     desired.AdvertisedFRPPort,
-			InternalFRPToken:      desired.InternalFRPToken,
-			Snapshot:              desired.Snapshot,
+			Runtime:               desired.normalizedRuntime(),
 		}); writeErr != nil {
 			t.Errorf("write welcome: %v", writeErr)
 			return
 		}
-		awaitClientApplyResult(t, socket, desired.Snapshot.Revision)
+		awaitClientApplyResult(t, socket, desired.Runtime.Revision)
 		if writeErr := socket.WriteJSON(tunnelruntime.Revoke{Type: "revoke", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Reason: "deleted"}); writeErr != nil {
 			t.Errorf("write revoke: %v", writeErr)
 		}
@@ -543,8 +540,8 @@ func TestRunClientUsesCacheOnlyForHelloUntilWelcome(t *testing.T) {
 	}()
 	select {
 	case hello := <-helloReceived:
-		if hello.LastAppliedRevision != desired.Snapshot.Revision {
-			t.Fatalf("hello revision = %d, want %d", hello.LastAppliedRevision, desired.Snapshot.Revision)
+		if hello.LastApplied.Revision != desired.Runtime.Revision {
+			t.Fatalf("hello revision = %d, want %d", hello.LastApplied.Revision, desired.Runtime.Revision)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("client did not send hello")
@@ -693,10 +690,7 @@ func clientRunControlServerWithProbe(t *testing.T, desired ClientDesiredConfigur
 			TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 			RequiredFRPVersion:    tunnelruntime.FRPVersion,
 			Artifact:              artifact.Description,
-			AdvertisedFRPHost:     desired.AdvertisedFRPHost,
-			AdvertisedFRPPort:     desired.AdvertisedFRPPort,
-			InternalFRPToken:      desired.InternalFRPToken,
-			Snapshot:              desired.Snapshot,
+			Runtime:               desired.normalizedRuntime(),
 		}); err != nil {
 			t.Errorf("write welcome: %v", err)
 			return
@@ -735,6 +729,9 @@ func awaitClientApplyResult(t *testing.T, socket *websocket.Conn, revision int64
 			t.Fatalf("decode apply result: %v", err)
 		}
 		if result.Success && result.Revision == revision {
+			if result.LocalState != "started" {
+				t.Fatalf("apply result local state = %q, want started", result.LocalState)
+			}
 			return
 		}
 	}

@@ -65,6 +65,35 @@ export interface ClientRecord {
     completedGeneration: number
     error?: { code: string, message: string }
   }
+  assignment: {
+    nodeId: string
+    pendingNodeId: string | null
+    pendingSince?: string | null
+    node?: {
+      id: string
+      name: string
+      advertisedFrpAddress: { host: string, port: number } | null
+      httpIngressAddress: { host: string, port: number } | null
+      frps: { state: string, observedAt?: string, stale: boolean }
+    }
+    pendingNode?: {
+      id: string
+      name: string
+      advertisedFrpAddress: { host: string, port: number } | null
+      httpIngressAddress: { host: string, port: number } | null
+      selectability: { selectable: boolean, reason: string | null }
+    }
+    desiredNodeId: string
+    appliedNodeId: string | null
+  }
+  frpc: {
+    revision: number
+    nodeId: string
+    process: FrpProcessState
+    connection: string
+    proxies: Array<{ tunnelId: string, state: string, errorCode?: string }>
+    error?: { code: string, message: string }
+  }
 }
 
 export interface ClientRuntimeState {

@@ -40,18 +40,22 @@ type serverFRPRuntimeEnsurer func(context.Context, string, tunnelruntime.FRPArti
 // ServerRuntime owns the complete unregistered Tunnel server resource graph.
 // It does not bind a listener or start managed FRPS.
 type ServerRuntime struct {
-	lock         *tunnelruntime.StateDirectoryLock
-	state        *State
-	accounts     *ServerAccounts
-	sessions     *ServerSessions
-	controlPlane *ServerControlPlane
-	supervisor   *tunnelruntime.FRPSupervisor
-	frps         *ManagedFRPS
-	gateway      *ServerAgentGateway
-	handler      http.Handler
-	frpArtifact  tunnelruntime.FRPArtifact
-	frpDirectory string
-	ensureFRP    serverFRPRuntimeEnsurer
+	lock             *tunnelruntime.StateDirectoryLock
+	state            *State
+	accounts         *ServerAccounts
+	sessions         *ServerSessions
+	controlPlane     *ServerControlPlane
+	supervisor       *tunnelruntime.FRPSupervisor
+	frps             *ManagedFRPS
+	gateway          *ServerAgentGateway
+	nodes            *serverNodeRegistry
+	nodeObservations *serverNodeObservations
+	nodeCoordinator  *serverNodeCoordinator
+	nodeService      *serverNodeService
+	handler          http.Handler
+	frpArtifact      tunnelruntime.FRPArtifact
+	frpDirectory     string
+	ensureFRP        serverFRPRuntimeEnsurer
 
 	close    sync.Once
 	closeErr error
@@ -88,6 +92,22 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	if err := syncLocalNodeProjection(ctx, runtime.state.database, options.Settings); err != nil {
+		return fail(err)
+	}
+	runtime.nodes, err = newServerNodeRegistry(runtime.state.database)
+	if err != nil {
+		return fail(err)
+	}
+	runtime.nodeObservations, err = newServerNodeObservations(runtime.state.database)
+	if err != nil {
+		return fail(err)
+	}
+	runtime.nodeCoordinator, err = newServerNodeCoordinator(runtime.state.sessions.Directory(), runtime.nodes, runtime.nodeObservations)
+	if err != nil {
+		return fail(err)
+	}
+	runtime.nodeService = newServerNodeService(runtime.nodes, runtime.nodeObservations, runtime.nodeCoordinator)
 	runtime.accounts, err = NewServerAccounts(ctx, ServerAccountsOptions{
 		Database:      runtime.state.database,
 		AdminUsername: options.Settings.AdminUser,
@@ -110,8 +130,19 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	runtime.nodeCoordinator.controlPlane = runtime.controlPlane
 	internalFRPToken, err := resolveServerInternalFRPToken(ctx, runtime.state.database, options.FRPToken)
 	if err != nil {
+		return fail(err)
+	}
+	localEndpoint := options.Settings.AdvertiseFRPAddr
+	advertisedHost := ""
+	advertisedPort := int64(options.Settings.FRPPort)
+	if localEndpoint != nil {
+		advertisedHost = localEndpoint.Host
+		advertisedPort = int64(localEndpoint.Port)
+	}
+	if err := syncLocalClientRuntimeRevision(ctx, runtime.state.database, advertisedHost, advertisedPort, internalFRPToken); err != nil {
 		return fail(err)
 	}
 	runtime.frpArtifact, runtime.frpDirectory, runtime.ensureFRP, err = resolveServerFRPRuntime(options)
@@ -137,10 +168,12 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	runtime.nodeService.localState = runtime.frps
 	runtime.gateway, err = NewServerAgentGateway(ServerAgentGatewayOptions{
 		ControlPlane:  runtime.controlPlane,
 		FRPS:          runtime.frps,
 		WelcomeSource: runtime.frps,
+		Nodes:         runtime.nodeService,
 		Logger:        options.LifecycleLogger,
 	})
 	if err != nil {
@@ -156,6 +189,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 		Custom404PageWriter: runtime.frps,
 		FRPSChanges:         runtime.frps,
 		AgentGateway:        runtime.gateway,
+		Nodes:               runtime.nodeService,
 		ServerState:         runtime.frps,
 	})
 	if err != nil {
@@ -165,6 +199,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 	if err != nil {
 		return fail(err)
 	}
+	runtime.nodeCoordinator.Start()
 	return runtime, nil
 }
 
@@ -236,6 +271,9 @@ func (runtime *ServerRuntime) Close() error {
 	}
 	runtime.close.Do(func() {
 		var result error
+		if runtime.nodeCoordinator != nil {
+			runtime.nodeCoordinator.Close()
+		}
 		if runtime.frps != nil {
 			result = errors.Join(result, runtime.frps.Stop())
 		}

@@ -103,7 +103,20 @@ func (outbound *serverAgentOutbound) Write(value any) error {
 func newerServerAgentDesired(first, second any) bool {
 	left, leftOK := first.(tunnelruntime.DesiredState)
 	right, rightOK := second.(tunnelruntime.DesiredState)
-	return leftOK && rightOK && left.Snapshot.Revision >= right.Snapshot.Revision && left.DesiredRestartGeneration >= right.DesiredRestartGeneration
+	if !leftOK || !rightOK {
+		return false
+	}
+	leftRuntime, rightRuntime := left.Runtime, right.Runtime
+	if leftRuntime.Revision != rightRuntime.Revision {
+		return leftRuntime.Revision > rightRuntime.Revision
+	}
+	if leftRuntime.NodeID != rightRuntime.NodeID {
+		return leftRuntime.NodeID > rightRuntime.NodeID
+	}
+	if leftRuntime.Digest != rightRuntime.Digest {
+		return leftRuntime.Digest > rightRuntime.Digest
+	}
+	return left.DesiredRestartGeneration >= right.DesiredRestartGeneration
 }
 
 func (outbound *serverAgentOutbound) run() {

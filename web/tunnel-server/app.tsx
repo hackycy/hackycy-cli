@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { CurrentAccount } from './api'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { CloudCog, Gauge, KeyRound, LogOut, Play, Power, RefreshCw, RotateCcw, Save, Server, Shield, Square, Users } from 'lucide-react'
+import { CloudCog, Gauge, KeyRound, LogOut, Network, Play, Power, RefreshCw, RotateCcw, Save, Server, Shield, Square, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
@@ -10,6 +10,7 @@ import { AccountsPage } from './account-pages'
 import { ApiError, apiJson, jsonRequest } from './api'
 import { ClientDetailPage, ClientsPage } from './client-pages'
 import { FormError, FormField } from './form'
+import { NodeDetailPage, NodesPage } from './nodes-pages'
 import { DialogShell } from './primitives'
 import { ErrorState, IconButton, navigate, PageHeader, SecretToken, Spinner, Status, useFeedback } from './ui'
 
@@ -42,7 +43,7 @@ interface FRPTokenView {
   token: string
 }
 
-type Page = { name: 'overview' | 'clients' | 'accounts' | 'server' } | { name: 'client', id: string }
+type Page = { name: 'overview' | 'clients' | 'nodes' | 'accounts' | 'server' } | { name: 'client' | 'node', id: string }
 
 const loginSchema = z.object({
   username: z.string().min(1, 'Username is required'),
@@ -59,11 +60,16 @@ type LoginValues = z.infer<typeof loginSchema>
 type PasswordValues = z.infer<typeof passwordSchema>
 
 function currentPage(): Page {
+  const node = /^\/nodes\/([^/]+)$/.exec(location.pathname)?.[1]
+  if (node)
+    return { name: 'node', id: decodeURIComponent(node) }
   const client = /^\/clients\/([^/]+)$/.exec(location.pathname)?.[1]
   if (client)
     return { name: 'client', id: decodeURIComponent(client) }
   if (location.pathname === '/clients')
     return { name: 'clients' }
+  if (location.pathname === '/nodes')
+    return { name: 'nodes' }
   if (location.pathname === '/accounts')
     return { name: 'accounts' }
   if (location.pathname === '/server')
@@ -147,17 +153,20 @@ function Layout({ page, account, children, loggingOut, onLogout, onChangePasswor
   const navigation = [
     { id: 'overview', label: 'Overview', icon: Gauge, onSelect: () => navigate('/') },
     { id: 'clients', label: 'Clients', icon: Users, onSelect: () => navigate('/clients') },
+    { id: 'nodes', label: 'Nodes', icon: Network, onSelect: () => navigate('/nodes') },
     ...(account.role === 'admin' ? [{ id: 'accounts', label: 'Accounts', icon: Shield, onSelect: () => navigate('/accounts') }, { id: 'server', label: 'Server', icon: Server, onSelect: () => navigate('/server') }] : []),
   ]
-  const pageLabel = page.name === 'overview' ? 'Overview' : page.name === 'client' ? 'Client details' : page.name === 'clients' ? 'Clients' : page.name === 'accounts' ? 'Accounts' : 'Server'
+  const pageLabel = page.name === 'overview' ? 'Overview' : page.name === 'client' ? 'Client details' : page.name === 'node' ? 'Node details' : page.name === 'clients' ? 'Clients' : page.name === 'nodes' ? 'Nodes' : page.name === 'accounts' ? 'Accounts' : 'Server'
   const breadcrumbs = page.name === 'client'
     ? [{ label: 'Clients', onSelect: () => navigate('/clients') }, { label: 'Client details' }]
-    : [{ label: 'Tunnel Control' }, { label: pageLabel }]
+    : page.name === 'node'
+      ? [{ label: 'Nodes', onSelect: () => navigate('/nodes') }, { label: 'Node details' }]
+      : [{ label: 'Tunnel Control' }, { label: pageLabel }]
   return (
     <AdminShell
       brand={{ name: 'HACKYCY TUNNEL', icon: CloudCog }}
       navigation={navigation}
-      activeNavigationId={page.name === 'client' ? 'clients' : page.name}
+      activeNavigationId={page.name === 'client' ? 'clients' : page.name === 'node' ? 'nodes' : page.name}
       account={{ name: account.username, detail: account.role }}
       accountActions={(
         <>
@@ -166,7 +175,7 @@ function Layout({ page, account, children, loggingOut, onLogout, onChangePasswor
         </>
       )}
       breadcrumbs={breadcrumbs}
-      onBack={page.name === 'client' ? () => navigate('/clients') : undefined}
+      onBack={page.name === 'client' ? () => navigate('/clients') : page.name === 'node' ? () => navigate('/nodes') : undefined}
       theme={theme}
       onThemeChange={onThemeChange}
     >
@@ -577,6 +586,8 @@ export function App(): React.JSX.Element {
       {page.name === 'overview' && <Overview state={state} refreshing={stateLoading} reload={() => void load()} />}
       {page.name === 'clients' && <ClientsPage refreshSequence={refreshSequence} showOwner={state.account.role === 'admin'} />}
       {page.name === 'client' && <ClientDetailPage id={page.id} refreshSequence={refreshSequence} showOwner={state.account.role === 'admin'} />}
+      {page.name === 'nodes' && <NodesPage refreshSequence={refreshSequence} isAdmin={state.account.role === 'admin'} />}
+      {page.name === 'node' && <NodeDetailPage id={page.id} refreshSequence={refreshSequence} isAdmin={state.account.role === 'admin'} />}
       {page.name === 'accounts' && state.account.role === 'admin' && <AccountsPage currentAccountId={state.account.id} refreshSequence={refreshSequence} onSessionEnded={sessionEnded} />}
       {page.name === 'server' && state.server && <ServerView server={state.server} reload={load} refreshSequence={refreshSequence} />}
       {changingPassword && <PasswordEditor onClose={() => setChangingPassword(false)} onChanged={sessionEnded} />}

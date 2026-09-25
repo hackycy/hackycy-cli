@@ -1,5 +1,6 @@
 import type { Path, UseFormRegister } from 'react-hook-form'
 import type { ClientView, TunnelImportPreview, TunnelView } from './api'
+import type { NodeSummary } from './nodes-pages'
 import type { TunnelEditorSection, TunnelFormValues } from './tunnel-form'
 import type { ConfirmAction } from './ui'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -720,6 +721,7 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
   const [pending, setPending] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [confirmation, setConfirmation] = useState<ConfirmAction>()
+  const [nodes, setNodes] = useState<NodeSummary[]>([])
   const loaded = useRef(false)
   const requestId = useRef(0)
   const { notify } = useFeedback()
@@ -728,10 +730,12 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
     loaded.current ? setRefreshing(true) : setLoading(true)
     try {
       const body = await apiJson<{ client: ClientView, tunnels: TunnelView[] }>(`/api/clients/${encodeURIComponent(id)}`)
+      const nodeBody = await apiJson<{ nodes: NodeSummary[] }>('/api/nodes')
       if (currentRequest !== requestId.current)
         return
       setClient(body.client)
       setTunnels(body.tunnels)
+      setNodes(nodeBody.nodes)
       setError('')
       loaded.current = true
     }
@@ -793,6 +797,18 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
   const imported = (): void => {
     setImporting(false)
     void load()
+  }
+  const assignNode = async (nodeId: string): Promise<void> => {
+    await run('assignment', 'Client Node assignment saved', async () => {
+      await apiJson(`/api/clients/${encodeURIComponent(id)}/node-assignment`, jsonRequest('PUT', { nodeId }))
+      await load()
+    })
+  }
+  const cancelAssignment = async (): Promise<void> => {
+    await run('assignment', 'Pending Node assignment cancelled', async () => {
+      await apiJson(`/api/clients/${encodeURIComponent(id)}/node-assignment/pending`, { method: 'DELETE' })
+      await load()
+    })
   }
   return (
     <>
@@ -857,6 +873,71 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                           <strong>{client.owner.username}</strong>
                         </div>
                       )}
+                    </div>
+                    <div className="client-assignment">
+                      <div className="summary-fact">
+                        <span>Current Node</span>
+                        <strong>{nodes.find(node => node.id === client.assignment.nodeId)?.name ?? client.assignment.nodeId}</strong>
+                      </div>
+                      <div className="summary-fact">
+                        <span>Pending Node</span>
+                        <strong>{client.assignment.pendingNodeId ? nodes.find(node => node.id === client.assignment.pendingNodeId)?.name ?? client.assignment.pendingNodeId : 'None'}</strong>
+                      </div>
+                      {client.assignment.pendingNodeId && client.assignment.pendingNode && !client.assignment.pendingNode.selectability.selectable && (
+                        <div className="summary-fact">
+                          <span>Pending target</span>
+                          <Status value={client.assignment.pendingNode.selectability.reason ?? 'unavailable'} />
+                        </div>
+                      )}
+                      <div className="summary-fact">
+                        <span>Client applied Node</span>
+                        <strong>{client.assignment.appliedNodeId ? nodes.find(node => node.id === client.assignment.appliedNodeId)?.name ?? client.assignment.appliedNodeId : 'Not yet reported'}</strong>
+                      </div>
+                      <div className="summary-fact">
+                        <span>Target application</span>
+                        <Status value={client.assignment.appliedNodeId === client.assignment.nodeId && client.lastAppliedRevision === client.desiredRevision ? 'applied' : 'pending'} />
+                      </div>
+                      <div className="summary-fact">
+                        <span>FRPC connection</span>
+                        <Status value={client.frpc.connection} />
+                      </div>
+                      <div className="summary-fact">
+                        <span>Proxy observation</span>
+                        <strong>
+                          {client.frpc.proxies.length}
+                          {' '}
+                          observed
+                        </strong>
+                      </div>
+                      {tunnels.some(tunnel => tunnel.protocol === 'http') && (
+                        <div className="client-assignment-dns">
+                          <span>HTTP DNS target</span>
+                          <strong className="mono">{client.assignment.node?.httpIngressAddress?.host ?? 'No HTTP ingress address set'}</strong>
+                          {client.assignment.pendingNodeId && (
+                            <small>
+                              Pending target:
+                              {' '}
+                              {client.assignment.pendingNode?.httpIngressAddress?.host ?? 'No HTTP ingress address set'}
+                            </small>
+                          )}
+                        </div>
+                      )}
+                      <div className="client-assignment-actions">
+                        <label>
+                          <span>Choose Node</span>
+                          <select value={client.assignment.pendingNodeId ?? client.assignment.nodeId} disabled={pending.has('assignment')} onChange={event => void assignNode(event.target.value)} aria-label="Choose Client Node">
+                            {nodes.map(node => (
+                              <option key={node.id} value={node.id} disabled={!node.selectability.selectable && node.id !== client.assignment.nodeId}>
+                                {node.name}
+                                {' ('}
+                                {node.selectability.selectable ? 'available' : node.selectability.reason ?? 'unavailable'}
+                                )
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        {client.assignment.pendingNodeId && <button type="button" disabled={pending.has('assignment')} onClick={() => void cancelAssignment()}>Cancel pending switch</button>}
+                      </div>
                     </div>
                   </section>
                 )}

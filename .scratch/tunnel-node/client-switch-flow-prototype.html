@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client 跨 Node 切换草模</title>
+  <style>
+    :root { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #203443; background: #f4f7f9; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 26px; }
+    main { max-width: 1080px; margin: auto; }
+    h1 { margin: 0 0 7px; font-size: 26px; }
+    h2 { font-size: 17px; margin: 0 0 12px; }
+    p { line-height: 1.55; }
+    .intro { max-width: 780px; color: #526674; }
+    .notice { padding: 12px 15px; background: #e7f0f4; border-radius: 9px; margin-bottom: 18px; }
+    .layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(270px, 1fr); gap: 18px; }
+    .panel { background: white; border: 1px solid #dce5e9; border-radius: 11px; padding: 17px; margin-bottom: 18px; }
+    .result { background: #ebf5f2; border-left: 4px solid #117c70; padding: 12px; min-height: 46px; border-radius: 5px; }
+    .result.error { background: #fff0ec; border-color: #bd5b3a; }
+    .state { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+    dl { display: grid; grid-template-columns: 160px 1fr; gap: 8px 12px; margin: 0; font-size: 14px; }
+    dt { color: #59707d; }
+    dd { margin: 0; font-weight: 550; word-break: break-word; }
+    .buttons, .tabs { display: flex; gap: 7px; flex-wrap: wrap; }
+    button { border: 1px solid #b8cbd2; background: white; border-radius: 8px; padding: 8px 10px; cursor: pointer; color: #203443; text-align: left; }
+    button:hover { background: #e9f3f4; }
+    button:disabled { opacity: .45; cursor: default; }
+    .primary { background: #117c70; border-color: #117c70; color: white; }
+    .tabs button[aria-selected="true"] { background: #d7eee8; border-color: #117c70; }
+    ol { padding-left: 21px; }
+    li { margin-bottom: 7px; }
+    .small { font-size: 13px; color: #667d88; }
+    @media (max-width: 800px) { body { padding: 15px; } .layout, .state { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Client 跨 Node 切换草模</h1>
+  <p class="intro">这张一次性草模回答：Server 已把 Client 分配到新 Node 后，消息丢失、目标登录失败或同 Node 配置失败时，归属、本地 FRPC 和实际连接状态应如何分别变化？</p>
+  <div class="notice">所有状态只保存在浏览器内存中，刷新即重置。按钮模拟协议与数据库提交，不连接真实 Server、Node 或 FRPC。</div>
+  <div class="layout">
+    <section>
+      <div class="panel"><h2>这一步发生了什么</h2><div class="result" id="result">选择右侧场景，再依次点击步骤。</div></div>
+      <div class="state">
+        <div class="panel"><h2>主 Server</h2><dl id="server-state"></dl></div>
+        <div class="panel"><h2>官方 Client</h2><dl id="client-state"></dl></div>
+      </div>
+      <div class="panel"><h2>自由操作</h2><div class="buttons" id="actions"></div></div>
+    </section>
+    <aside>
+      <div class="panel">
+        <h2>逐步体验</h2>
+        <div class="tabs" id="tabs"></div>
+        <p id="description"></p>
+        <button class="primary" id="reset">重置当前场景</button>
+        <ol id="steps"></ol>
+      </div>
+      <div class="panel small">初始状态：Client 归香港以外的本地 Node A，FRPC 已连接 A；远端 Node B 可用。Server 的控制连接与 FRPC 数据连接分开。</div>
+    </aside>
+  </div>
+</main>
+<script>
+  // 纯状态转移；页面只调用 transition，不修改其内部状态。
+  const model = (() => {
+    const initial = () => ({
+      server: { assigned: "A", pending: null, revision: 1, nodeB: "运行中", delivery: null },
+      client: { control: "在线", highestAccepted: "A@1", lastGood: "A@1", frpc: "A", localApply: "A@1 成功", data: "A 已连接，代理已注册" }
+    });
+    const copy = value => structuredClone(value);
+    const success = (state, message) => ({ state, ok: true, message });
+    const fail = (state, message) => ({ state, ok: false, message });
+    const offer = state => ({ node: state.server.assigned, revision: state.server.revision });
+    function switchToB(state) {
+      if (state.server.nodeB !== "运行中") return fail(state, "目标 B 不可用，Server 拒绝切换；仍归 A");
+      const next = copy(state);
+      next.server.assigned = "B";
+      next.server.pending = null;
+      next.server.revision++;
+      next.server.delivery = offer(next);
+      return success(next, "Server 已提交归属 B 和新版本；Client 是否收到还要继续观察");
+    }
+    function transition(state, action) {
+      if (action === "switch-b") {
+        if (state.client.control === "离线") {
+          const next = copy(state); next.server.pending = "B";
+          return success(next, "Client 离线：Server 只记录待切换 B，当前归属仍 A");
+        }
+        return switchToB(state);
+      }
+      if (action === "disconnect") {
+        const next = copy(state); next.client.control = "离线";
+        return success(next, "控制连接断开；运行中的旧 FRPC 暂时继续运行");
+      }
+      if (action === "b-down" || action === "b-up") {
+        const next = copy(state); next.server.nodeB = action === "b-up" ? "运行中" : "离线";
+        return success(next, `Node B 已标为${next.server.nodeB}`);
+      }
+      if (action === "reconnect") {
+        const next = copy(state); next.client.control = "在线";
+        if (next.server.pending && next.server.nodeB === "运行中") return switchToB(next);
+        next.server.delivery = offer(next);
+        return success(next, next.server.pending ? "B 仍离线；welcome 给当前 A，待切换继续保留" : "welcome 带最新完整配置，准备交给 Client");
+      }
+      if (action === "retry-pending") {
+        if (!state.server.pending || state.client.control !== "在线") return fail(state, "没有可执行的在线待切换");
+        return switchToB(state);
+      }
+      if (action === "drop-notice") {
+        const next = copy(state); next.server.delivery = null;
+        return success(next, "在线通知丢失；Server 已归 B，Client 仍运行旧 A，面板应显示两者不一致");
+      }
+      if (action === "deliver") {
+        if (!state.server.delivery || state.client.control !== "在线") return fail(state, "当前没有可送达的完整配置");
+        const next = copy(state);
+        const target = next.server.delivery;
+        next.client.highestAccepted = `${target.node}@${target.revision}`;
+        if (next.client.frpc !== null && next.client.frpc !== target.node) {
+          next.client.frpc = null;
+          next.client.data = "旧 FRPC 已停，新 Node 尚未连接";
+        }
+        next.client.localApply = `${target.node}@${target.revision} 待应用`;
+        next.server.delivery = null;
+        return success(next, target.node === "B" ? "Client 已记录 B 目标并停止旧 A；此后失败也不能恢复 A" : "Client 已收到同 Node 的新配置；验证时旧 A 可继续运行");
+      }
+      if (action === "apply-success") {
+        if (!state.client.localApply.endsWith("待应用")) return fail(state, "Client 没有待应用的新配置");
+        const next = copy(state);
+        const node = next.client.highestAccepted[0];
+        next.client.lastGood = next.client.highestAccepted;
+        next.client.frpc = node;
+        next.client.localApply = `${next.client.highestAccepted} 成功`;
+        next.client.data = `${node} FRPC 已启动；连接与代理状态未知`;
+        return success(next, "本地应用已成功，但这还不能证明 FRPC 登录或代理注册成功");
+      }
+      if (action === "b-start-fails") {
+        if (!state.client.localApply.startsWith("B@") || !state.client.localApply.endsWith("待应用")) return fail(state, "没有待应用的 B 配置");
+        const next = copy(state);
+        next.client.frpc = null;
+        next.client.localApply = `${next.client.highestAccepted} 启动失败`;
+        next.client.data = "B 未连接；A 不重启";
+        return success(next, "Client 报告 B 启动失败，仍固定 B；旧 A 的缓存只供诊断，不会恢复运行");
+      }
+      if (action === "b-login-fails") {
+        if (state.client.frpc !== "B") return fail(state, "B FRPC 尚未启动");
+        const next = copy(state); next.client.data = "B 登录失败；代理未注册";
+        return success(next, "B 的本地应用保持成功，但数据连接失败；Client 只重试 B");
+      }
+      if (action === "b-login-ok") {
+        if (state.client.frpc !== "B") return fail(state, "B FRPC 尚未启动");
+        const next = copy(state); next.client.data = "B 已连接，代理已注册";
+        return success(next, "可靠状态确认 B 代理已注册；这时才能显示数据面可用");
+      }
+      if (action === "change-a") {
+        if (state.server.assigned !== "A") return fail(state, "当前不归 A，不能演示同 Node 修改");
+        const next = copy(state);
+        next.server.revision++;
+        next.server.delivery = offer(next);
+        return success(next, "Server 在 A 上修改 Tunnel 并提交新版本，Node 归属不变");
+      }
+      if (action === "a-verify-fails") {
+        if (!state.client.localApply.startsWith("A@") || !state.client.localApply.endsWith("待应用")) return fail(state, "没有待验证的 A 新配置");
+        const next = copy(state);
+        next.client.localApply = `${next.client.highestAccepted} 验证失败`;
+        next.client.data = "旧 A FRPC 继续运行";
+        return success(next, "同 Node 新配置失败，旧 A@1 保持运行；新版本失败单独报告");
+      }
+      if (action === "cold-restart") {
+        const next = copy(state);
+        next.client.control = "离线";
+        next.client.frpc = null;
+        next.client.data = "等待认证 welcome；缓存不冷启动 FRPC";
+        return success(next, "Client 进程重新启动；先认证 Server 并收到 welcome，再决定运行哪份 FRPC");
+      }
+      return fail(state, "未知操作");
+    }
+    return { initial, transition };
+  })();
+
+  const actions = [
+    ["switch-b", "请求切换到 B"], ["deliver", "送达完整配置"], ["apply-success", "本地配置应用成功"],
+    ["b-start-fails", "B 的 FRPC 启动失败"], ["b-login-fails", "B 首次登录失败"], ["b-login-ok", "B 代理注册成功"],
+    ["disconnect", "断开控制连接"], ["reconnect", "Client 重连并取得 welcome"], ["drop-notice", "丢失在线通知"],
+    ["b-down", "B 暂时离线"], ["b-up", "B 恢复运行"], ["retry-pending", "重试待切换"],
+    ["change-a", "同 Node 修改 Tunnel"], ["a-verify-fails", "A 新配置验证失败"], ["cold-restart", "Client 进程冷启动"]
+  ];
+  const scenarios = [
+    { title: "在线切换", description: "Server 先提交新归属；Client 收到后停旧 FRPC，本地成功和代理真正注册分开确认。", steps: ["switch-b", "deliver", "apply-success", "b-login-ok"] },
+    { title: "离线待切换", description: "Client 离线时只保存待切换；重连时目标不可用则仍留旧 Node，目标恢复后才提交。", steps: ["disconnect", "switch-b", "b-down", "reconnect", "b-up", "retry-pending", "deliver", "apply-success"] },
+    { title: "首次登录失败", description: "新归属已经提交，即使首次 FRPC 登录失败，也只重试新 Node。", steps: ["switch-b", "deliver", "apply-success", "b-login-fails"] },
+    { title: "通知丢失", description: "Server 已提交，Client 还在旧 Node；重连后的 welcome 补齐最新完整配置。", steps: ["switch-b", "drop-notice", "reconnect", "deliver", "apply-success"] },
+    { title: "同 Node 失败", description: "Node 未变化，新配置验证失败时保留上一份可用 FRPC。", steps: ["change-a", "deliver", "a-verify-fails"] },
+    { title: "冷启动等待 Server", description: "进程重新启动后先等认证 Server 的 welcome，磁盘缓存本身不启动 FRPC。", steps: ["disconnect", "cold-restart", "reconnect", "deliver", "apply-success"] }
+  ];
+  let state = model.initial();
+  let selected = 0;
+  let nextStep = 0;
+  const byId = id => document.getElementById(id);
+  const esc = text => String(text).replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[character]));
+  const label = key => actions.find(([id]) => id === key)?.[1] ?? key;
+  function render() {
+    const s = state.server, c = state.client;
+    byId("server-state").innerHTML = `<dt>已提交归属</dt><dd>Node ${s.assigned}</dd><dt>待切换</dt><dd>${s.pending ? `Node ${s.pending}` : "无"}</dd><dt>期望版本</dt><dd>${s.revision}</dd><dt>Node B</dt><dd>${s.nodeB}</dd><dt>待发送</dt><dd>${s.delivery ? `${s.delivery.node}@${s.delivery.revision} 完整配置` : "无"}</dd>`;
+    byId("client-state").innerHTML = `<dt>控制连接</dt><dd>${c.control}</dd><dt>已接受目标</dt><dd>${esc(c.highestAccepted)}</dd><dt>最后成功配置</dt><dd>${esc(c.lastGood)}</dd><dt>正在运行的 FRPC</dt><dd>${c.frpc ?? "无"}</dd><dt>本地应用</dt><dd>${esc(c.localApply)}</dd><dt>数据连接 / 代理</dt><dd>${esc(c.data)}</dd>`;
+    byId("tabs").innerHTML = scenarios.map((scenario, index) => `<button data-tab="${index}" aria-selected="${index === selected}">${esc(scenario.title)}</button>`).join("");
+    byId("description").textContent = scenarios[selected].description;
+    byId("steps").innerHTML = scenarios[selected].steps.map((key, index) => `<li><button data-step="${index}" ${index === nextStep ? "" : "disabled"}>${esc(label(key))}</button></li>`).join("");
+  }
+  function dispatch(action) {
+    const outcome = model.transition(state, action);
+    state = outcome.state;
+    byId("result").textContent = outcome.message;
+    byId("result").classList.toggle("error", !outcome.ok);
+    render();
+  }
+  byId("actions").innerHTML = actions.map(([id, title]) => `<button data-action="${id}">${esc(title)}</button>`).join("");
+  byId("actions").addEventListener("click", event => { const action = event.target.closest("button")?.dataset.action; if (action) dispatch(action); });
+  byId("tabs").addEventListener("click", event => { const index = event.target.closest("button")?.dataset.tab; if (index !== undefined) { selected = Number(index); state = model.initial(); nextStep = 0; byId("result").textContent = "场景已重置。"; byId("result").classList.remove("error"); render(); } });
+  byId("reset").addEventListener("click", () => { state = model.initial(); nextStep = 0; byId("result").textContent = "场景已重置。"; byId("result").classList.remove("error"); render(); });
+  byId("steps").addEventListener("click", event => { const index = event.target.closest("button")?.dataset.step; if (Number(index) === nextStep) { const key = scenarios[selected].steps[nextStep]; nextStep++; dispatch(key); } });
+  render();
+</script>
+</body>
+</html>

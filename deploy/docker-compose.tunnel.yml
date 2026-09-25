@@ -1,14 +1,16 @@
 # Tunnel control plane and its managed frps data-plane process.
 #
-# Before starting, set YCY_TUNNEL_ADMIN_PASSWORD in the shell or an untracked
-# .env file, then run: docker compose -f docker-compose.tunnel.yml up -d
+# Before starting, set YCY_VERSION to one released tag and
+# YCY_TUNNEL_ADMIN_PASSWORD in the shell or an untracked .env file, then run:
+# docker compose -f docker-compose.tunnel.yml up -d
+# Use a new volume for this incompatible schema v3 deployment. Keep the old
+# tunnel-data volume untouched for any manual rollback to the old binary.
 # The control plane and the persistent volume contain recoverable client tokens,
 # so restrict access to this host and back up the volume as sensitive data.
 services:
   tunnel:
-    # Set YCY_VERSION to a released image tag to pin upgrades; omitting it uses
-    # the latest image tag. The image is server-only: tunnel clients run natively.
-    image: ghcr.io/hackycy/hackycy-cli:${YCY_VERSION:-latest}
+    # Set the same precise release tag on the Server and every Remote Node.
+    image: ghcr.io/hackycy/hackycy-cli:${YCY_VERSION:?pin-one-release}
     # ycy and its single frps child stay in the foreground. Docker owns restart
     # behavior; "unless-stopped" also brings the server back after host reboot.
     restart: unless-stopped
@@ -30,9 +32,8 @@ services:
       # in an untracked .env file or the invoking shell, never in this file.
       YCY_TUNNEL_ADMIN_PASSWORD: '${YCY_TUNNEL_ADMIN_PASSWORD:?required}'
 
-      # Optional fixed token for ycy's single managed frps and all generated
-      # frpc configurations. This does not connect to an external frps; stop any
-      # old standalone frps first. Otherwise ycy generates and persists one.
+      # Optional fixed Token for the Local Node only. Remote Nodes each receive
+      # an independent Token from the Server after claim.
       # Uncomment together with a value in an untracked .env.
       # YCY_TUNNEL_FRP_TOKEN: '${YCY_TUNNEL_FRP_TOKEN:?set when uncommented}'
 
@@ -74,10 +75,9 @@ services:
       # seven idle days by default and survive restarts while this volume stays.
       # YCY_TUNNEL_SESSION_IDLE_DAYS: 7
     volumes:
-      # Retain this volume when upgrading. It preserves the database, internal
-      # FRP token, and durable account sessions across replacement. Removing it
-      # creates a new control plane and invalidates its enrollment and sessions.
-      - tunnel-data:/data
+      # New, private Server volume holds schema v3, sessions and the Controller
+      # identity file. Never mount an old v1/v2 volume here or share it with a Node.
+      - tunnel-server-v3:/data
     ports:
       # Native frpc data-plane connections. Publish directly and allow it through
       # the host firewall; changing its container port must match FRP_PORT above.
@@ -98,5 +98,5 @@ services:
       - '20000-20100:20000-20100/udp'
 
 volumes:
-  # Docker-managed persistent storage mounted at /data by the tunnel service.
-  tunnel-data:
+  # New Server state; retain it across container replacement.
+  tunnel-server-v3:

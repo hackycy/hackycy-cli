@@ -32,7 +32,7 @@ type ServerAgentProtocolError struct {
 
 func (err *ServerAgentProtocolError) Error() string { return err.Message }
 
-// AcceptHello validates and records the first v4 message on an accepted
+// AcceptHello validates and records the first v5 message on an accepted
 // connection before any active protocol frame can be handled.
 func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source []byte) *ServerAgentProtocolError {
 	if connection == nil || connection.gateway == nil {
@@ -46,9 +46,6 @@ func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source
 	hello, protocolError := decodeServerAgentHello(source)
 	if protocolError != nil {
 		return protocolError
-	}
-	if connection.gateway.frps.FRPSState().State != tunnelruntime.FRPProcessRunning {
-		return &ServerAgentProtocolError{CloseCode: serverAgentCloseFRPSUnavailable, Message: "Managed frps is not running"}
 	}
 	if hello.TunnelProtocolVersion != tunnelruntime.TunnelProtocolVersion {
 		return &ServerAgentProtocolError{
@@ -70,7 +67,7 @@ func (connection *ServerAgentConnection) AcceptHello(ctx context.Context, source
 		}
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
 	}
-	if hello.LastAppliedRevision > client.DesiredRevision {
+	if hello.LastApplied.Revision > client.DesiredRevision {
 		return &ServerAgentProtocolError{
 			CloseCode: serverAgentCloseIncompatible,
 			Message:   "Client Applied Revision exceeds the control plane Desired Revision; inspect or upgrade the client",
@@ -145,6 +142,12 @@ func (connection *ServerAgentConnection) AcceptActiveMessage(ctx context.Context
 			return protocolError
 		}
 		return connection.recordProcessState(state)
+	case "frpc_status":
+		status, protocolError := decodeServerAgentFRPCStatusValue(value)
+		if protocolError != nil {
+			return protocolError
+		}
+		return connection.recordFRPCStatus(ctx, status)
 	case "restart_result":
 		result, protocolError := decodeServerAgentRestartResultValue(value, true)
 		if protocolError != nil {
@@ -166,8 +169,15 @@ func (connection *ServerAgentConnection) acceptedHello() bool {
 }
 
 func (connection *ServerAgentConnection) recordApplyResult(ctx context.Context, result tunnelruntime.ApplyResult) *ServerAgentProtocolError {
+	expected, err := connection.expectedRuntime(ctx)
+	if err != nil {
+		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	}
+	if result.Revision != expected.Revision || result.NodeID != expected.NodeID || result.Digest != expected.Digest {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Apply result does not match the current runtime"}
+	}
 	if result.Success {
-		if err := connection.gateway.controlPlane.RecordAppliedRevision(ctx, connection.clientID, result.Revision); err != nil {
+		if err := connection.gateway.controlPlane.RecordAppliedRevision(ctx, connection.clientID, result.Revision, result.NodeID); err != nil {
 			return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid Applied Revision"}
 		}
 		accepted, changed, recovered := connection.gateway.recordApplyResult(connection.clientID, connection.slot, result)
@@ -202,6 +212,13 @@ func (connection *ServerAgentConnection) recordApplyResult(ctx context.Context, 
 }
 
 func (connection *ServerAgentConnection) recordProcessState(state tunnelruntime.ProcessState) *ServerAgentProtocolError {
+	expected, err := connection.expectedRuntime(context.Background())
+	if err != nil {
+		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	}
+	if state.Revision != expected.Revision || state.NodeID != expected.NodeID || state.Digest != expected.Digest {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Process state does not match the current runtime"}
+	}
 	accepted, changed := connection.gateway.recordProcessStateWithChange(connection.clientID, connection.slot, state.State, state.Error)
 	if !accepted {
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseRevoked, Message: "Client Token revoked"}
@@ -213,9 +230,39 @@ func (connection *ServerAgentConnection) recordProcessState(state tunnelruntime.
 	return nil
 }
 
+func (connection *ServerAgentConnection) recordFRPCStatus(ctx context.Context, status tunnelruntime.FRPCStatus) *ServerAgentProtocolError {
+	expected, err := connection.expectedRuntime(ctx)
+	if err != nil {
+		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	}
+	if status.Revision != expected.Revision || status.NodeID != expected.NodeID || status.Digest != expected.Digest {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "FRPC status does not match the current runtime"}
+	}
+	if !connection.gateway.recordFRPCStatus(connection.clientID, connection.slot, status) {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseRevoked, Message: "Client Token revoked"}
+	}
+	connection.gateway.notifyAgentChange(connection.clientID)
+	return nil
+}
+
+func (connection *ServerAgentConnection) expectedRuntime(ctx context.Context) (tunnelruntime.ClientRuntime, error) {
+	if connection == nil || connection.gateway == nil || connection.gateway.welcomeSource == nil {
+		return tunnelruntime.ClientRuntime{}, errors.New("Tunnel server welcome configuration is unavailable")
+	}
+	connection.presentationMu.Lock()
+	requestHost := connection.presentationHost
+	connection.presentationMu.Unlock()
+	settings := connection.gateway.welcomeSource.AgentWelcomeSettings(requestHost)
+	return connection.gateway.controlPlane.BuildClientRuntime(ctx, connection.clientID, settings.AdvertisedFRPHost, settings.AdvertisedFRPPort, settings.InternalFRPToken)
+}
+
 // BuildWelcome composes the one successful hello response. The HTTP adapter
 // owns writing the frame, and later slices own subsequent server messages.
 func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, requestHost string) (tunnelruntime.AgentWelcome, *ServerAgentProtocolError) {
+	return connection.buildWelcome(ctx, requestHost, true)
+}
+
+func (connection *ServerAgentConnection) buildWelcome(ctx context.Context, requestHost string, applyPending bool) (tunnelruntime.AgentWelcome, *ServerAgentProtocolError) {
 	if connection == nil || connection.gateway == nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent session is unavailable"}
 	}
@@ -227,9 +274,6 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 	hello := connection.hello
 	welcomeSource := connection.gateway.welcomeSource
 	connection.helloMu.Unlock()
-	if connection.gateway.frps.FRPSState().State != tunnelruntime.FRPProcessRunning {
-		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseFRPSUnavailable, Message: "Managed frps is not running"}
-	}
 	if welcomeSource == nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server welcome configuration is unavailable"}
 	}
@@ -241,7 +285,14 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 	if err != nil {
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseIncompatible, Message: "Client platform is incompatible"}
 	}
-	snapshot, err := connection.gateway.controlPlane.Snapshot(ctx, connection.clientID)
+	if applyPending {
+		connection.gateway.tryPendingClientNode(ctx, connection.clientID)
+	}
+	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.clientID)
+	if err != nil {
+		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	}
+	runtime, err := connection.gateway.controlPlane.BuildClientRuntime(ctx, connection.clientID, settings.AdvertisedFRPHost, settings.AdvertisedFRPPort, settings.InternalFRPToken)
 	if err != nil {
 		var domainError *ServerDomainError
 		if errors.As(err, &domainError) && domainError.Code == "NOT_FOUND" {
@@ -249,19 +300,15 @@ func (connection *ServerAgentConnection) BuildWelcome(ctx context.Context, reque
 		}
 		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
 	}
-	client, err := connection.gateway.controlPlane.GetClient(ctx, connection.clientID)
-	if err != nil {
-		return tunnelruntime.AgentWelcome{}, &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server control plane is unavailable"}
+	if strings.TrimSpace(runtime.NodeID) == "" {
+		runtime.NodeID = "local"
 	}
 	return tunnelruntime.AgentWelcome{
 		Type:                     "welcome",
 		TunnelProtocolVersion:    tunnelruntime.TunnelProtocolVersion,
 		RequiredFRPVersion:       tunnelruntime.FRPVersion,
 		Artifact:                 artifact.Description,
-		AdvertisedFRPHost:        settings.AdvertisedFRPHost,
-		AdvertisedFRPPort:        settings.AdvertisedFRPPort,
-		InternalFRPToken:         settings.InternalFRPToken,
-		Snapshot:                 snapshot,
+		Runtime:                  runtime,
 		DesiredRestartGeneration: client.DesiredRestartGeneration,
 	}, nil
 }
@@ -272,12 +319,19 @@ func (connection *ServerAgentConnection) PresentWelcome(ctx context.Context, req
 	if connection == nil || connection.gateway == nil || writeFrame == nil {
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent presentation is unavailable"}
 	}
+	connection.helloMu.Lock()
+	helloAccepted := connection.helloAccepted
+	connection.helloMu.Unlock()
+	if !helloAccepted {
+		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
+	}
+	connection.gateway.tryPendingClientNode(ctx, connection.clientID)
 	connection.presentationMu.Lock()
 	defer connection.presentationMu.Unlock()
 	if connection.closed {
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent session is unavailable"}
 	}
-	welcome, protocolError := connection.BuildWelcome(ctx, requestHost)
+	welcome, protocolError := connection.buildWelcome(ctx, requestHost, false)
 	if protocolError != nil {
 		return protocolError
 	}
@@ -285,6 +339,7 @@ func (connection *ServerAgentConnection) PresentWelcome(ctx context.Context, req
 		return &ServerAgentProtocolError{CloseCode: 1011, Message: "Tunnel server agent presentation is unavailable"}
 	}
 	connection.writeFrame = writeFrame
+	connection.presentationHost = requestHost
 	connection.presentationActive = true
 	return nil
 }
@@ -300,18 +355,24 @@ func (connection *ServerAgentConnection) PresentDesiredState() {
 	if connection.closed || !connection.presentationActive || connection.writeFrame == nil {
 		return
 	}
-	snapshot, err := connection.gateway.controlPlane.Snapshot(context.Background(), connection.clientID)
+	client, err := connection.gateway.controlPlane.GetClient(context.Background(), connection.clientID)
 	if err != nil {
 		return
 	}
-	client, err := connection.gateway.controlPlane.GetClient(context.Background(), connection.clientID)
+	welcomeSource := connection.gateway.welcomeSource
+	if welcomeSource == nil {
+		return
+	}
+	connection.presentationHost = strings.TrimSpace(connection.presentationHost)
+	settings := welcomeSource.AgentWelcomeSettings(connection.presentationHost)
+	runtime, err := connection.gateway.controlPlane.BuildClientRuntime(context.Background(), connection.clientID, settings.AdvertisedFRPHost, settings.AdvertisedFRPPort, settings.InternalFRPToken)
 	if err != nil {
 		return
 	}
 	_ = connection.writeFrame(tunnelruntime.DesiredState{
 		Type:                     "desired_state",
 		TunnelProtocolVersion:    tunnelruntime.TunnelProtocolVersion,
-		Snapshot:                 snapshot,
+		Runtime:                  runtime,
 		DesiredRestartGeneration: client.DesiredRestartGeneration,
 	})
 }
@@ -354,8 +415,15 @@ func decodeServerAgentHello(source []byte) (tunnelruntime.AgentHello, *ServerAge
 	platform, validPlatform := serverAgentHelloString(value, "platform")
 	architecture, validArchitecture := serverAgentHelloString(value, "architecture")
 	protocolVersion, validProtocolVersion := serverAgentSafeInteger(value["tunnelProtocolVersion"])
-	lastAppliedRevision, validRevision := serverAgentSafeInteger(value["lastAppliedRevision"])
-	if !validType || messageType != "hello" || !validVersion || !validPlatform || !validArchitecture || !validProtocolVersion || !validRevision || lastAppliedRevision < 0 || protocolVersion != int64(int(protocolVersion)) {
+	if !validType || messageType != "hello" || !validVersion || !validPlatform || !validArchitecture || !validProtocolVersion || protocolVersion != int64(int(protocolVersion)) {
+		return tunnelruntime.AgentHello{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
+	}
+	if protocolVersion != tunnelruntime.TunnelProtocolVersion {
+		return tunnelruntime.AgentHello{TunnelProtocolVersion: int(protocolVersion)}, nil
+	}
+	lastAccepted, validAccepted := decodeServerAgentRuntimeReference(value["lastAccepted"])
+	lastApplied, validApplied := decodeServerAgentRuntimeReference(value["lastApplied"])
+	if !validAccepted || !validApplied {
 		return tunnelruntime.AgentHello{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "A valid hello message is required"}
 	}
 	var lastRestartResult *tunnelruntime.RestartResult
@@ -376,9 +444,24 @@ func decodeServerAgentHello(source []byte) (tunnelruntime.AgentHello, *ServerAge
 		YCYVersion:            ycyVersion,
 		Platform:              platform,
 		Architecture:          architecture,
-		LastAppliedRevision:   lastAppliedRevision,
+		LastAccepted:          lastAccepted,
+		LastApplied:           lastApplied,
 		LastRestartResult:     lastRestartResult,
 	}, nil
+}
+
+func decodeServerAgentRuntimeReference(value any) (tunnelruntime.ClientRuntimeReference, bool) {
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return tunnelruntime.ClientRuntimeReference{}, false
+	}
+	revision, validRevision := serverAgentSafeInteger(fields["revision"])
+	nodeID, validNodeID := fields["nodeId"].(string)
+	digest, validDigest := fields["digest"].(string)
+	if !validRevision || revision < 0 || !validNodeID || !validDigest {
+		return tunnelruntime.ClientRuntimeReference{}, false
+	}
+	return tunnelruntime.ClientRuntimeReference{Revision: revision, NodeID: nodeID, Digest: digest}, true
 }
 
 func decodeServerAgentRestartResultValue(value map[string]any, active bool) (tunnelruntime.RestartResult, *ServerAgentProtocolError) {
@@ -428,8 +511,10 @@ func decodeServerAgentApplyResult(source []byte) (tunnelruntime.ApplyResult, *Se
 
 func decodeServerAgentApplyResultValue(value map[string]any) (tunnelruntime.ApplyResult, *ServerAgentProtocolError) {
 	revision, validRevision := serverAgentSafeInteger(value["revision"])
+	nodeID, validNodeID := value["nodeId"].(string)
+	digest, validDigest := value["digest"].(string)
 	success, validSuccess := value["success"].(bool)
-	if !validRevision || revision < 0 || !validSuccess {
+	if !validRevision || revision < 0 || !validNodeID || strings.TrimSpace(nodeID) == "" || !validDigest || strings.TrimSpace(digest) == "" || !validSuccess {
 		return tunnelruntime.ApplyResult{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid apply result"}
 	}
 	lastError, validError := decodeServerAgentStructuredRuntimeError(value)
@@ -440,6 +525,8 @@ func decodeServerAgentApplyResultValue(value map[string]any) (tunnelruntime.Appl
 		Type:                  "apply_result",
 		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
 		Revision:              revision,
+		NodeID:                nodeID,
+		Digest:                digest,
 		Success:               success,
 		Error:                 lastError,
 	}, nil
@@ -457,8 +544,11 @@ func decodeServerAgentProcessState(source []byte) (tunnelruntime.ProcessState, *
 }
 
 func decodeServerAgentProcessStateValue(value map[string]any) (tunnelruntime.ProcessState, *ServerAgentProtocolError) {
+	revision, validRevision := serverAgentSafeInteger(value["revision"])
+	nodeID, validNodeID := value["nodeId"].(string)
+	digest, validDigest := value["digest"].(string)
 	state, validState := value["state"].(string)
-	if !validState || (state != string(tunnelruntime.FRPProcessStopped) && state != string(tunnelruntime.FRPProcessRunning) && state != string(tunnelruntime.FRPProcessRecovering) && state != string(tunnelruntime.FRPProcessConfigurationFailed)) {
+	if !validRevision || revision < 0 || !validNodeID || strings.TrimSpace(nodeID) == "" || !validDigest || strings.TrimSpace(digest) == "" || !validState || (state != string(tunnelruntime.FRPProcessStopped) && state != string(tunnelruntime.FRPProcessRunning) && state != string(tunnelruntime.FRPProcessRecovering) && state != string(tunnelruntime.FRPProcessConfigurationFailed)) {
 		return tunnelruntime.ProcessState{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid process state"}
 	}
 	lastError, validError := decodeServerAgentStructuredRuntimeError(value)
@@ -468,8 +558,67 @@ func decodeServerAgentProcessStateValue(value map[string]any) (tunnelruntime.Pro
 	return tunnelruntime.ProcessState{
 		Type:                  "process_state",
 		TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
+		Revision:              revision,
+		NodeID:                nodeID,
+		Digest:                digest,
 		State:                 tunnelruntime.FRPProcessState(state),
 		Error:                 lastError,
+	}, nil
+}
+
+func decodeServerAgentFRPCStatusValue(value map[string]any) (tunnelruntime.FRPCStatus, *ServerAgentProtocolError) {
+	revision, validRevision := serverAgentSafeInteger(value["revision"])
+	nodeID, validNodeID := value["nodeId"].(string)
+	digest, validDigest := value["digest"].(string)
+	generation, validGeneration := value["processGeneration"].(string)
+	process, validProcess := value["process"].(string)
+	connection, validConnection := value["connection"].(string)
+	if !validRevision || revision < 0 || !validNodeID || strings.TrimSpace(nodeID) == "" || !validDigest || strings.TrimSpace(digest) == "" || !validGeneration || !validProcess || !validConnection {
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	switch tunnelruntime.FRPProcessState(process) {
+	case tunnelruntime.FRPProcessRunning, tunnelruntime.FRPProcessStopped, tunnelruntime.FRPProcessRecovering, tunnelruntime.FRPProcessConfigurationFailed:
+	default:
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	if process == string(tunnelruntime.FRPProcessRunning) && generation == "" {
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	switch connection {
+	case "connected", "disconnected", "unknown", "not_required":
+	default:
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	rawProxies, validProxies := value["proxies"].([]any)
+	if !validProxies {
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	proxies := make([]tunnelruntime.ProxyState, 0, len(rawProxies))
+	registered := false
+	for _, raw := range rawProxies {
+		fields, valid := raw.(map[string]any)
+		if !valid {
+			return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+		}
+		tunnelID, validID := fields["tunnelId"].(string)
+		state, validState := fields["state"].(string)
+		if !validID || tunnelID == "" || !validState || (state != "registered" && state != "failed" && state != "unknown") {
+			return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+		}
+		errorCode, _ := fields["errorCode"].(string)
+		proxies = append(proxies, tunnelruntime.ProxyState{TunnelID: tunnelID, State: state, ErrorCode: errorCode})
+		registered = registered || state == "registered"
+	}
+	if connection == "connected" && (process != string(tunnelruntime.FRPProcessRunning) || !registered) {
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	lastError, validError := decodeServerAgentStructuredRuntimeError(value)
+	if !validError {
+		return tunnelruntime.FRPCStatus{}, &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "Invalid FRPC status"}
+	}
+	return tunnelruntime.FRPCStatus{Type: "frpc_status", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion,
+		Revision: revision, NodeID: nodeID, Digest: digest, ProcessGeneration: generation,
+		Process: tunnelruntime.FRPProcessState(process), Connection: connection, Proxies: proxies, Error: lastError,
 	}, nil
 }
 

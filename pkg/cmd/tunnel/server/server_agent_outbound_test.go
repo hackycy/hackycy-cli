@@ -49,15 +49,15 @@ func TestServerAgentOutboundCoalescesDesiredSnapshotsAndPrioritizesRevoke(t *tes
 	writer := &serverAgentFrameWriterStub{started: make(chan struct{}), release: make(chan struct{})}
 	outbound := newServerAgentOutbound(writer, nil)
 	t.Cleanup(outbound.Close)
-	first := tunnelruntime.DesiredState{Snapshot: tunnelruntime.TunnelSnapshot{Revision: 1}, DesiredRestartGeneration: 1}
+	first := tunnelruntime.DesiredState{Runtime: tunnelruntime.ClientRuntime{Revision: 1}, DesiredRestartGeneration: 1}
 	outbound.Write(first)
 	select {
 	case <-writer.started:
 	case <-time.After(time.Second):
 		t.Fatal("first desired write did not start")
 	}
-	outbound.Write(tunnelruntime.DesiredState{Snapshot: tunnelruntime.TunnelSnapshot{Revision: 2}, DesiredRestartGeneration: 1})
-	outbound.Write(tunnelruntime.DesiredState{Snapshot: tunnelruntime.TunnelSnapshot{Revision: 2}, DesiredRestartGeneration: 3})
+	outbound.Write(tunnelruntime.DesiredState{Runtime: tunnelruntime.ClientRuntime{Revision: 2}, DesiredRestartGeneration: 1})
+	outbound.Write(tunnelruntime.DesiredState{Runtime: tunnelruntime.ClientRuntime{Revision: 2}, DesiredRestartGeneration: 3})
 	revokeDone := make(chan error, 1)
 	go func() {
 		revokeDone <- outbound.Write(tunnelruntime.Revoke{Reason: "rotated"})
@@ -83,7 +83,7 @@ func TestServerAgentOutboundCoalescesDesiredSnapshotsAndPrioritizesRevoke(t *tes
 	if len(values) < 2 {
 		t.Fatalf("writes = %#v", values)
 	}
-	if desired, ok := values[0].(tunnelruntime.DesiredState); !ok || desired.Snapshot.Revision != 1 {
+	if desired, ok := values[0].(tunnelruntime.DesiredState); !ok || desired.Runtime.Revision != 1 {
 		t.Fatalf("first write = %#v", values[0])
 	}
 	if revoke, ok := values[1].(tunnelruntime.Revoke); !ok || revoke.Reason != "rotated" {
@@ -91,7 +91,7 @@ func TestServerAgentOutboundCoalescesDesiredSnapshotsAndPrioritizesRevoke(t *tes
 	}
 	if len(values) > 2 {
 		desired, ok := values[2].(tunnelruntime.DesiredState)
-		if !ok || desired.Snapshot.Revision != 2 || desired.DesiredRestartGeneration != 3 {
+		if !ok || desired.Runtime.Revision != 2 || desired.DesiredRestartGeneration != 3 {
 			t.Fatalf("coalesced desired write = %#v", values[2])
 		}
 	}

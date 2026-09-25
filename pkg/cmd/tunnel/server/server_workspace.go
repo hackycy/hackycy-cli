@@ -18,6 +18,7 @@ type ServerWorkspaceDependencies struct {
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
 	AgentChanges        ServerAgentChangeObserver
+	Nodes               *serverNodeService
 }
 
 // ServerFRPSAction is the closed control set exposed to an administrator.
@@ -77,6 +78,7 @@ type ServerWorkspace struct {
 	custom404PageWriter ServerFRPSCustom404PageWriter
 	frpsChanges         ServerFRPSChangeObserver
 	agentChanges        ServerAgentChangeObserver
+	nodes               *serverNodeService
 	token               string
 }
 
@@ -101,6 +103,7 @@ func OpenServerWorkspace(ctx context.Context, dependencies ServerWorkspaceDepend
 		custom404PageWriter: dependencies.Custom404PageWriter,
 		frpsChanges:         dependencies.FRPSChanges,
 		agentChanges:        dependencies.AgentChanges,
+		nodes:               dependencies.Nodes,
 		token:               token,
 	}
 	if _, err := workspace.currentAccount(ctx); err != nil {
@@ -181,9 +184,16 @@ func (workspace *ServerWorkspace) Observe(ctx context.Context, listener func(Ser
 			}
 		})
 	}
+	stopNodeChanges := func() {}
+	if workspace.nodes != nil {
+		stopNodeChanges = workspace.nodes.observations.subscribe(func() {
+			listener(ServerWorkspaceChanged)
+		})
+	}
 	var stopOnce sync.Once
 	return func() {
 		stopOnce.Do(func() {
+			stopNodeChanges()
 			stopAgentChanges()
 			stopFRPSChanges()
 			stopControlPlane()
@@ -213,6 +223,20 @@ func (workspace *ServerWorkspace) GetClient(ctx context.Context, clientID string
 		return workspace.controlPlane.GetClient(ctx, clientID)
 	}
 	return workspace.controlPlane.GetClientForOwner(ctx, clientID, account.ID)
+}
+
+func (workspace *ServerWorkspace) AssignClientNode(ctx context.Context, clientID, nodeID string, online, targetReady bool) (TrustedTunnelClient, error) {
+	if _, err := workspace.GetClient(ctx, clientID); err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	return workspace.controlPlane.AssignClientNode(ctx, clientID, nodeID, online, targetReady)
+}
+
+func (workspace *ServerWorkspace) CancelPendingClientNode(ctx context.Context, clientID string) (TrustedTunnelClient, error) {
+	if _, err := workspace.GetClient(ctx, clientID); err != nil {
+		return TrustedTunnelClient{}, err
+	}
+	return workspace.controlPlane.CancelPendingClientNode(ctx, clientID)
 }
 
 func (workspace *ServerWorkspace) CreateClient(ctx context.Context, remark string) (TrustedTunnelClient, error) {
@@ -410,4 +434,114 @@ func (workspace *ServerWorkspace) requireAdministrator(ctx context.Context) erro
 		return serverDomainError("FORBIDDEN", "Administrator role is required")
 	}
 	return nil
+}
+
+func (workspace *ServerWorkspace) PreviewNode(ctx context.Context, address string) (serverNodePreview, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return serverNodePreview{}, err
+	}
+	if workspace.nodes == nil {
+		return serverNodePreview{}, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.preview(ctx, workspace.token, address)
+}
+
+func (workspace *ServerWorkspace) RegisterNode(ctx context.Context, previewID, name, fingerprint, mode string) (serverNodeRecord, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return serverNodeRecord{}, err
+	}
+	if workspace.nodes == nil {
+		return serverNodeRecord{}, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.register(ctx, workspace.token, previewID, name, fingerprint, mode)
+}
+
+func (workspace *ServerWorkspace) PatchNode(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) (serverNodeRecord, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return serverNodeRecord{}, err
+	}
+	if workspace.nodes == nil {
+		return serverNodeRecord{}, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.patch(ctx, nodeID, patch)
+}
+
+func (workspace *ServerWorkspace) SaveNodeDesired(ctx context.Context, nodeID string, expectedRevision int64, settings serverNodeSettings) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.saveDesired(ctx, nodeID, expectedRevision, settings)
+}
+
+func (workspace *ServerWorkspace) ReapplyNode(ctx context.Context, nodeID string) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.reapply(ctx, nodeID)
+}
+
+func (workspace *ServerWorkspace) RotateNodeToken(ctx context.Context, nodeID string, expectedRevision int64) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.rotateToken(ctx, nodeID, expectedRevision)
+}
+
+func (workspace *ServerWorkspace) RemoveNode(ctx context.Context, nodeID string) (int64, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return 0, err
+	}
+	if workspace.nodes == nil {
+		return 0, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.requestRemoval(ctx, nodeID)
+}
+
+func (workspace *ServerWorkspace) ForceForgetNode(ctx context.Context, nodeID string) error {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return err
+	}
+	if workspace.nodes == nil {
+		return serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.forceForget(ctx, nodeID)
+}
+
+func (workspace *ServerWorkspace) ListNodes(ctx context.Context) ([]serverNodeSummary, error) {
+	if _, err := workspace.currentAccount(ctx); err != nil {
+		return nil, err
+	}
+	if workspace.nodes == nil {
+		return nil, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.listSummaries(ctx)
+}
+
+func (workspace *ServerWorkspace) GetNode(ctx context.Context, nodeID string) (serverNodeSummary, error) {
+	if _, err := workspace.currentAccount(ctx); err != nil {
+		return serverNodeSummary{}, err
+	}
+	if workspace.nodes == nil {
+		return serverNodeSummary{}, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.summary(ctx, nodeID)
+}
+
+func (workspace *ServerWorkspace) GetNodeManagement(ctx context.Context, nodeID string) (serverNodeManagementView, error) {
+	if err := workspace.requireAdministrator(ctx); err != nil {
+		return serverNodeManagementView{}, err
+	}
+	if workspace.nodes == nil {
+		return serverNodeManagementView{}, serverDomainError("NODE_UNREACHABLE", "Node management is unavailable")
+	}
+	return workspace.nodes.managementView(ctx, nodeID)
 }

@@ -22,13 +22,20 @@ type FRPServerConfiguration struct {
 	LogLevel         string
 }
 
-// FRPClientConfiguration contains one authenticated v4 snapshot for frpc.
+// FRPClientConfiguration contains one authenticated v5 snapshot for frpc.
 type FRPClientConfiguration struct {
 	AdvertisedFRPHost string
 	AdvertisedFRPPort int64
 	InternalFRPToken  string
 	Snapshot          TunnelSnapshot
 	LogLevel          string
+	WebServer         *FRPClientWebServer
+}
+
+type FRPClientWebServer struct {
+	Port     int
+	User     string
+	Password string
 }
 
 type frpAuthenticationTOML struct {
@@ -107,6 +114,14 @@ type frpcTOML struct {
 	Auth          frpAuthenticationTOML `toml:"auth"`
 	Log           frpLogTOML            `toml:"log"`
 	Proxies       []frpProxyTOML        `toml:"proxies,omitempty"`
+	WebServer     *frpcWebServerTOML    `toml:"webServer,omitempty"`
+}
+
+type frpcWebServerTOML struct {
+	Addr     string `toml:"addr"`
+	Port     int    `toml:"port"`
+	User     string `toml:"user"`
+	Password string `toml:"password"`
 }
 
 // RenderFRPSConfig serializes only the selected server FRP fields.
@@ -146,6 +161,12 @@ func RenderFRPCConfig(configuration FRPClientConfiguration) (string, error) {
 		Log:           frpLogTOML{To: "console", Level: defaultFRPLogLevel(configuration.LogLevel)},
 		Proxies:       proxies,
 	}
+	if configuration.WebServer != nil {
+		if configuration.WebServer.Port < 1 || configuration.WebServer.Port > 65535 || configuration.WebServer.User == "" || configuration.WebServer.Password == "" {
+			return "", fmt.Errorf("%w: FRPC status web server is incomplete", ErrInvalidFRPConfiguration)
+		}
+		document.WebServer = &frpcWebServerTOML{Addr: "127.0.0.1", Port: configuration.WebServer.Port, User: configuration.WebServer.User, Password: configuration.WebServer.Password}
+	}
 	encoded, err := toml.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("marshal frpc TOML: %w", err)
@@ -155,7 +176,7 @@ func RenderFRPCConfig(configuration FRPClientConfiguration) (string, error) {
 
 func buildFRPProxy(definition TunnelDefinition) (frpProxyTOML, error) {
 	proxy := frpProxyTOML{
-		Name: "t_" + frpIdentifier(definition.ID), Type: definition.Protocol,
+		Name: FRPProxyName(definition.ID), Type: definition.Protocol,
 		LocalIP: definition.LocalHost, LocalPort: definition.LocalPort,
 		Transport:   buildFRPTransport(definition.Options.Transport),
 		HealthCheck: buildFRPHealthCheck(definition.Options.HealthCheck),
@@ -190,6 +211,8 @@ func buildFRPProxy(definition TunnelDefinition) (frpProxyTOML, error) {
 		return frpProxyTOML{}, fmt.Errorf("%w: unsupported proxy type %q", ErrInvalidFRPConfiguration, definition.Protocol)
 	}
 }
+
+func FRPProxyName(tunnelID string) string { return "t_" + frpIdentifier(tunnelID) }
 
 func buildFRPTransport(options TunnelTransportOptions) *frpTransportTOML {
 	transport := &frpTransportTOML{

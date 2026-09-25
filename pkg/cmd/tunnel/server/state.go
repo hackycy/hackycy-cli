@@ -32,6 +32,11 @@ func OpenState(options StateOptions) (*State, error) {
 	if strings.TrimSpace(options.DataDirectory) == "" {
 		return nil, errors.New("tunnel state directory is required")
 	}
+	databasePath := filepath.Join(options.DataDirectory, "go-v1", databaseFileName)
+	storedPublicKey, err := inspectExistingDatabase(databasePath)
+	if err != nil {
+		return nil, err
+	}
 	sessions, err := filesession.Open(filesession.Options{
 		BaseDirectory: options.DataDirectory,
 		IdleLifetime:  options.SessionIdleLifetime,
@@ -39,8 +44,17 @@ func OpenState(options StateOptions) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open Tunnel sessions: %w", err)
 	}
-	databasePath := filepath.Join(sessions.Directory(), databaseFileName)
-	database, err := openDatabase(databasePath)
+	publicKey, err := loadControllerPublicKey(sessions.Directory(), storedPublicKey != "")
+	if err != nil {
+		_ = sessions.Close()
+		return nil, err
+	}
+	if storedPublicKey != "" && storedPublicKey != publicKey {
+		_ = sessions.Close()
+		return nil, fmt.Errorf("Tunnel Controller identity does not match database; restore the original identity file")
+	}
+	databasePath = filepath.Join(sessions.Directory(), databaseFileName)
+	database, err := openDatabase(databasePath, publicKey)
 	if err != nil {
 		_ = sessions.Close()
 		return nil, err

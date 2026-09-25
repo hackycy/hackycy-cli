@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"github.com/hackycy/hackycy-cli/pkg/cmd/tunnel/connect"
+	"github.com/hackycy/hackycy-cli/pkg/cmd/tunnel/node"
 	tunnelserver "github.com/hackycy/hackycy-cli/pkg/cmd/tunnel/server"
 	"github.com/hackycy/hackycy-cli/pkg/cmdutil"
 	"github.com/spf13/cobra"
@@ -23,6 +24,7 @@ func NewCmdTunnel(factory *cmdutil.Factory) *cobra.Command {
 	command.AddCommand(
 		tunnelserver.NewCmdServer(factory, nil),
 		connect.NewCmdConnect(factory, nil),
+		node.NewCmdNode(factory, nil),
 	)
 	return command
 }

@@ -54,6 +54,7 @@ type ServerHTTPOptions struct {
 	Custom404PageWriter ServerFRPSCustom404PageWriter
 	FRPSChanges         ServerFRPSChangeObserver
 	AgentGateway        *ServerAgentGateway
+	Nodes               *serverNodeService
 	ServerState         ServerHTTPStateProvider
 }
 
@@ -106,6 +107,7 @@ type ServerHTTPHandler struct {
 	frpsChanges         ServerFRPSChangeObserver
 	agentGateway        *ServerAgentGateway
 	serverState         ServerHTTPStateProvider
+	nodes               *serverNodeService
 }
 
 func NewServerHTTPHandler(options ServerHTTPOptions) (*ServerHTTPHandler, error) {
@@ -128,6 +130,7 @@ func NewServerHTTPHandler(options ServerHTTPOptions) (*ServerHTTPHandler, error)
 		frpsChanges:         options.FRPSChanges,
 		agentGateway:        options.AgentGateway,
 		serverState:         options.ServerState,
+		nodes:               options.Nodes,
 	}, nil
 }
 
@@ -159,6 +162,10 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 		handler.serveAccounts(writer, request)
 	case "/api/clients":
 		handler.serveClients(writer, request)
+	case "/api/nodes/claim-previews":
+		handler.serveNodeClaimPreviews(writer, request)
+	case "/api/nodes":
+		handler.serveNodes(writer, request)
 	default:
 		if accountID, found := serverClientRouteID(request.URL.Path, "/api/accounts/", "/password"); found {
 			handler.serveAccountPassword(writer, request, accountID)
@@ -176,6 +183,14 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 			handler.serveClientRestart(writer, request, clientID)
 			return
 		}
+		if clientID, found := serverClientRouteID(request.URL.Path, "/api/clients/", "/node-assignment/pending"); found {
+			handler.serveClientPendingNodeCancel(writer, request, clientID)
+			return
+		}
+		if clientID, found := serverClientRouteID(request.URL.Path, "/api/clients/", "/node-assignment"); found {
+			handler.serveClientNodeAssignment(writer, request, clientID)
+			return
+		}
 		if clientID, found := serverClientRouteID(request.URL.Path, "/api/clients/", "/tunnels/import/preview"); found {
 			handler.serveTunnelImportPreview(writer, request, clientID)
 			return
@@ -190,6 +205,30 @@ func (handler *ServerHTTPHandler) ServeHTTP(writer http.ResponseWriter, request 
 		}
 		if clientID, found := serverClientRouteID(request.URL.Path, "/api/clients/", ""); found {
 			handler.serveClient(writer, request, clientID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/desired"); found {
+			handler.serveNodeDesired(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/reapply"); found {
+			handler.serveNodeReapply(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/token-rotation"); found {
+			handler.serveNodeTokenRotation(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/force-forget"); found {
+			handler.serveNodeForceForget(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", "/management"); found {
+			handler.serveNodeManagement(writer, request, nodeID)
+			return
+		}
+		if nodeID, found := serverClientRouteID(request.URL.Path, "/api/nodes/", ""); found {
+			handler.serveNode(writer, request, nodeID)
 			return
 		}
 		if tunnelID, found := serverClientRouteID(request.URL.Path, "/api/tunnels/", ""); found {
@@ -926,6 +965,91 @@ type serverHTTPClientRemarkInput struct {
 	Remark *string `json:"remark"`
 }
 
+type serverHTTPClientNodeAssignmentInput struct {
+	NodeID string `json:"nodeId"`
+}
+
+func (handler *ServerHTTPHandler) serveClientNodeAssignment(writer http.ResponseWriter, request *http.Request, clientID string) {
+	session, workspace := handler.authenticatedWorkspace(writer, request)
+	if session == nil || workspace == nil {
+		return
+	}
+	if request.Method != http.MethodPut {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use PUT")
+		return
+	}
+	if !sameServerOrigin(request) {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
+		return
+	}
+	var input serverHTTPClientNodeAssignmentInput
+	if err := decodeServerHTTPJSON(writer, request, &input); err != nil {
+		writeServerHTTPAuthenticatedInputError(writer, session, err)
+		return
+	}
+	if strings.TrimSpace(input.NodeID) == "" {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusBadRequest, "INVALID_NODE", "Client Node is required")
+		return
+	}
+	if _, err := workspace.GetClient(request.Context(), clientID); err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	node, err := workspace.GetNode(request.Context(), input.NodeID)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	online := handler.clientRuntime(clientID).ConnectionState == ServerClientConnected
+	updated, err := workspace.AssignClientNode(request.Context(), clientID, input.NodeID, online, node.Selectability.Selectable)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	view, err := handler.presentClient(request.Context(), workspace, updated)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	status := http.StatusOK
+	if !online {
+		status = http.StatusAccepted
+	}
+	writeServerAuthenticatedJSON(writer, session, status, struct {
+		Version    int                        `json:"version"`
+		Assignment serverHTTPClientAssignment `json:"assignment"`
+	}{Version: 1, Assignment: view.Assignment})
+}
+
+func (handler *ServerHTTPHandler) serveClientPendingNodeCancel(writer http.ResponseWriter, request *http.Request, clientID string) {
+	session, workspace := handler.authenticatedWorkspace(writer, request)
+	if session == nil || workspace == nil {
+		return
+	}
+	if request.Method != http.MethodDelete {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Use DELETE")
+		return
+	}
+	if !sameServerOrigin(request) {
+		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
+		return
+	}
+	client, err := workspace.CancelPendingClientNode(request.Context(), clientID)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	view, err := handler.presentClient(request.Context(), workspace, client)
+	if err != nil {
+		writeServerHTTPAuthenticatedDomainError(writer, session, err)
+		return
+	}
+	writeServerAuthenticatedJSON(writer, session, http.StatusOK, struct {
+		Version    int                        `json:"version"`
+		Assignment serverHTTPClientAssignment `json:"assignment"`
+	}{Version: 1, Assignment: view.Assignment})
+}
+
 func (handler *ServerHTTPHandler) deleteClient(writer http.ResponseWriter, request *http.Request, session *ServerSession, workspace *ServerWorkspace, clientID string) {
 	if !sameServerOrigin(request) {
 		writeServerHTTPAuthenticatedError(writer, session, http.StatusForbidden, "ORIGIN_FORBIDDEN", "Mutation requests must be same-origin")
@@ -1140,6 +1264,7 @@ func (handler *ServerHTTPHandler) authenticatedWorkspace(writer http.ResponseWri
 		Custom404PageWriter: handler.custom404PageWriter,
 		FRPSChanges:         handler.frpsChanges,
 		AgentChanges:        handler.agentGateway,
+		Nodes:               handler.nodes,
 	}, session.Token)
 	if err != nil {
 		writeServerHTTPDomainError(writer, err)
@@ -1188,18 +1313,30 @@ func (handler *ServerHTTPHandler) clientRuntime(clientID string) ServerClientRun
 }
 
 type serverHTTPClientView struct {
-	ID                  string                   `json:"id"`
-	Remark              string                   `json:"remark"`
-	Token               string                   `json:"token"`
-	DesiredRevision     int64                    `json:"desiredRevision"`
-	LastAppliedRevision int64                    `json:"lastAppliedRevision"`
-	RevocationPending   bool                     `json:"revocationPending"`
-	CreatedAt           string                   `json:"createdAt"`
-	RotatedAt           *string                  `json:"rotatedAt"`
-	Owner               serverHTTPClientOwner    `json:"owner"`
-	Runtime             ServerClientRuntimeState `json:"runtime"`
-	Restart             serverHTTPRestartState   `json:"restart"`
-	TunnelCounts        serverHTTPTunnelCounts   `json:"tunnelCounts"`
+	ID                  string                     `json:"id"`
+	Remark              string                     `json:"remark"`
+	Token               string                     `json:"token"`
+	DesiredRevision     int64                      `json:"desiredRevision"`
+	LastAppliedRevision int64                      `json:"lastAppliedRevision"`
+	RevocationPending   bool                       `json:"revocationPending"`
+	CreatedAt           string                     `json:"createdAt"`
+	RotatedAt           *string                    `json:"rotatedAt"`
+	Owner               serverHTTPClientOwner      `json:"owner"`
+	Runtime             ServerClientRuntimeState   `json:"runtime"`
+	Restart             serverHTTPRestartState     `json:"restart"`
+	TunnelCounts        serverHTTPTunnelCounts     `json:"tunnelCounts"`
+	Assignment          serverHTTPClientAssignment `json:"assignment"`
+	FRPC                tunnelruntime.FRPCStatus   `json:"frpc"`
+}
+
+type serverHTTPClientAssignment struct {
+	NodeID        string             `json:"nodeId"`
+	PendingNodeID *string            `json:"pendingNodeId"`
+	PendingSince  *string            `json:"pendingSince"`
+	Node          *serverNodeSummary `json:"node,omitempty"`
+	PendingNode   *serverNodeSummary `json:"pendingNode,omitempty"`
+	DesiredNodeID string             `json:"desiredNodeId"`
+	AppliedNodeID *string            `json:"appliedNodeId"`
 }
 
 type serverHTTPRestartState struct {
@@ -1344,6 +1481,13 @@ func (handler *ServerHTTPHandler) presentClient(ctx context.Context, workspace *
 		return serverHTTPClientView{}, err
 	}
 	runtime := handler.clientRuntime(client.ID)
+	frpc := tunnelruntime.FRPCStatus{Type: "frpc_status", TunnelProtocolVersion: tunnelruntime.TunnelProtocolVersion, Connection: "unknown", Process: tunnelruntime.FRPProcessStopped}
+	if handler.agentGateway != nil {
+		frpc = handler.agentGateway.FRPCObservation(client.ID)
+	}
+	if frpc.Proxies == nil {
+		frpc.Proxies = []tunnelruntime.ProxyState{}
+	}
 	counts := serverHTTPTunnelCounts{Total: len(tunnels)}
 	for _, tunnel := range tunnels {
 		if tunnel.Enabled {
@@ -1356,6 +1500,21 @@ func (handler *ServerHTTPHandler) presentClient(ctx context.Context, workspace *
 			counts.Pending++
 		case ServerTunnelError:
 			counts.Error++
+		}
+	}
+	assignment := serverHTTPClientAssignment{NodeID: client.NodeID, PendingNodeID: client.PendingNodeID, PendingSince: client.PendingSince, DesiredNodeID: client.NodeID, AppliedNodeID: client.LastAppliedNodeID}
+	if handler.nodes != nil {
+		node, err := workspace.GetNode(ctx, client.NodeID)
+		if err != nil {
+			return serverHTTPClientView{}, err
+		}
+		assignment.Node = &node
+		if client.PendingNodeID != nil {
+			pendingNode, err := workspace.GetNode(ctx, *client.PendingNodeID)
+			if err != nil {
+				return serverHTTPClientView{}, err
+			}
+			assignment.PendingNode = &pendingNode
 		}
 	}
 	return serverHTTPClientView{
@@ -1371,6 +1530,8 @@ func (handler *ServerHTTPHandler) presentClient(ctx context.Context, workspace *
 		Runtime:             runtime,
 		Restart:             presentServerHTTPRestartState(client),
 		TunnelCounts:        counts,
+		Assignment:          assignment,
+		FRPC:                frpc,
 	}, nil
 }
 
@@ -1851,32 +2012,57 @@ func writeServerHTTPDomainError(writer http.ResponseWriter, err error) {
 		return
 	}
 	status, found := map[string]int{
-		"ACCOUNT_NOT_EMPTY":        http.StatusConflict,
-		"ACTIVATION_FAILED":        http.StatusInternalServerError,
-		"AUTHENTICATION_FAILED":    http.StatusUnauthorized,
-		"AUTHENTICATION_REQUIRED":  http.StatusUnauthorized,
-		"CLIENT_OFFLINE":           http.StatusConflict,
-		"CONFIGURATION_FAILED":     http.StatusInternalServerError,
-		"FORBIDDEN":                http.StatusForbidden,
-		"FRPS_UNAVAILABLE":         http.StatusServiceUnavailable,
-		"INVALID_ACCOUNT":          http.StatusBadRequest,
-		"INVALID_CLIENT_REMARK":    http.StatusBadRequest,
-		"INVALID_CONFIG":           http.StatusBadRequest,
-		"INVALID_CUSTOM_404_PAGE":  http.StatusBadRequest,
-		"INVALID_CURRENT_PASSWORD": http.StatusBadRequest,
-		"INVALID_HOSTNAME":         http.StatusBadRequest,
-		"INVALID_HTTP_ROUTE":       http.StatusBadRequest,
-		"INVALID_LOCAL_ENDPOINT":   http.StatusBadRequest,
-		"INVALID_PROTOCOL":         http.StatusBadRequest,
-		"INVALID_REVISION":         http.StatusBadRequest,
-		"INVALID_TUNNEL":           http.StatusBadRequest,
-		"MANAGED_ACCOUNT":          http.StatusConflict,
-		"NOT_FOUND":                http.StatusNotFound,
-		"PORT_OUTSIDE_POOL":        http.StatusBadRequest,
-		"PORT_POOL_EXHAUSTED":      http.StatusConflict,
-		"RESOURCE_RESERVED":        http.StatusConflict,
-		"SESSION_UNAVAILABLE":      http.StatusServiceUnavailable,
-		"USERNAME_TAKEN":           http.StatusConflict,
+		"ACCOUNT_NOT_EMPTY":             http.StatusConflict,
+		"ACTIVATION_FAILED":             http.StatusInternalServerError,
+		"AUTHENTICATION_FAILED":         http.StatusUnauthorized,
+		"AUTHENTICATION_REQUIRED":       http.StatusUnauthorized,
+		"CLIENT_OFFLINE":                http.StatusConflict,
+		"CONFIGURATION_FAILED":          http.StatusInternalServerError,
+		"FORBIDDEN":                     http.StatusForbidden,
+		"FRPS_UNAVAILABLE":              http.StatusServiceUnavailable,
+		"INVALID_ACCOUNT":               http.StatusBadRequest,
+		"INVALID_CLIENT_REMARK":         http.StatusBadRequest,
+		"INVALID_CONFIG":                http.StatusBadRequest,
+		"INVALID_CUSTOM_404_PAGE":       http.StatusBadRequest,
+		"INVALID_CURRENT_PASSWORD":      http.StatusBadRequest,
+		"INVALID_HOSTNAME":              http.StatusBadRequest,
+		"INVALID_HTTP_ROUTE":            http.StatusBadRequest,
+		"INVALID_LOCAL_ENDPOINT":        http.StatusBadRequest,
+		"INVALID_PROTOCOL":              http.StatusBadRequest,
+		"INVALID_REVISION":              http.StatusBadRequest,
+		"INVALID_TUNNEL":                http.StatusBadRequest,
+		"MANAGED_ACCOUNT":               http.StatusConflict,
+		"NOT_FOUND":                     http.StatusNotFound,
+		"INVALID_MANAGEMENT_ADDRESS":    http.StatusBadRequest,
+		"INVALID_NODE":                  http.StatusBadRequest,
+		"INVALID_NODE_ENDPOINT":         http.StatusBadRequest,
+		"INVALID_NODE_SETTINGS":         http.StatusBadRequest,
+		"NODE_ALREADY_CLAIMED":          http.StatusConflict,
+		"NODE_ALREADY_REGISTERED":       http.StatusConflict,
+		"NODE_CLAIM_OUTCOME_UNKNOWN":    http.StatusServiceUnavailable,
+		"NODE_CONFIG_REJECTED":          http.StatusConflict,
+		"NODE_IDENTITY_MISMATCH":        http.StatusConflict,
+		"NODE_PREVIEW_EXPIRED":          http.StatusConflict,
+		"NODE_PROTOCOL_INCOMPATIBLE":    http.StatusServiceUnavailable,
+		"NODE_RESOURCE_CONFLICT":        http.StatusConflict,
+		"NODE_TARGET_UNAVAILABLE":       http.StatusServiceUnavailable,
+		"NODE_REMOVE_PENDING":           http.StatusConflict,
+		"NODE_REMOVE_FORBIDDEN":         http.StatusConflict,
+		"NODE_HAS_CLIENTS":              http.StatusConflict,
+		"NODE_FORCE_FORGET_UNAVAILABLE": http.StatusConflict,
+		"NODE_REVISION_CONFLICT":        http.StatusConflict,
+		"NODE_REVISION_STALE":           http.StatusConflict,
+		"NODE_ROLLBACK_FAILED":          http.StatusServiceUnavailable,
+		"NODE_SNAPSHOT_INVALID":         http.StatusBadRequest,
+		"NODE_SNAPSHOT_TOO_LARGE":       http.StatusBadRequest,
+		"NODE_TOKEN_ROTATION_PENDING":   http.StatusConflict,
+		"NODE_UNREACHABLE":              http.StatusServiceUnavailable,
+		"REVISION_CONFLICT":             http.StatusConflict,
+		"PORT_OUTSIDE_POOL":             http.StatusBadRequest,
+		"PORT_POOL_EXHAUSTED":           http.StatusConflict,
+		"RESOURCE_RESERVED":             http.StatusConflict,
+		"SESSION_UNAVAILABLE":           http.StatusServiceUnavailable,
+		"USERNAME_TAKEN":                http.StatusConflict,
 	}[domainError.Code]
 	if !found {
 		writeServerHTTPError(writer, http.StatusInternalServerError, "INTERNAL_ERROR", "The tunnel control request failed")

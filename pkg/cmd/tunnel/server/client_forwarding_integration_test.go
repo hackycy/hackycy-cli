@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hackycy/hackycy-cli/internal/logging"
 	clientcommand "github.com/hackycy/hackycy-cli/pkg/cmd/tunnel/connect"
 )
 
@@ -31,6 +32,22 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 		t.Fatalf("CurrentFRPArtifact() error = %v", err)
 	}
 	frpDirectory := filepath.Join(t.TempDir(), "frp", tunnelruntime.FRPVersion)
+	if sourceDirectory := os.Getenv("YCY_TUNNEL_TEST_FRP_RUNTIME_DIR"); sourceDirectory != "" {
+		fixturePaths := tunnelruntime.FRPRuntimePathsFor(frpDirectory, artifact.Target)
+		if err := os.MkdirAll(frpDirectory, 0o700); err != nil {
+			t.Fatalf("create FRP fixture directory: %v", err)
+		}
+		for _, target := range []string{fixturePaths.FRPC, fixturePaths.FRPS} {
+			name := filepath.Base(target)
+			binary, err := os.ReadFile(filepath.Join(sourceDirectory, name))
+			if err != nil {
+				t.Fatalf("read FRP fixture %s: %v", name, err)
+			}
+			if err := os.WriteFile(target, binary, 0o755); err != nil {
+				t.Fatalf("copy FRP fixture %s: %v", name, err)
+			}
+		}
+	}
 	paths, err := tunnelruntime.EnsureFRPRuntimeAt(ctx, frpDirectory, artifact)
 	if err != nil {
 		t.Fatalf("EnsureFRPRuntimeAt() error = %v", err)
@@ -126,6 +143,12 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 		t.Fatalf("parse control URL: %v", err)
 	}
 	clientRoot := t.TempDir()
+	clientLog, err := os.CreateTemp(t.TempDir(), "client-lifecycle-*.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientLog.Close()
+	clientLogger := logging.NewRuntime(logging.Options{Writer: clientLog}).Logger("integration.client")
 	clientID := goToGoClientInstanceID()
 	clientContext, cancelClient := context.WithCancel(ctx)
 	defer cancelClient()
@@ -136,6 +159,7 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 			InstanceIdentity: goToGoClientIdentity{},
 			StateRoot:        clientRoot,
 			YCYVersion:       "go-to-go-integration",
+			Logger:           clientLogger,
 		})
 		close(clientDone)
 	}()
@@ -151,10 +175,21 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 			return getErr
 		}
 		if updated.DesiredRevision != 3 || updated.LastAppliedRevision != updated.DesiredRevision {
-			return fmt.Errorf("client revisions = desired %d, applied %d", updated.DesiredRevision, updated.LastAppliedRevision)
+			logContents, _ := os.ReadFile(clientLog.Name())
+			accepted, acceptedFound := clientcommand.ReadClientAcceptedState(filepath.Join(clientRoot, clientID))
+			applied, appliedFound := clientcommand.ReadClientAppliedState(filepath.Join(clientRoot, clientID))
+			acceptedRevision, localAppliedRevision := int64(-1), int64(-1)
+			if acceptedFound {
+				acceptedRevision = accepted.Revision
+			}
+			if appliedFound {
+				localAppliedRevision = applied.Revision
+			}
+			return fmt.Errorf("client revisions = desired %d, applied %d; accepted revision %d, local applied revision %d, gateway = %#v; lifecycle = %s",
+				updated.DesiredRevision, updated.LastAppliedRevision, acceptedRevision, localAppliedRevision, runtime.gateway.State(client.ID), logContents)
 		}
 		state, found := clientcommand.ReadClientAppliedState(filepath.Join(clientRoot, clientID))
-		if !found || state.Revision != updated.DesiredRevision || len(state.Snapshot.Tunnels) != 3 {
+		if !found || state.Revision != updated.DesiredRevision || len(state.Runtime.Tunnels) != 3 {
 			return fmt.Errorf("client applied state = (%#v, %t)", state, found)
 		}
 		return nil
@@ -168,6 +203,18 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 	})
 	waitForGoToGoForwarding(t, "UDP forwarding", 15*time.Second, func() error {
 		return verifyGoToGoUDPForwarding(ctx, ports.proxy)
+	})
+	waitForGoToGoForwarding(t, "independent FRPC proxy observation", 15*time.Second, func() error {
+		observed := runtime.gateway.FRPCObservation(client.ID)
+		if observed.Connection != "connected" || len(observed.Proxies) != 3 {
+			return fmt.Errorf("FRPC observation = %#v", observed)
+		}
+		for _, proxy := range observed.Proxies {
+			if proxy.State != "registered" {
+				return fmt.Errorf("proxy observation = %#v", observed.Proxies)
+			}
+		}
+		return nil
 	})
 
 	cancelClient()
