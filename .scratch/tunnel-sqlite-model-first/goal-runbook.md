@@ -37,8 +37,8 @@
 | --- | --- | --- | --- | --- |
 | G0: 建立 v1 SQL/Ent 基础 | passed | none | `implementation-plan.md` -> `G0: 建立 v1 SQL/Ent 基础` | commit `b133d73`; all G0 Exit conditions verified below |
 | G1: 完成 Server 持久化层 | passed | G0 | `implementation-plan.md` -> `G1: 完成 Server 持久化层` | G1-1 through G1-53 and G1 Exit evidence below |
-| G2: 通过 Server 外部行为门禁 | active | G1 | `implementation-plan.md` -> `G2: 通过 Server 外部行为门禁` | G1 passed; activated, implementation not started |
-| G3: 完成 Node 持久化与管理状态 | planned | G2 | `implementation-plan.md` -> `G3: 完成 Node 持久化与管理状态` | G2 pending |
+| G2: 通过 Server 外部行为门禁 | passed | G1 | `implementation-plan.md` -> `G2: 通过 Server 外部行为门禁` | G2-1 through G2-6 and G2 Exit evidence below |
+| G3: 完成 Node 持久化与管理状态 | active | G2 | `implementation-plan.md` -> `G3: 完成 Node 持久化与管理状态` | G2 passed; activated, implementation not started |
 | G4: 通过 Node 恢复与最终交付门禁 | planned | G3 | `implementation-plan.md` -> `G4: 通过 Node 恢复与最终交付门禁` | G3 pending |
 
 ## Progress Log
@@ -119,10 +119,21 @@
 
 - 2026-09-26: initialized as `planned`; no implementation evidence.
 - 2026-09-26: G1 Exit 全部满足后已激活，尚未开始实施；本次 Goal 不进入 G2。
+- 2026-09-26: slice G2-1 (CLI/启动合同): 无代码修改，仅追加本 Progress Log。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server -run '^(TestNewCmdServer|TestResolveServerConfig|TestDefaultServerDataDirectory|TestRunServer|TestRootConfiguresDiagnostics)'` 通过（1.917s）；实际二进制 CLI help、非法参数与退出码 `go test -count=1 -tags=acceptance ./acceptance -run '^TestTunnelServerStandaloneBinaryPreservesCLIValidation$'` 通过（8.682s）；按 Repository 顺序 `make check-terminal` 通过（含 Server 104.942s）。风险：HTTP、资源、协议、重启隔离和并发合同尚待 G2 定向验收；下一步仅验证 HTTP API 合同。
+- 2026-09-26: slice G2-2 (HTTP API 合同): 无代码修改，仅追加本 Progress Log。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server -run '^Test(ServerHTTP|PresentServerHTTP)'` 通过（32.130s），覆盖认证、HTTP 状态/领域错误、Client/Tunnel/Node/Account API、PATCH 缺省/null/赋值、事件流；按 Repository 顺序 `make check-terminal` 再次通过（含 Server 97.594s）。风险：资源、管理协议、重启隔离和并发合同待单独验收；下一步仅验证 Tunnel 资源合同。
+- 2026-09-26: slice G2-3 (Tunnel 资源合同): 无代码修改，仅追加本 Progress Log。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server -run '^Test(ServerControlPlane(ReservesHTTPRoutesTransactionally|AllocatesPortReservationsAndRecordsRevisions|PatchesTunnelReservationsAndRevisionsAtomically|PatchSwitchesProtocolAndReleasesHTTPReservation|ImportsSelectedFRPCTOMLCandidatesInOneTransaction|ImportFRPCTunnelsRejectsSelectionsAndRollsBackReservations)|DisabledTransportTunnelKeepsPortReserved|NodeResourceTransactionsEnforcePortAndHostnameOwnership|ClientNodeAssignment(RollsBackOnTargetResourceConflict|RejectsSplitHostnameAndRollsBack)|SyncLocalNodeProjectionUsesStartupSettingsAndRollsBackExcludedPorts)$'` 通过（1.140s），覆盖资源保留、冲突错误、失败回滚及修订；按 Repository 顺序 `make check-terminal` 通过（含 Server 103.647s）。风险：管理协议、重启隔离和并发竞争待单独验收；下一步仅验证 Node 管理/Client 协议合同。
+- 2026-09-26: slice G2-4 (Node 管理/Client 协议合同): 无代码修改，仅追加本 Progress Log。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server -run '^Test(ServerAgent|NodeManagement|ServerNode(RealFRPSClaim|Coordinator|TokenRotation|Observation|Desired|Reapply))'` 通过（17.453s），覆盖 hello/welcome、协议版本、修订和 desired 投影、Node 认领/状态及真实 FRPS 管理路径；按 Repository 顺序 `make check-terminal` 通过（含 Server 97.572s）。风险：重启/旧状态隔离和并发竞争待单独验收；下一步仅验证重启及旧状态隔离。
+- 2026-09-26: slice G2-5 (重启与旧状态隔离): 无代码修改，仅追加本 Progress Log。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server -run '^Test(OpenState|OpenDatabase|ServerControlPlane(RestartsWithGoCreatedClientState|PersistsAndMergesRestartGenerations)|ServerNodeTokenRotationRecoversAfterApplicationFailureAndServerRestart|ServerAgentConnectionRestoresRestartGenerationAndHelloResultAfterGatewayRecreation)'` 通过（10.799s），覆盖 `server-state-v1` 初始化/重开、旧 `go-v1` 文件字节不变、缺失/损坏新状态拒绝且不改原文件、重启修订和身份恢复；按 Repository 顺序 `make check-terminal` 通过（含 Server 102.310s）。风险：并发竞争和失败事件边界待单独验收；下一步仅验证并发竞争。
+- 2026-09-26: slice G2-6 (并发竞争，门禁重试中): 无代码修改，仅追加本 Progress Log。定向并发、资源回滚及事件流用例 `go test -count=1 ./pkg/cmd/tunnel/server -run '^Test(RemoteNodeConcurrentAllocationKeepsPortNamespacesSeparate|ConcurrentHTTPRoutesCannotSplitHostnameAcrossNodes|ServerNodePoolShrinkRacesPortAllocationAtomically|ServerControlPlaneSerializesConcurrentRestartGenerations|ClientNodeAssignmentRollsBackOnTargetResourceConflict|ServerHTTPHandlerStreamsScopedInvalidationEvents)$'` 通过（2.048s）；四个并发用例 `-count=10` 通过（1.576s），均用 go1.26.7/GOWORK=off/CGO_ENABLED=0。本轮 `make check-terminal` 的 Server 包通过（99.066s），但 `pkg/cmd/rm` 的 `TestRunRMSmartRichPTYSkipsEmptyTargetSelectionAndExits/no_color` PTY 断言失败，故门禁未通过；该无关用例单独 `-count=5` 通过（9.640s），此前五轮完整门禁均通过。风险：全量并行下 PTY 时序波动尚待完整重试确认；下一步重跑 `make check-terminal`，失败则继续诊断，不弱化测试。
+- 2026-09-26: slice G2-6 复验: 修改文件仅本 Progress Log；原样重跑 `make check-terminal` 全部通过（含 `pkg/cmd/rm` 16.020s、Server 103.068s），前次 PTY 失败未复现。风险：黑盒/进程/PTY 验收、六平台构建和最终架构检查尚待顺序执行；下一步运行 `make acceptance-terminal`。
+- 2026-09-26: G2 Repository verification 2/4: 修改文件仅本 Progress Log；按计划顺序 `make acceptance-terminal` 通过（`acceptance` 148.940s，`acceptance/web` 15.701s），覆盖真实二进制 CLI、Server/Node/Client 进程旅程、HTTP/协议与 PTY 黑盒。风险：六平台纯 Go 构建和架构检查尚待执行；下一步运行 `make cross-build`。
+- 2026-09-26: G2 Repository verification 3/4: 修改文件仅本 Progress Log；按计划顺序 `make cross-build` 通过，前置 Web ESLint、TypeScript、Vitest（11 文件/43 测试）、Vite 构建及资产验证通过；`file build/cross/ycy-*` 核对 darwin/linux/windows 各 amd64/arm64 六个可执行产物。Makefile 对全部目标使用 `CGO_ENABLED=0`。风险：最终架构检查和 Exit 逐项复核尚待执行；下一步运行 `go test ./internal/architecture`。
+- 2026-09-26: G2 Exit 逐项验收：① G2-1 的 CLI 单元/实际二进制退出码、G2-2 的 HTTP 状态/领域错误与 PATCH 三态、G2-3 的资源错误/回滚、G2-4 的 Client/Node 消息与修订均通过，`make acceptance-terminal` 也覆盖真实进程旅程。② G2-6 的端口/Hostname/端口池/修订并发用例及十次重复通过；G2-5 覆盖重启、`server-state-v1` 与旧 `go-v1` 字节隔离；G2-3 的禁用 TCP 端口冲突用例直接断言失败无新 Tunnel、修订变化或事件，HTTP 事件流定向测试通过。③ 按计划顺序，最终 `make check-terminal`、`make acceptance-terminal`、`make cross-build` 和 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test ./internal/architecture` 全部通过（架构 2.753s）；`git diff --check` 通过。④ G2-1 至 G2-6 及各 Repository 门禁证据已记录；G2 Manual acceptance 为无。一次无关 `pkg/cmd/rm` PTY 失败经单独五次复验和完整门禁原样重跑未复现，未删改或跳过测试。判定 G2 `passed`；G3 已激活，尚未开始实施。本次 Goal 到此结束。
 
 ### G3: 完成 Node 持久化与管理状态
 
 - 2026-09-26: initialized as `planned`; no implementation evidence.
+- 2026-09-26: G2 Exit 全部满足后已激活，尚未开始实施；本次 Goal 不进入 G3。
 
 ### G4: 通过 Node 恢复与最终交付门禁
 
