@@ -35,8 +35,8 @@
 
 | Gate | Status | Depends on | Plan contract | Unlock evidence |
 | --- | --- | --- | --- | --- |
-| G0: 建立 v1 SQL/Ent 基础 | active | none | `implementation-plan.md` -> `G0: 建立 v1 SQL/Ent 基础` | no predecessor |
-| G1: 完成 Server 持久化层 | planned | G0 | `implementation-plan.md` -> `G1: 完成 Server 持久化层` | G0 pending |
+| G0: 建立 v1 SQL/Ent 基础 | passed | none | `implementation-plan.md` -> `G0: 建立 v1 SQL/Ent 基础` | commit `b133d73`; all G0 Exit conditions verified below |
+| G1: 完成 Server 持久化层 | active | G0 | `implementation-plan.md` -> `G1: 完成 Server 持久化层` | G0 passed; activated, implementation not started |
 | G2: 通过 Server 外部行为门禁 | planned | G1 | `implementation-plan.md` -> `G2: 通过 Server 外部行为门禁` | G1 pending |
 | G3: 完成 Node 持久化与管理状态 | planned | G2 | `implementation-plan.md` -> `G3: 完成 Node 持久化与管理状态` | G2 pending |
 | G4: 通过 Node 恢复与最终交付门禁 | planned | G3 | `implementation-plan.md` -> `G4: 通过 Node 恢复与最终交付门禁` | G3 pending |
@@ -54,6 +54,7 @@
 - 2026-09-26: slice G0-6 (Server 路由约束修正): 修改 `pkg/cmd/tunnel/server/migrations/001_v1.sql`、`ent/server/schema/schema.go`、`ent/schema_test.go`，将路由小写 CHECK 显式改为 `COLLATE BINARY` 并加入大写 hostname 拒绝测试；同时增强 SQL/Ent 列类型与非空核对、两端 Ent 实际写入测试。`go generate ./ent` 和定向 `CGO_ENABLED=0 go test -count=1 ./ent ./pkg/cmd/tunnel/server ./pkg/cmd/tunnel/node -run 'Test(ServerV1SQLMatchesEnt|NodeV1SQLMatchesEnt|OpenEmptyServerV1Database|OpenEmptyNodeV1Database)$'` 通过。风险：旧业务入口尚未切换新 v1，属后续 Gate；下一步按计划顺序运行 G0 Repository verification。
 - 2026-09-26: slice G0-7 (架构清单同步): 修改 `internal/architecture/architecture_test.go`，显式登记 G0 新增的 Ent 源包与生成包；首次架构测试仅因固定 package inventory 缺项失败，更新后 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test ./internal/architecture` 通过，未跳过或弱化检查。风险：未来模型增加包时须继续维护显式清单；下一步完成最终结构复核和门禁。
 - 2026-09-26: slice G0-8 (路由 collation 同步): 修改 `ent/server/schema/schema.go`、`ent/schema_test.go`，将 `hostname` 的 `NOCASE` collation 同步到 Ent 字段，并检查 SQLite 唯一索引实际 collation；`go generate ./ent`、两端结构/空库定向测试、`git diff --exit-code -- ent`、`GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test ./internal/architecture` 与同环境 `go vet ./...` 均通过。`CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/server/... ./pkg/cmd/tunnel/node/...` 通过（Server 99.556s，Node 64.631s）。风险：G1/G3 仍需分别迁移当前业务状态入口；下一步提交 G0 资产并核对 Exit conditions。
+- 2026-09-26: G0 Exit 逐项验收：① Server/Node `migrations/001_v1.sql`、`ent/server/schema`、`ent/node/schema` 与生成代码已在 `b133d73` 提交；`TestServerV1SQLMatchesEnt` / `TestNodeV1SQLMatchesEnt` 在 ncruces 临时空库中核对表、列类型/非空、索引、外键、CHECK 与关键约束拒绝场景，通过。② `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go generate ./ent` 通过，再生后 `git diff --exit-code -- ent` 无差异。③ 同环境定向 `go test -count=1 ./ent ./pkg/cmd/tunnel/server ./pkg/cmd/tunnel/node -run 'Test(ServerV1SQLMatchesEnt|NodeV1SQLMatchesEnt|OpenEmptyServerV1Database|OpenEmptyNodeV1Database)$'`、两端包完整 `go test -count=1 ./pkg/cmd/tunnel/server/... ./pkg/cmd/tunnel/node/...`、`go test ./internal/architecture`、`go vet ./...` 全通过，覆盖 CGO=0 的 Ent/ncruces 编译与写入。④ 新 v1 空库入口只访问固定 `server-state-v1` / `node-state-v1` 空子目录并执行嵌入 SQL；定向测试确认旧 `go-v1` / `node.sqlite` 文件不变，新增生产初始化辅助代码未调用 Ent Auto Migration、旧数据库读取或 migration runner。G0 判定 `passed`；G1 已激活，尚未开始实施，本次 Goal 到此结束。
 
 ### G1: 完成 Server 持久化层
 
