@@ -38,8 +38,8 @@
 | G0: 建立 v1 SQL/Ent 基础 | passed | none | `implementation-plan.md` -> `G0: 建立 v1 SQL/Ent 基础` | commit `b133d73`; all G0 Exit conditions verified below |
 | G1: 完成 Server 持久化层 | passed | G0 | `implementation-plan.md` -> `G1: 完成 Server 持久化层` | G1-1 through G1-53 and G1 Exit evidence below |
 | G2: 通过 Server 外部行为门禁 | passed | G1 | `implementation-plan.md` -> `G2: 通过 Server 外部行为门禁` | G2-1 through G2-6 and G2 Exit evidence below |
-| G3: 完成 Node 持久化与管理状态 | active | G2 | `implementation-plan.md` -> `G3: 完成 Node 持久化与管理状态` | G2 passed; activated, implementation not started |
-| G4: 通过 Node 恢复与最终交付门禁 | planned | G3 | `implementation-plan.md` -> `G4: 通过 Node 恢复与最终交付门禁` | G3 pending |
+| G3: 完成 Node 持久化与管理状态 | passed | G2 | `implementation-plan.md` -> `G3: 完成 Node 持久化与管理状态` | G3-1 through G3-8 and G3 Exit evidence below |
+| G4: 通过 Node 恢复与最终交付门禁 | active | G3 | `implementation-plan.md` -> `G4: 通过 Node 恢复与最终交付门禁` | G3 passed; activated, implementation not started |
 
 ## Progress Log
 
@@ -142,7 +142,9 @@
 - 2026-09-26: slice G3-6 (候选接受与修订摘要事务): 修改 `pkg/cmd/tunnel/node/runtime_state_v1.go`、`runtime_state_v1_test.go`，完整校验原始候选后在 Ent 事务中比较修订和精确字节 SHA-256，并一次保存高水位、摘要、候选和阶段；旧修订、同修订异摘要及无效候选拒绝，原样重放幂等。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/node -run '^Test(AcceptNodeV1CandidateRevisionAndRawDigest|ReadNodeV1RuntimePreservesRawBytes)$'` 通过（1.238s）；按 Repository 顺序 Node 全包通过（64.447s）。风险：运行检查点写入及生产入口切换待完成；下一步只迁移运行检查点持久化。
 - 2026-09-26: slice G3-7 (RuntimeState 运行检查点写入): 修改 `pkg/cmd/tunnel/node/runtime_state_v1.go`、`runtime_state_v1_test.go`，用 Ent 保存阶段、运行成功、禁用意图/完成和 FRPS 所有权；跨字段的运行成功/禁用完成在 Ent 事务中读取并更新，禁用意图先于清除最后成功快照，无效所有权组约束失败不改变原值。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/node -run '^Test(NodeV1RuntimeCheckpointsAndOwnerRollback|AcceptNodeV1CandidateRevisionAndRawDigest)$'` 通过（0.890s）；按 Repository 顺序 Node 全包通过（64.317s）。风险：生产 OpenState 与管理调用尚未切入这些 v1 函数；下一步只迁移 Node 状态打开与管理持久化调用簇。
 - 2026-09-26: slice G3-8 (Node 生产状态和管理持久化切换): 修改 `pkg/cmd/tunnel/node/state.go`、`database_v1.go`、`runtime_state.go`、`node_runtime.go` 及对应 `state_test.go`、`management_test.go`、`node_runtime_test.go`、`node_recovery_unix_test.go`。`OpenState` 继续锁用户根目录，但仅在 `node-state-v1` 初始化或经私有副本验证后重开，使用单一数据库池和 Ent client；claim、绑定匹配、候选、检查点及恢复中的绑定计数均走 v1 Ent，移除旧 v3/v4 启动迁移分支。旧根目录数据库、标记、FRPS 和传输文件改由隔离用例断言原样留存。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/node -run '^Test(NodeState|NodeCandidate)'` 通过（0.917s）；按 Repository 顺序 Node 全包通过（64.577s），含既有管理协议和运行恢复用例。风险：G3 Exit 还需按 Directed/Repository 收尾复核及 `go vet`；下一步仅执行最终定向验证、vet 与逐项 Exit 判定。
+- 2026-09-26: G3 Exit 逐项验收：① `OpenState` 只在固定 `node-state-v1` 初始化/重开，旧根目录 `node.sqlite`、标记、FRPS 配置和传输文件由 `TestNodeStateLeavesLegacyRootFilesUntouched` 验证首次启动及重开后字节不变；新状态缺失数据库、运行行、身份、标记、结构不符或损坏快照由 G3-2 和 `TestNodeState*` 拒绝，原数据库字节不变。② Identity 与初始 RuntimeState 同一个 Ent 事务写入；ControllerBinding 的首次 claim/重复认领、候选的旧修订/同修订同或异摘要、原始字节和运行/禁用/所有权检查点由 G3-1 至 G3-7 定向测试覆盖，无效事务不留下半完成状态。③ G3-8 后最终定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/node -run '^Test(OpenEmptyNodeV1Database|InitializeNodeV1IdentityIsAtomic|InspectNodeV1DatabaseRejectsIncompleteStateWithoutRewriting|NodeState|ControllerMatchesNodeV1|ClaimNodeV1PreservesFirstController|ReadNodeV1RuntimePreservesRawBytes|AcceptNodeV1CandidateRevisionAndRawDigest|NodeV1RuntimeCheckpointsAndOwnerRollback|NodeCandidate|NodeManagement|Management)'` 通过（0.815s），Node 全包 `go test -count=1 ./pkg/cmd/tunnel/node/...` 通过（64.577s），随后同环境 `go vet ./...` 通过；`git diff --check` 通过。④ Node 全包包含 Noise 管理握手、claim、状态、快照传输及既有运行/恢复调用，管理协议入口保持可调用；生产原生 SQL 复核仅见 v1 建库、PRAGMA、SQLite 完整性与结构检查，未保留旧迁移分支。G3 Manual acceptance 为无，全部 Exit conditions 满足，判定 G3 `passed`；G4 已激活，尚未开始实施。本次 Goal 到此结束。
 
 ### G4: 通过 Node 恢复与最终交付门禁
 
 - 2026-09-26: initialized as `planned`; no implementation evidence.
+- 2026-09-26: G3 Exit 全部满足后已激活，尚未开始实施；本次 Goal 不进入 G4。
