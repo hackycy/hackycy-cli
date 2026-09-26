@@ -74,3 +74,55 @@ func TestAcceptNodeV1CandidateRevisionAndRawDigest(t *testing.T) {
 		t.Fatalf("state after rejected snapshots = %+v, %v", record, err)
 	}
 }
+
+func TestNodeV1RuntimeCheckpointsAndOwnerRollback(t *testing.T) {
+	db, client, err := openEmptyNodeV1Database(t.Context(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := initializeNodeV1Identity(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	candidate := []byte("candidate bytes")
+	if _, err := client.RuntimeState.UpdateOneID(1).SetHighestRevision(2).SetHighestDigest("digest").SetCandidate(candidate).SetPhase("accepted").Save(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := setNodeV1Phase(t.Context(), client, "switching", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := setNodeV1Owner(t.Context(), client, 123, 456, "/frps", "/config"); err != nil {
+		t.Fatal(err)
+	}
+	if err := markNodeV1RunningApplied(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	record, err := readNodeV1Runtime(t.Context(), client)
+	if err != nil || record.Phase != "applied" || record.AppliedRevision != 2 || !bytes.Equal(record.LastGood, candidate) || record.OwnerPID != 123 {
+		t.Fatalf("running checkpoint = %+v, %v", record, err)
+	}
+	if err := setNodeV1Owner(t.Context(), client, 999, 0, "", ""); err == nil {
+		t.Fatal("invalid owner group was accepted")
+	}
+	record, err = readNodeV1Runtime(t.Context(), client)
+	if err != nil || record.OwnerPID != 123 || record.OwnerBinary != "/frps" {
+		t.Fatalf("constraint failure changed owner: %+v, %v", record, err)
+	}
+	if err := markNodeV1Disabling(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	record, err = readNodeV1Runtime(t.Context(), client)
+	if err != nil || !record.BootDisabled || record.DisabledComplete || record.Phase != "disabling" || len(record.LastGood) == 0 {
+		t.Fatalf("disabled intent = %+v, %v", record, err)
+	}
+	if err := clearNodeV1Owner(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	if err := markNodeV1Disabled(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	record, err = readNodeV1Runtime(t.Context(), client)
+	if err != nil || !record.DisabledComplete || !record.BootDisabled || record.Phase != "disabled" || len(record.LastGood) != 0 || record.OwnerPID != 0 {
+		t.Fatalf("disabled checkpoint = %+v, %v", record, err)
+	}
+}
