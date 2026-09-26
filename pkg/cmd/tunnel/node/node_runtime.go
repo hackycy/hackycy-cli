@@ -3,7 +3,6 @@ package node
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -167,10 +166,7 @@ func (runtime *nodeRuntime) applyAccepted(ctx context.Context) (runtimeRecord, s
 		return runtime.rollback(ctx, record, "NODE_APPLY_FAILED")
 	}
 	runtime.mark("candidate-started")
-	if err := runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET last_good=candidate, applied_revision=highest_revision, phase='applied', failure_code='', boot_disabled=0, disabled_complete=0 WHERE id=1`)
-		return err
-	}); err != nil {
+	if err := markNodeV1RunningApplied(ctx, runtime.state.client); err != nil {
 		return runtime.rollback(ctx, record, "NODE_APPLY_FAILED")
 	}
 	runtime.mark("applied")
@@ -183,10 +179,7 @@ func (runtime *nodeRuntime) applyAccepted(ctx context.Context) (runtimeRecord, s
 }
 
 func (runtime *nodeRuntime) applyDisabled(ctx context.Context, record runtimeRecord) (runtimeRecord, string) {
-	if err := runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET boot_disabled=1, disabled_complete=0, phase='disabling', failure_code='' WHERE id=1`)
-		return err
-	}); err != nil {
+	if err := markNodeV1Disabling(ctx, runtime.state.client); err != nil {
 		return record, "UNAVAILABLE"
 	}
 	runtime.mark("disabling")
@@ -206,10 +199,7 @@ func (runtime *nodeRuntime) applyDisabled(ctx context.Context, record runtimeRec
 	if err := runtime.removeRuntimeFiles(); err != nil {
 		return runtime.fail(ctx, record, "NODE_APPLY_FAILED")
 	}
-	if err := runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET last_good=NULL, applied_revision=highest_revision, phase='disabled', disabled_complete=1, failure_code='' WHERE id=1`)
-		return err
-	}); err != nil {
+	if err := markNodeV1Disabled(ctx, runtime.state.client); err != nil {
 		return record, "UNAVAILABLE"
 	}
 	runtime.mark("disabled-complete")
@@ -294,10 +284,7 @@ func (runtime *nodeRuntime) rollback(ctx context.Context, record runtimeRecord, 
 }
 
 func (runtime *nodeRuntime) setPhase(ctx context.Context, phase, failure string) error {
-	return runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET phase=?, failure_code=? WHERE id=1`, phase, failure)
-		return err
-	})
+	return setNodeV1Phase(ctx, runtime.state.client, phase, failure)
 }
 
 func (runtime *nodeRuntime) render(snapshot desiredSnapshot, digest string) (string, error) {
@@ -371,10 +358,7 @@ func (runtime *nodeRuntime) rememberOwner(ctx context.Context, config string) er
 	if err != nil {
 		return err
 	}
-	return runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=?, owner_create_time=?, owner_started='', owner_binary=?, owner_config=? WHERE id=1`, owner.PID, owner.CreateTimeUnixMs, owner.BinaryPath, owner.ConfigPath)
-		return err
-	})
+	return setNodeV1Owner(ctx, runtime.state.client, owner.PID, owner.CreateTimeUnixMs, owner.BinaryPath, owner.ConfigPath)
 }
 
 func (runtime *nodeRuntime) captureOwner(pid int, binary, config string) (tunnelruntime.ProcessOwner, error) {
@@ -394,10 +378,7 @@ func (runtime *nodeRuntime) captureOwner(pid int, binary, config string) (tunnel
 }
 
 func (runtime *nodeRuntime) clearOwner(ctx context.Context) error {
-	return runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET owner_pid=0, owner_create_time=0, owner_started='', owner_binary='', owner_config='' WHERE id=1`)
-		return err
-	})
+	return clearNodeV1Owner(ctx, runtime.state.client)
 }
 
 func (runtime *nodeRuntime) recover(ctx context.Context) string {
@@ -410,8 +391,8 @@ func (runtime *nodeRuntime) recover(ctx context.Context) string {
 	if err != nil {
 		return "UNAVAILABLE"
 	}
-	var bindings int
-	if err := runtime.state.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM binding`).Scan(&bindings); err != nil {
+	bindings, err := runtime.state.client.ControllerBinding.Query().Count(ctx)
+	if err != nil {
 		return "UNAVAILABLE"
 	}
 	if bindings == 0 {
@@ -452,10 +433,7 @@ func (runtime *nodeRuntime) recover(ctx context.Context) string {
 			return "NODE_APPLY_FAILED"
 		}
 		if !record.DisabledComplete {
-			if err := runtime.state.updateRuntime(ctx, func(tx *sql.Tx) error {
-				_, err := tx.ExecContext(ctx, `UPDATE node_runtime SET last_good=NULL, applied_revision=highest_revision, phase='disabled', disabled_complete=1, failure_code='' WHERE id=1`)
-				return err
-			}); err != nil {
+			if err := markNodeV1Disabled(ctx, runtime.state.client); err != nil {
 				return "UNAVAILABLE"
 			}
 		}

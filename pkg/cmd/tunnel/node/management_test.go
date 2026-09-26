@@ -192,7 +192,7 @@ func TestNodeClaimFirstControllerWinsAndBindingSurvivesRestart(t *testing.T) {
 		t.Fatal("preview fingerprint did not use persisted key")
 	}
 	var bindingCount int
-	if err := state.db.QueryRow(`SELECT count(*) FROM binding`).Scan(&bindingCount); err != nil || bindingCount != 0 {
+	if err := state.db.QueryRow(`SELECT count(*) FROM controller_binding`).Scan(&bindingCount); err != nil || bindingCount != 0 {
 		t.Fatalf("preview bound Controller: (%d, %v)", bindingCount, err)
 	}
 	controllers := []*testController{newTestController(t, server.URL), newTestController(t, server.URL)}
@@ -298,7 +298,7 @@ func TestNodeRejectsWrongVersionOversizeSequenceAndIdentityWithoutBinding(t *tes
 		t.Fatalf("wrong sequence = (%d, %+v)", status, wireError)
 	}
 	var bindingCount int
-	if err := state.db.QueryRow(`SELECT count(*) FROM binding`).Scan(&bindingCount); err != nil || bindingCount != 0 {
+	if err := state.db.QueryRow(`SELECT count(*) FROM controller_binding`).Scan(&bindingCount); err != nil || bindingCount != 0 {
 		t.Fatalf("bad frame changed binding = (%d, %v)", bindingCount, err)
 	}
 	frame.Seq = 0
@@ -316,7 +316,7 @@ func TestNodeRejectsWrongVersionOversizeSequenceAndIdentityWithoutBinding(t *tes
 	if status := controller.post(t, "/node/noise/message", frame, &wireError); status != http.StatusBadRequest || wireError["error"] != "BAD_FRAME" {
 		t.Fatalf("replayed claim = (%d, %+v)", status, wireError)
 	}
-	if err := state.db.QueryRow(`SELECT count(*) FROM binding`).Scan(&bindingCount); err != nil || bindingCount != 1 {
+	if err := state.db.QueryRow(`SELECT count(*) FROM controller_binding`).Scan(&bindingCount); err != nil || bindingCount != 1 {
 		t.Fatalf("replay changed binding = (%d, %v)", bindingCount, err)
 	}
 	id, _ = controller.start(t)
@@ -365,7 +365,7 @@ func TestNodeExpiresHandshakeAndSessionWithoutBinding(t *testing.T) {
 		t.Fatalf("expired session = (%d, %+v)", status, wireError)
 	}
 	var count int
-	if err := state.db.QueryRow(`SELECT count(*) FROM binding`).Scan(&count); err != nil || count != 0 {
+	if err := state.db.QueryRow(`SELECT count(*) FROM controller_binding`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expiry changed binding = (%d, %v)", count, err)
 	}
 }
@@ -395,7 +395,7 @@ func TestNodePreviewFingerprintMismatchSendsNoClaim(t *testing.T) {
 	}
 	// A Controller that pinned the preview key must end here, before XX m3 or claim.
 	var count int
-	if err := second.db.QueryRow(`SELECT count(*) FROM binding`).Scan(&count); err != nil || count != 0 {
+	if err := second.db.QueryRow(`SELECT count(*) FROM controller_binding`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("mismatched Node was claimed: (%d, %v)", count, err)
 	}
 }

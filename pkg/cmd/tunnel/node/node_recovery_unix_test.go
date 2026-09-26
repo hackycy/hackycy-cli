@@ -161,7 +161,7 @@ func TestNodeSIGKILLRecoveryAtRuntimeCommitBoundaries(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = child.Wait()
-			staleTransfer := filepath.Join(directory, "snapshot-abandoned")
+			staleTransfer := filepath.Join(directory, "node-state-v1", "snapshot-abandoned")
 			if err := os.WriteFile(staleTransfer, []byte("partial"), 0o600); err != nil {
 				t.Fatal(err)
 			}

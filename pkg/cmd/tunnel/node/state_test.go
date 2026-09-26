@@ -28,7 +28,7 @@ func TestNodeStateIdentityPersistsAndDirectoryIsExclusive(t *testing.T) {
 	fingerprint, nodeID := state.Fingerprint(), state.nodeID
 	if runtime.GOOS != "windows" {
 		for _, suffix := range []string{"", "-wal", "-shm"} {
-			info, err := os.Stat(filepath.Join(directory, nodeDatabaseFile+suffix))
+			info, err := os.Stat(filepath.Join(state.directory, nodeDatabaseFile+suffix))
 			if err != nil || info.Mode().Perm()&0o077 != 0 {
 				t.Fatalf("Node database%s is not private while open: (%v, %v)", suffix, info, err)
 			}
@@ -55,7 +55,7 @@ func TestNodeStateIdentityPersistsAndDirectoryIsExclusive(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" {
 		for _, name := range []string{"", nodeDatabaseFile} {
-			info, err := os.Stat(filepath.Join(directory, name))
+			info, err := os.Stat(filepath.Join(directory, "node-state-v1", name))
 			if err != nil || info.Mode().Perm()&0o077 != 0 {
 				t.Fatalf("%s is not private: (%v, %v)", name, info, err)
 			}
@@ -72,7 +72,7 @@ func TestNodeStateRejectsDamagedOrIncompleteDirectoryWithoutReplacingIdentity(t 
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(directory, nodeDatabaseFile)
+	path := filepath.Join(directory, "node-state-v1", nodeDatabaseFile)
 	if err := os.WriteFile(path, []byte("not sqlite"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -91,13 +91,16 @@ func TestNodeStateRejectsDamagedOrIncompleteDirectoryWithoutReplacingIdentity(t 
 	if err := os.Mkdir(other, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(other, "node.sqlite-wal"), []byte("orphan"), 0o600); err != nil {
+	if err := os.Mkdir(filepath.Join(other, "node-state-v1"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(other, "node-state-v1", "node.sqlite-wal"), []byte("orphan"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := OpenState(other); err == nil {
 		t.Fatal("orphaned WAL was accepted")
 	}
-	if _, err := os.Stat(filepath.Join(other, nodeDatabaseFile)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(other, "node-state-v1", nodeDatabaseFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing database was generated: %v", err)
 	}
 }
@@ -112,20 +115,20 @@ func TestNodeStateDoesNotReplaceIdentityWhenOnlyDatabaseIsLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, suffix := range []string{"", "-wal", "-shm"} {
-		if err := os.Remove(filepath.Join(directory, nodeDatabaseFile+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(directory, "node-state-v1", nodeDatabaseFile+suffix)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
 		}
 	}
 	if _, err := OpenState(directory); err == nil {
 		t.Fatal("missing database generated a replacement identity")
 	}
-	if _, err := os.Stat(filepath.Join(directory, nodeDatabaseFile)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(directory, "node-state-v1", nodeDatabaseFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing database was recreated: %v", err)
 	}
 }
 
 func TestNodeStateRejectsIncompleteRuntimeWithoutChangingDatabase(t *testing.T) {
-	for _, statement := range []string{`DELETE FROM node_runtime`, `UPDATE node_runtime SET highest_revision=1, highest_digest='wrong', candidate='{}' WHERE id=1`} {
+	for _, statement := range []string{`DELETE FROM runtime_state`, `UPDATE runtime_state SET highest_revision=1, highest_digest='wrong', candidate='{}' WHERE id=1`} {
 		t.Run(statement, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "node")
 			state, err := OpenState(directory)
@@ -135,7 +138,7 @@ func TestNodeStateRejectsIncompleteRuntimeWithoutChangingDatabase(t *testing.T) 
 			if err := state.Close(); err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(directory, nodeDatabaseFile)
+			path := filepath.Join(directory, "node-state-v1", nodeDatabaseFile)
 			db, err := sql.Open("sqlite3", nodeDatabaseURI(path))
 			if err != nil {
 				t.Fatal(err)
@@ -162,54 +165,45 @@ func TestNodeStateRejectsIncompleteRuntimeWithoutChangingDatabase(t *testing.T) 
 	}
 }
 
-func TestNodeStateMigratesSchemaV3OwnerRecord(t *testing.T) {
+func TestNodeStateLeavesLegacyRootFilesUntouched(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "node")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := map[string][]byte{
+		nodeDatabaseFile:    []byte("old database"),
+		nodeInitializedFile: []byte("old marker"),
+		"frps-legacy.toml":  []byte("old FRPS config"),
+		"snapshot-legacy":   []byte("old transfer"),
+	}
+	for name, contents := range legacy {
+		if err := os.WriteFile(filepath.Join(directory, name), contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	state, err := OpenState(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
+	fingerprint := state.Fingerprint()
 	if err := state.Close(); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite3", nodeDatabaseURI(filepath.Join(directory, nodeDatabaseFile)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`
-		UPDATE meta SET value='3' WHERE key='schema_version';
-		ALTER TABLE node_runtime RENAME TO node_runtime_v4;
-		CREATE TABLE node_runtime (id INTEGER PRIMARY KEY CHECK(id=1), highest_revision INTEGER NOT NULL DEFAULT 0, highest_digest TEXT NOT NULL DEFAULT '', candidate BLOB, phase TEXT NOT NULL DEFAULT 'idle', applied_revision INTEGER NOT NULL DEFAULT 0, last_good BLOB, boot_disabled INTEGER NOT NULL DEFAULT 0, disabled_complete INTEGER NOT NULL DEFAULT 0, failure_code TEXT NOT NULL DEFAULT '', owner_pid INTEGER NOT NULL DEFAULT 0, owner_started TEXT NOT NULL DEFAULT '', owner_binary TEXT NOT NULL DEFAULT '', owner_config TEXT NOT NULL DEFAULT '');
-		INSERT INTO node_runtime(id, highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config)
-		SELECT id, highest_revision, highest_digest, candidate, phase, applied_revision, last_good, boot_disabled, disabled_complete, failure_code, owner_pid, owner_started, owner_binary, owner_config FROM node_runtime_v4;
-		DROP TABLE node_runtime_v4;
-		UPDATE node_runtime SET owner_pid=12345, owner_started='legacy start', owner_binary='/tmp/frps', owner_config='/tmp/frps.toml' WHERE id=1;
-	`); err != nil {
-		_ = db.Close()
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
 	state, err = OpenState(directory)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer state.Close()
-	var version string
-	if err := state.db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&version); err != nil {
+	if state.Fingerprint() != fingerprint {
+		t.Fatal("v1 identity changed across restart")
+	}
+	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if version != nodeSchemaVersion {
-		t.Fatalf("schema version = %q, want %q", version, nodeSchemaVersion)
-	}
-	var createTime int64
-	var ownerPID int
-	var ownerStarted, ownerBinary, ownerConfig string
-	if err := state.db.QueryRow(`SELECT owner_pid, owner_create_time, owner_started, owner_binary, owner_config FROM node_runtime WHERE id=1`).Scan(&ownerPID, &createTime, &ownerStarted, &ownerBinary, &ownerConfig); err != nil {
-		t.Fatal(err)
-	}
-	if ownerPID != 12345 || createTime != 0 || ownerStarted != "legacy start" || ownerBinary != "/tmp/frps" || ownerConfig != "/tmp/frps.toml" {
-		t.Fatalf("migrated owner = (%d, %d, %q, %q, %q)", ownerPID, createTime, ownerStarted, ownerBinary, ownerConfig)
+	for name, want := range legacy {
+		got, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("legacy %s changed: %q, %v", name, got, err)
+		}
 	}
 }
 

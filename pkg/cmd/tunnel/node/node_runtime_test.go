@@ -229,7 +229,7 @@ func TestNodeDisabledIntentPrecedesStopAndClearsRuntimeReferences(t *testing.T) 
 		_ = connection.Close()
 		t.Fatal("FRPS still listening after disabled")
 	}
-	files, err := filepath.Glob(filepath.Join(stateDirectory, "frps-*"))
+	files, err := filepath.Glob(filepath.Join(state.directory, "frps-*"))
 	if err != nil || len(files) != 0 {
 		t.Fatalf("effective config files remain: %v, %v", files, err)
 	}

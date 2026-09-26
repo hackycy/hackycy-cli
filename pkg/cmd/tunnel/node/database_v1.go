@@ -76,16 +76,9 @@ func openEmptyNodeV1Database(ctx context.Context, dataDirectory string) (*sql.DB
 	if err := windowsacl.RestrictPrivatePath(path); err != nil {
 		return nil, nil, err
 	}
-	db, err := sql.Open("sqlite3", nodeDatabaseURI(path))
+	db, client, err := openNodeV1Database(ctx, path)
 	if err != nil {
 		return nil, nil, err
-	}
-	db.SetMaxOpenConns(1)
-	for _, statement := range []string{"PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA busy_timeout=5000"} {
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			_ = db.Close()
-			return nil, nil, fmt.Errorf("configure Node v1 database: %w", err)
-		}
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -100,6 +93,21 @@ func openEmptyNodeV1Database(ctx context.Context, dataDirectory string) (*sql.DB
 	if err := tx.Commit(); err != nil {
 		_ = db.Close()
 		return nil, nil, err
+	}
+	return db, client, nil
+}
+
+func openNodeV1Database(ctx context.Context, path string) (*sql.DB, *nodeent.Client, error) {
+	db, err := sql.Open("sqlite3", nodeDatabaseURI(path))
+	if err != nil {
+		return nil, nil, err
+	}
+	db.SetMaxOpenConns(1)
+	for _, statement := range []string{"PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA busy_timeout=5000"} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			_ = db.Close()
+			return nil, nil, fmt.Errorf("configure Node v1 database: %w", err)
+		}
 	}
 	return db, nodeent.NewClient(nodeent.Driver(entsql.OpenDB(dialect.SQLite, db))), nil
 }
