@@ -875,39 +875,49 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                       )}
                     </div>
                     <div className="client-assignment">
-                      <div className="summary-fact">
-                        <span>Current Node</span>
-                        <strong>{nodes.find(node => node.id === client.assignment.nodeId)?.name ?? client.assignment.nodeId}</strong>
+                      <div className="client-assignment-heading">
+                        <h2>Node routing</h2>
+                        <span>Client traffic and application state</span>
                       </div>
-                      <div className="summary-fact">
-                        <span>Pending Node</span>
-                        <strong>{client.assignment.pendingNodeId ? nodes.find(node => node.id === client.assignment.pendingNodeId)?.name ?? client.assignment.pendingNodeId : 'None'}</strong>
-                      </div>
-                      {client.assignment.pendingNodeId && client.assignment.pendingNode && !client.assignment.pendingNode.selectability.selectable && (
+                      <div className="client-route">
                         <div className="summary-fact">
-                          <span>Pending target</span>
-                          <Status value={client.assignment.pendingNode.selectability.reason ?? 'unavailable'} />
+                          <span>Current Node</span>
+                          <strong>{nodes.find(node => node.id === client.assignment.nodeId)?.name ?? client.assignment.nodeId}</strong>
                         </div>
-                      )}
-                      <div className="summary-fact">
-                        <span>Client applied Node</span>
-                        <strong>{client.assignment.appliedNodeId ? nodes.find(node => node.id === client.assignment.appliedNodeId)?.name ?? client.assignment.appliedNodeId : 'Not yet reported'}</strong>
+                        <ArrowRight className="client-route-arrow" size={16} aria-hidden="true" />
+                        <div className="summary-fact">
+                          <span>Pending Node</span>
+                          <strong>{client.assignment.pendingNodeId ? nodes.find(node => node.id === client.assignment.pendingNodeId)?.name ?? client.assignment.pendingNodeId : 'None'}</strong>
+                        </div>
+                        <ArrowRight className="client-route-arrow" size={16} aria-hidden="true" />
+                        <div className="summary-fact">
+                          <span>Client applied Node</span>
+                          <strong>{client.assignment.appliedNodeId ? nodes.find(node => node.id === client.assignment.appliedNodeId)?.name ?? client.assignment.appliedNodeId : 'Not yet reported'}</strong>
+                        </div>
                       </div>
-                      <div className="summary-fact">
-                        <span>Target application</span>
-                        <Status value={client.assignment.appliedNodeId === client.assignment.nodeId && client.lastAppliedRevision === client.desiredRevision ? 'applied' : 'pending'} />
-                      </div>
-                      <div className="summary-fact">
-                        <span>FRPC connection</span>
-                        <Status value={client.frpc.connection} />
-                      </div>
-                      <div className="summary-fact">
-                        <span>Proxy observation</span>
-                        <strong>
-                          {client.frpc.proxies.length}
-                          {' '}
-                          observed
-                        </strong>
+                      <div className="client-assignment-signals">
+                        {client.assignment.pendingNodeId && client.assignment.pendingNode && !client.assignment.pendingNode.selectability.selectable && (
+                          <div className="summary-fact">
+                            <span>Pending target</span>
+                            <Status value={client.assignment.pendingNode.selectability.reason ?? 'unavailable'} />
+                          </div>
+                        )}
+                        <div className="summary-fact">
+                          <span>Target application</span>
+                          <Status value={client.assignment.appliedNodeId === client.assignment.nodeId && client.lastAppliedRevision === client.desiredRevision ? 'applied' : 'pending'} />
+                        </div>
+                        <div className="summary-fact">
+                          <span>FRPC connection</span>
+                          <Status value={client.frpc.connection} />
+                        </div>
+                        <div className="summary-fact">
+                          <span>Proxy observation</span>
+                          <strong>
+                            {client.frpc.proxies.length}
+                            {' '}
+                            observed
+                          </strong>
+                        </div>
                       </div>
                       {tunnels.some(tunnel => tunnel.protocol === 'http') && (
                         <div className="client-assignment-dns">

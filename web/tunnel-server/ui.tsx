@@ -23,9 +23,9 @@ function statusClass(value: string): string {
   return 'status status-muted'
 }
 
-export function Status({ value }: { value: string }): React.JSX.Element {
+export function Status({ value, tone }: { value: string, tone?: 'good' | 'warn' | 'error' | 'muted' }): React.JSX.Element {
   return (
-    <span className={statusClass(value)}>
+    <span className={tone ? `status status-${tone}` : statusClass(value)}>
       <span className="status-dot" aria-hidden="true" />
       <span className="status-label">{value.replaceAll('_', ' ')}</span>
     </span>

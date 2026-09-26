@@ -16,7 +16,7 @@ interface DevelopmentApp {
 const apps: DevelopmentApp[] = [
   { mode: 'diff', defaultPort: 5173, shellPaths: ['/', '/deep/link'], title: 'HACKYCY CLI — DIFF SERVER', proxyPaths: ['/api/fixture', '/mcp/fixture'] },
   { mode: 'fs', defaultPort: 5174, shellPaths: ['/', '/browse/documents'], title: 'HACKYCY CLI - FILE BROWSER', proxyPaths: ['/api/fixture', '/files/fixture', '/thumbnails/fixture'] },
-  { mode: 'tunnel-server', defaultPort: 5175, shellPaths: ['/', '/clients/client-1'], title: 'HACKYCY CLI - TUNNEL CONTROL PLANE', proxyPaths: ['/api/fixture'] },
+  { mode: 'tunnel-server', defaultPort: 5175, shellPaths: ['/', '/clients/client-1', '/nodes', '/nodes/node-1'], title: 'HACKYCY CLI - TUNNEL CONTROL PLANE', proxyPaths: ['/api/fixture'] },
 ]
 
 describe.sequential('development proxy modes', () => {
@@ -26,7 +26,7 @@ describe.sequential('development proxy modes', () => {
       const port = await reservePort()
       const backend = createServer((request, response) => {
         response.setHeader('Content-Type', 'application/json')
-        response.end(JSON.stringify({ host: request.headers.host, path: request.url }))
+        response.end(JSON.stringify({ host: request.headers.host, path: request.url, origin: request.headers.origin ?? null }))
       })
       backend.listen(0, '127.0.0.1')
       await once(backend, 'listening')
@@ -49,12 +49,29 @@ describe.sequential('development proxy modes', () => {
           const body = await response.text()
           expect(body).toContain(app.title)
           expect(body).toContain('/@vite/client')
+          if (app.mode === 'tunnel-server')
+            expect(body).toContain('src="/tunnel-server/main.tsx"')
+        }
+
+        if (app.mode === 'tunnel-server') {
+          const entry = await request(port, '/tunnel-server/main.tsx')
+          expect(entry.status).toBe(200)
+          expect(entry.headers.get('content-type')).toContain('text/javascript')
         }
 
         for (const path of app.proxyPaths) {
           const response = await request(port, path)
           expect(response.status).toBe(200)
-          await expect(response.json()).resolves.toEqual({ host: `127.0.0.1:${address.port}`, path })
+          await expect(response.json()).resolves.toEqual({ host: `127.0.0.1:${address.port}`, path, origin: null })
+        }
+
+        if (app.mode === 'tunnel-server') {
+          const sameOrigin = await fetch(`http://127.0.0.1:${port}/api/fixture`, { headers: { Origin: `http://127.0.0.1:${port}` } })
+          await expect(sameOrigin.json()).resolves.toMatchObject({ origin: backendURL })
+          const foreignOrigin = await fetch(`http://127.0.0.1:${port}/api/fixture`, { headers: { Origin: 'http://foreign.example.test' } })
+          await expect(foreignOrigin.json()).resolves.toMatchObject({ origin: 'http://foreign.example.test' })
+          const differentScheme = await fetch(`http://127.0.0.1:${port}/api/fixture`, { headers: { Origin: `https://127.0.0.1:${port}` } })
+          await expect(differentScheme.json()).resolves.toMatchObject({ origin: `https://127.0.0.1:${port}` })
         }
 
         expect((await request(port, '/assets/missing.js')).status).toBe(404)

@@ -1,4 +1,4 @@
-import type { Plugin } from 'vite'
+import type { Plugin, ProxyOptions } from 'vite'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import tailwindcss from '@tailwindcss/vite'
@@ -26,7 +26,7 @@ function isShellRoute(mode: AppMode, pathname: string): boolean {
     return true
   if (mode === 'fs')
     return pathname === '/' || pathname === '/browse' || pathname.startsWith('/browse/')
-  return pathname === '/' || pathname === '/clients' || pathname.startsWith('/clients/') || pathname === '/accounts' || pathname === '/server'
+  return pathname === '/' || pathname === '/clients' || pathname.startsWith('/clients/') || pathname === '/nodes' || pathname.startsWith('/nodes/') || pathname === '/accounts' || pathname === '/server'
 }
 
 function developmentShellPlugin(mode: AppMode): Plugin {
@@ -61,11 +61,32 @@ function developmentShellPlugin(mode: AppMode): Plugin {
   }
 }
 
+function tunnelProxyOptions(backend: string): ProxyOptions {
+  return {
+    target: backend,
+    changeOrigin: true,
+    configure(proxy) {
+      proxy.on('proxyReq', (proxyRequest, request) => {
+        const origin = request.headers.origin
+        if (!origin || !request.headers.host)
+          return
+        try {
+          if (new URL(origin).origin === `http://${request.headers.host}`)
+            proxyRequest.setHeader('Origin', new URL(backend).origin)
+        }
+        catch {
+          // Leave malformed or foreign origins for the backend to reject.
+        }
+      })
+    },
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const selected = selectedApp(mode)
   const app = developmentApps[selected]
   const backend = process.env.YCY_WEB_BACKEND ?? `http://127.0.0.1:${app.port + 1000}`
-  const proxy = Object.fromEntries(app.proxy.map(path => [path, { target: backend, changeOrigin: true }]))
+  const proxy = Object.fromEntries(app.proxy.map(path => [path, selected === 'tunnel-server' ? tunnelProxyOptions(backend) : { target: backend, changeOrigin: true }]))
 
   return {
     plugins: [developmentShellPlugin(selected), react(), tailwindcss()],

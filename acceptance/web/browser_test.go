@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,6 +77,7 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 			if testCase.name == "tunnel" {
 				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
 				assertTunnelClientAssignmentPage(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
+				assertTunnelNodePages(t, pageURL, signInTunnelBrowserSession(t, pageURL))
 			}
 			if err := service.stop(); err != nil {
 				t.Fatalf("clean shutdown: %v", err)
@@ -528,18 +530,20 @@ func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSessi
 	); err != nil {
 		t.Fatalf("open Client assignment page: %v", err)
 	}
-	for _, viewport := range []struct{ width, height int64 }{{1280, 800}, {390, 844}} {
+	for _, viewport := range []struct{ width, height int64 }{{1280, 800}, {390, 844}, {320, 700}} {
 		if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(viewport.width, viewport.height, 1, false)); err != nil {
 			t.Fatalf("set Client viewport %d: %v", viewport.width, err)
 		}
 		var result struct {
 			Labels     []string `json:"labels"`
+			Route      []string `json:"route"`
 			DNS        string   `json:"dns"`
 			NodeOption string   `json:"nodeOption"`
 			Overflow   bool     `json:"overflow"`
 		}
 		if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
 			labels: [...document.querySelectorAll('.client-assignment .summary-fact > span')].map(element => element.textContent.trim()),
+			route: [...document.querySelectorAll('.client-route .summary-fact > span')].map(element => element.textContent.trim()),
 			dns: document.querySelector('.client-assignment-dns strong')?.textContent.trim() ?? '',
 			nodeOption: document.querySelector('[aria-label="Choose Client Node"] option:checked')?.textContent.trim() ?? '',
 			overflow: document.documentElement.scrollWidth > window.innerWidth + 1
@@ -560,6 +564,118 @@ func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSessi
 		if result.DNS == "" || result.NodeOption == "" || result.Overflow {
 			t.Fatalf("Client viewport %d DNS, Node selection or layout: %+v", viewport.width, result)
 		}
+		if !slices.Equal(result.Route, []string{"Current Node", "Pending Node", "Client applied Node"}) {
+			t.Fatalf("Client viewport %d Node route order: %+v", viewport.width, result.Route)
+		}
+	}
+}
+
+func assertTunnelNodePages(t *testing.T, pageURL string, browserSession *http.Cookie) {
+	t.Helper()
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	allocatorOptions = append(allocatorOptions, chromedp.ExecPath(chromeExecutable(t)), chromedp.Flag("disable-gpu", true), chromedp.Flag("headless", true))
+	allocatorContext, closeAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer closeAllocator()
+	browserContext, closeBrowser := chromedp.NewContext(allocatorContext)
+	defer closeBrowser()
+	ctx, cancel := context.WithTimeout(browserContext, 45*time.Second)
+	defer cancel()
+	if err := chromedp.Run(ctx,
+		network.Enable(),
+		network.SetCookie(browserSession.Name, browserSession.Value).WithURL(pageURL).WithHTTPOnly(browserSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
+		chromedp.Navigate(pageURL+"/nodes"),
+		chromedp.WaitVisible(`.nodes-table tbody tr`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("open Node list: %v", err)
+	}
+	for _, viewport := range []struct{ width, height int64 }{{1280, 800}, {390, 844}, {320, 700}} {
+		if err := chromedp.Run(ctx, emulation.SetDeviceMetricsOverride(viewport.width, viewport.height, 1, false)); err != nil {
+			t.Fatalf("set Node viewport %d: %v", viewport.width, err)
+		}
+		var result struct {
+			Availability string `json:"availability"`
+			FRP          string `json:"frp"`
+			Overflow     bool   `json:"overflow"`
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+			availability: document.querySelector('.nodes-table td[data-label="Availability"]')?.textContent.trim() ?? '',
+			frp: document.querySelector('.node-endpoints code')?.textContent.trim() ?? '',
+			overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+		}))()`, &result)); err != nil {
+			t.Fatalf("inspect Node list viewport %d: %v", viewport.width, err)
+		}
+		if result.Availability == "" || result.FRP == "" || result.Overflow {
+			t.Fatalf("Node list viewport %d: %+v", viewport.width, result)
+		}
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.Click(`.nodes-table .entity-link`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.node-health`, chromedp.ByQuery),
+		emulation.SetDeviceMetricsOverride(1280, 800, 1, false),
+	); err != nil {
+		t.Fatalf("open local Node detail: %v", err)
+	}
+	var detail struct {
+		Health          string  `json:"health"`
+		LayoutWidth     float64 `json:"layoutWidth"`
+		ConnectionWidth float64 `json:"connectionWidth"`
+		Overflow        bool    `json:"overflow"`
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+		health: document.querySelector('.node-health')?.textContent.trim() ?? '',
+		layoutWidth: document.querySelector('.node-detail-layout')?.getBoundingClientRect().width ?? 0,
+		connectionWidth: document.querySelector('.node-detail-band')?.getBoundingClientRect().width ?? 0,
+		overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+	}))()`, &detail)); err != nil {
+		t.Fatalf("inspect local Node detail: %v", err)
+	}
+	if !strings.Contains(detail.Health, "Availability") || !strings.Contains(detail.Health, "FRPS now") || detail.Overflow || detail.LayoutWidth-detail.ConnectionWidth > 1 {
+		t.Fatalf("local Node detail: %+v", detail)
+	}
+	if err := chromedp.Run(ctx,
+		emulation.SetDeviceMetricsOverride(320, 700, 1, false),
+		chromedp.Click(`.admin-back-button`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.nodes-table tbody tr`, chromedp.ByQuery),
+		chromedp.Click(`//button[normalize-space()="Add Node"]`, chromedp.BySearch),
+		chromedp.WaitVisible(`.node-modal`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("open Add Node dialog: %v", err)
+	}
+	var addDialog struct {
+		Mode     bool `json:"mode"`
+		Preview  bool `json:"preview"`
+		Overflow bool `json:"overflow"`
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+		mode: !!document.querySelector('[aria-label="Registration mode"]'),
+		preview: [...document.querySelectorAll('.node-modal button')].some(button => button.textContent.includes('Preview fingerprint')),
+		overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+	}))()`, &addDialog)); err != nil {
+		t.Fatalf("inspect Add Node dialog: %v", err)
+	}
+	if !addDialog.Mode || !addDialog.Preview || addDialog.Overflow {
+		t.Fatalf("Add Node dialog: %+v", addDialog)
+	}
+	if err := chromedp.Run(ctx,
+		chromedp.SendKeys(`.node-modal input[required]:not([type="url"])`, "Unreachable preview", chromedp.ByQuery),
+		chromedp.SendKeys(`.node-modal input[type="url"]`, "http://127.0.0.1:1", chromedp.ByQuery),
+		chromedp.Click(`//button[normalize-space()="Preview fingerprint"]`, chromedp.BySearch),
+		chromedp.WaitVisible(`.node-modal [role="alert"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("preview unreachable Node: %v", err)
+	}
+	var previewError struct {
+		Message  string `json:"message"`
+		Overflow bool   `json:"overflow"`
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+		message: document.querySelector('.node-modal [role="alert"]')?.textContent.trim() ?? '',
+		overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+	}))()`, &previewError)); err != nil {
+		t.Fatalf("inspect Node preview error: %v", err)
+	}
+	if !strings.Contains(previewError.Message, "management address") || previewError.Overflow {
+		t.Fatalf("Node preview error: %+v", previewError)
 	}
 }
 

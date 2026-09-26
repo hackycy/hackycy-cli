@@ -80,32 +80,39 @@ export function NodeClaimDialog({ onClose, onCreated }: { onClose: () => void, o
     }
   }
   return (
-    <DialogShell open title="Add Node" busy={busy} onOpenChange={open => !open && onClose()} onSubmit={event => void submit(event)}>
-      <label>
-        Display name
-        <input required maxLength={100} value={name} disabled={busy} onChange={event => setName(event.target.value)} />
-      </label>
-      <label>
-        Management address
-        <input
-          required
-          type="url"
-          placeholder="http://node.example.com:7600"
-          value={address}
-          disabled={busy}
-          onChange={(event) => {
-            setAddress(event.target.value)
-            setPreview(undefined)
-            setConfirmed(false)
-          }}
-        />
-      </label>
-      <SegmentedControl label="Registration mode" className="two-segments" value={mode} disabled={busy} onChange={value => setMode(value as 'claim' | 'readd')} options={[{ value: 'claim', label: 'Claim new Node' }, { value: 'readd', label: 'Re-add bound Node' }]} />
+    <DialogShell open title="Add Node" className="node-modal" busy={busy} onOpenChange={open => !open && onClose()} onSubmit={event => void submit(event)}>
+      <div className="node-form-section">
+        <h3>Node identity</h3>
+        <label>
+          Display name
+          <input required maxLength={100} value={name} disabled={busy} onChange={event => setName(event.target.value)} />
+        </label>
+        <label>
+          Management address
+          <input
+            required
+            type="url"
+            placeholder="http://node.example.com:7600"
+            value={address}
+            disabled={busy}
+            onChange={(event) => {
+              setAddress(event.target.value)
+              setPreview(undefined)
+              setConfirmed(false)
+            }}
+          />
+        </label>
+        <div className="node-claim-mode">
+          <span>Registration mode</span>
+          <SegmentedControl label="Registration mode" className="two-segments" value={mode} disabled={busy} onChange={value => setMode(value as 'claim' | 'readd')} options={[{ value: 'claim', label: 'Claim new Node' }, { value: 'readd', label: 'Re-add bound Node' }]} />
+        </div>
+      </div>
       {preview && (
         <div className="node-claim-preview">
+          <h3>Verify fingerprint</h3>
           <div className="node-claim-fingerprint">
             <Fingerprint size={16} aria-hidden="true" />
-            <code>{preview.nodeFingerprint}</code>
+            <code aria-label="Node fingerprint">{preview.nodeFingerprint}</code>
           </div>
           <label className="node-claim-confirm">
             <input className="import-checkbox" type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} />
