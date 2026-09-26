@@ -1,7 +1,10 @@
 package node
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,5 +74,69 @@ func TestInitializeNodeV1IdentityIsAtomic(t *testing.T) {
 	identities, err := client.Identity.Query().Count(t.Context())
 	if err != nil || identities != 1 {
 		t.Fatalf("duplicate initialization changed identity count: %d, %v", identities, err)
+	}
+}
+
+func TestInspectNodeV1DatabaseRejectsIncompleteStateWithoutRewriting(t *testing.T) {
+	mutate := func(statement string) func(string) error {
+		return func(root string) error {
+			db, err := sql.Open("sqlite3", nodeDatabaseURI(filepath.Join(root, "node-state-v1", nodeDatabaseFile)))
+			if err != nil {
+				return err
+			}
+			_, err = db.Exec(statement)
+			return errors.Join(err, db.Close())
+		}
+	}
+	for name, damage := range map[string]func(string) error{
+		"missing marker": func(root string) error {
+			return os.Remove(filepath.Join(root, "node-state-v1", nodeInitializedFile))
+		},
+		"missing database": func(root string) error {
+			return os.Remove(filepath.Join(root, "node-state-v1", nodeDatabaseFile))
+		},
+		"missing identity": mutate("DELETE FROM identity"),
+		"missing runtime":  mutate("DELETE FROM runtime_state"),
+		"schema mismatch":  mutate("DROP TABLE controller_binding"),
+		"damaged snapshot": mutate("UPDATE runtime_state SET highest_revision=1, highest_digest='wrong', candidate='{}' WHERE id=1"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			db, client, err := openEmptyNodeV1Database(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := initializeNodeV1Identity(t.Context(), client); err != nil {
+				t.Fatal(err)
+			}
+			stateDirectory := filepath.Join(root, "node-state-v1")
+			if err := secureDatabaseFiles(filepath.Join(stateDirectory, nodeDatabaseFile)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := inspectNodeV1Database(t.Context(), stateDirectory); err != nil {
+				t.Fatalf("valid state rejected: %v", err)
+			}
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := damage(root); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(stateDirectory, nodeDatabaseFile)
+			before, readErr := os.ReadFile(path)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			if _, err := inspectNodeV1Database(t.Context(), stateDirectory); err == nil {
+				t.Fatal("incomplete state was accepted")
+			}
+			after, readErr := os.ReadFile(path)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				t.Fatal(readErr)
+			}
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejection rewrote original database")
+			}
+		})
 	}
 }

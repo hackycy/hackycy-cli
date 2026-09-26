@@ -135,6 +135,7 @@
 - 2026-09-26: initialized as `planned`; no implementation evidence.
 - 2026-09-26: G2 Exit 全部满足后已激活，尚未开始实施；本次 Goal 不进入 G3。
 - 2026-09-26: slice G3-1 (v1 身份及初始运行行写入): 修改 `pkg/cmd/tunnel/node/database_v1.go`、`database_v1_test.go`，新增单个 Ent 事务生成并保存 Identity 和 RuntimeState，重复初始化由约束拒绝且不产生第二行；旧根目录数据库仍由既有 v1 helper 测试证明不变。定向 `GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 ./pkg/cmd/tunnel/node -run '^(TestOpenEmptyNodeV1Database|TestInitializeNodeV1IdentityIsAtomic)$'` 通过（0.822s）；按 Repository 顺序 Node 全包 `go test -count=1 ./pkg/cmd/tunnel/node/...` 同环境通过（64.767s）。风险：生产 OpenState 尚未切到 v1，重开校验、绑定和运行调用簇待迁移；下一步只实现 v1 已有数据库的只读重开检查。
+- 2026-09-26: slice G3-2 (v1 状态只读重开检查): 修改 `pkg/cmd/tunnel/node/database_v1.go`、`database_v1_test.go`，在私有副本上检查初始化标记、数据库/WAL/SHM 文件、SQLite 完整性、与 SQL 资产完全一致的结构、Identity/ControllerBinding/RuntimeState 单行及跨字段和快照关系。测试覆盖标记、数据库、身份、运行行缺失、结构不符及损坏候选；拒绝不改原数据库字节。首次定向因夹具未执行私有 WAL 权限收尾失败，补齐夹具后同环境定向 `go test -count=1 ./pkg/cmd/tunnel/node -run '^(TestOpenEmptyNodeV1Database|TestInitializeNodeV1IdentityIsAtomic|TestInspectNodeV1DatabaseRejectsIncompleteStateWithoutRewriting)$'` 通过（0.867s），按 Repository 顺序 Node 全包通过（64.334s）。风险：生产 OpenState 尚未调用该检查，绑定和运行调用簇待迁移；下一步只实现 v1 ControllerBinding 的读取与 claim。
 
 ### G4: 通过 Node 恢复与最终交付门禁
 
