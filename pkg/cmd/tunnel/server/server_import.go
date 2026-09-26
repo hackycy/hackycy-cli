@@ -179,7 +179,7 @@ func (plane *ServerControlPlane) ImportFRPCTunnels(ctx context.Context, clientID
 				return struct {
 					tunnels []tunnelruntime.TunnelDefinition
 					owner   string
-				}{}, mapTunnelConstraintError(err)
+				}{}, err
 			}
 			tunnel, err := selectTunnel(ctx, connection, tunnelID)
 			if err != nil {

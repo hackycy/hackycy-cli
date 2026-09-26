@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
+	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
@@ -18,26 +20,29 @@ func syncLocalClientRuntimeRevision(ctx context.Context, database *sql.DB, adver
 	if err != nil {
 		return err
 	}
-	_, err = withImmediateTransaction(ctx, database, func(connection *sql.Conn) (struct{}, error) {
-		var previous string
-		lookupErr := connection.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, serverLocalClientRuntimeMetaKey).Scan(&previous)
-		if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
-			return struct{}{}, fmt.Errorf("read Local Client runtime signature: %w", lookupErr)
+	tx, err := serverEntForQueryer(database).Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	previous, err := tx.Meta.Get(ctx, serverLocalClientRuntimeMetaKey)
+	if err != nil && !serverent.IsNotFound(err) {
+		return fmt.Errorf("read Local Client runtime signature: %w", err)
+	}
+	if err == nil && previous.Value != signature {
+		if _, err := tx.ServerClient.Update().Where(serverclient.NodeIDEQ("local")).AddDesiredRevision(1).Save(ctx); err != nil {
+			return fmt.Errorf("advance Local Client runtime revision: %w", err)
 		}
-		if lookupErr == nil && previous != signature {
-			if _, err := connection.ExecContext(ctx, `UPDATE clients SET desired_revision = desired_revision + 1 WHERE node_id = 'local'`); err != nil {
-				return struct{}{}, fmt.Errorf("advance Local Client runtime revision: %w", err)
-			}
-		}
-		if _, err := connection.ExecContext(ctx, `
-			INSERT INTO meta(key, value) VALUES(?, ?)
-			ON CONFLICT(key) DO UPDATE SET value = excluded.value
-		`, serverLocalClientRuntimeMetaKey, signature); err != nil {
-			return struct{}{}, fmt.Errorf("save Local Client runtime signature: %w", err)
-		}
-		return struct{}{}, nil
-	})
-	return err
+	}
+	if previous == nil {
+		_, err = tx.Meta.Create().SetID(serverLocalClientRuntimeMetaKey).SetValue(signature).Save(ctx)
+	} else {
+		_, err = tx.Meta.UpdateOne(previous).SetValue(signature).Save(ctx)
+	}
+	if err != nil {
+		return fmt.Errorf("save Local Client runtime signature: %w", err)
+	}
+	return tx.Commit()
 }
 
 // BuildClientRuntime projects the complete Client runtime from one consistent
@@ -47,60 +52,51 @@ func (plane *ServerControlPlane) BuildClientRuntime(ctx context.Context, clientI
 	if plane == nil || plane.database == nil {
 		return tunnelruntime.ClientRuntime{}, fmt.Errorf("Tunnel server control plane is unavailable")
 	}
-	return withImmediateTransaction(ctx, plane.database, func(connection *sql.Conn) (tunnelruntime.ClientRuntime, error) {
-		client, err := selectClient(ctx, connection, clientID)
+	tx, err := serverEntForQueryer(plane.database).Tx(ctx)
+	if err != nil {
+		return tunnelruntime.ClientRuntime{}, err
+	}
+	defer tx.Rollback()
+	client, err := tx.ServerClient.Get(ctx, clientID)
+	if serverent.IsNotFound(err) {
+		return tunnelruntime.ClientRuntime{}, serverDomainError("NOT_FOUND", "Trusted Tunnel Client was not found")
+	}
+	if err != nil {
+		return tunnelruntime.ClientRuntime{}, err
+	}
+	nodeID := client.NodeID
+	revision, clientKey := client.DesiredRevision, client.ID
+	if nodeID != "local" {
+		node, err := tx.Node.Get(ctx, nodeID)
+		if err != nil || node.Lifecycle != "active" || node.AdvertisedFrpHost == nil || node.AdvertisedFrpPort == nil {
+			return tunnelruntime.ClientRuntime{}, serverDomainError("NODE_TARGET_UNAVAILABLE", "Assigned Node has no complete FRP runtime projection")
+		}
+		remote, err := node.QueryRemoteNode().Only(ctx)
+		if err != nil {
+			return tunnelruntime.ClientRuntime{}, serverDomainError("NODE_TARGET_UNAVAILABLE", "Assigned Node has no complete FRP runtime projection")
+		}
+		advertisedHost, advertisedPort, frpToken = *node.AdvertisedFrpHost, int64(*node.AdvertisedFrpPort), remote.ActiveToken
+	}
+	items, err := tx.Tunnel.Query().Where(tunnel.ClientInternalIDEQ(clientID)).Order(tunnel.ByCreatedAt(), tunnel.ByID()).All(ctx)
+	if err != nil {
+		return tunnelruntime.ClientRuntime{}, fmt.Errorf("list Client Tunnel Definitions: %w", err)
+	}
+	tunnels := make([]tunnelruntime.TunnelDefinition, 0, len(items))
+	for _, item := range items {
+		mapped, err := serverTunnelFromEnt(item)
 		if err != nil {
 			return tunnelruntime.ClientRuntime{}, err
 		}
-		var nodeID string
-		if err := connection.QueryRowContext(ctx, `SELECT node_id FROM clients WHERE internal_id = ?`, clientID).Scan(&nodeID); err != nil {
-			return tunnelruntime.ClientRuntime{}, fmt.Errorf("read Client Node: %w", err)
-		}
-		if nodeID != "local" {
-			var nodeHost string
-			var nodePort int64
-			var nodeToken string
-			if err := connection.QueryRowContext(ctx, `
-				SELECT n.advertised_frp_host, n.advertised_frp_port, r.active_token
-				FROM nodes n JOIN remote_nodes r ON r.node_id = n.node_id
-				WHERE n.node_id = ? AND n.lifecycle = 'active'`, nodeID).Scan(&nodeHost, &nodePort, &nodeToken); err != nil {
-				return tunnelruntime.ClientRuntime{}, serverDomainError("NODE_TARGET_UNAVAILABLE", "Assigned Node has no complete FRP runtime projection")
-			}
-			advertisedHost, advertisedPort, frpToken = nodeHost, nodePort, nodeToken
-		}
-		rows, err := connection.QueryContext(ctx, `
-			SELECT id, client_internal_id, node_id, label, protocol, custom_domains, location, server_port,
-			       local_host, local_port, enabled, options_json, created_at, updated_at
-			FROM tunnels WHERE client_internal_id = ? ORDER BY created_at, id
-		`, clientID)
-		if err != nil {
-			return tunnelruntime.ClientRuntime{}, fmt.Errorf("list Client Tunnel Definitions: %w", err)
-		}
-		defer rows.Close()
-		tunnels := make([]tunnelruntime.TunnelDefinition, 0)
-		for rows.Next() {
-			tunnel, err := scanTunnel(rows)
-			if err != nil {
-				return tunnelruntime.ClientRuntime{}, err
-			}
-			tunnels = append(tunnels, tunnel.TunnelDefinition)
-		}
-		if err := rows.Err(); err != nil {
-			return tunnelruntime.ClientRuntime{}, fmt.Errorf("iterate Client Tunnel Definitions: %w", err)
-		}
-		runtime := tunnelruntime.ClientRuntime{
-			Revision:          client.DesiredRevision,
-			NodeID:            nodeID,
-			AdvertisedFRPHost: advertisedHost,
-			AdvertisedFRPPort: advertisedPort,
-			FRPToken:          frpToken,
-			ClientKey:         client.ID,
-			Tunnels:           tunnels,
-		}
-		runtime.Digest, err = tunnelruntime.RuntimeDigest(runtime)
-		if err != nil {
-			return tunnelruntime.ClientRuntime{}, err
-		}
-		return runtime, nil
-	})
+		tunnels = append(tunnels, mapped.TunnelDefinition)
+	}
+	if err := tx.Commit(); err != nil {
+		return tunnelruntime.ClientRuntime{}, err
+	}
+	runtime := tunnelruntime.ClientRuntime{
+		Revision: revision, NodeID: nodeID,
+		AdvertisedFRPHost: advertisedHost, AdvertisedFRPPort: advertisedPort,
+		FRPToken: frpToken, ClientKey: clientKey, Tunnels: tunnels,
+	}
+	runtime.Digest, err = tunnelruntime.RuntimeDigest(runtime)
+	return runtime, err
 }

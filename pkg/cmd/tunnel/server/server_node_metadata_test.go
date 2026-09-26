@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -9,7 +11,65 @@ import (
 	"time"
 
 	"github.com/hackycy/hackycy-cli/pkg/cmd/tunnel/node"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 )
+
+func TestServerNodeEndpointConstraintMappingAndRollback(t *testing.T) {
+	state := openServerDomainState(t)
+	registry, err := newServerNodeRegistry(state.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	firstID := "0123456789abcdef0123456789abcdef"
+	secondID := "fedcba9876543210fedcba9876543210"
+	for index, id := range []string{firstID, secondID} {
+		key := make([]byte, 32)
+		key[0] = byte(index + 1)
+		if _, err := registry.register(ctx, id, "Remote", fmt.Sprintf("http://127.0.0.1:%d", 7600+index), key, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	endpoint := &serverNodeEndpoint{Host: "EDGE.example.test", Port: 7000}
+	if err := registry.patchMetadata(ctx, firstID, serverNodeMetadataPatch{AdvertisedFRPAddress: endpoint}); err != nil {
+		t.Fatal(err)
+	}
+	newName := "Changed"
+	assertServerDomainCode(t, registry.patchMetadata(ctx, secondID, serverNodeMetadataPatch{Name: &newName, AdvertisedFRPAddress: endpoint}), "NODE_RESOURCE_CONFLICT")
+	second, err := registry.get(ctx, secondID)
+	if err != nil || second.Name != "Remote" || second.AdvertisedFRPHost.Valid {
+		t.Fatalf("second Node after rejected patch = (%+v, %v), want unchanged", second, err)
+	}
+
+	connection, err := state.database.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	client := serverEntOnConnection(connection)
+	assertServerDomainCode(t, mapNodeEndpointConstraintError(ctx, client, secondID, endpoint, sqlite3.CONSTRAINT_UNIQUE), "NODE_RESOURCE_CONFLICT")
+	for _, original := range []error{
+		fmt.Errorf("nodes_frp_endpoint unique: %w", sqlite3.CONSTRAINT_CHECK),
+		sqlite3.CONSTRAINT_FOREIGNKEY,
+		sqlite3.CONSTRAINT_PRIMARYKEY,
+		sqlite3.CONSTRAINT,
+	} {
+		mapped := mapNodeEndpointConstraintError(ctx, client, secondID, endpoint, original)
+		var domain *ServerDomainError
+		if errors.As(mapped, &domain) || !errors.Is(mapped, original) {
+			t.Fatalf("mapped error = %v, want internal error preserving %v", mapped, original)
+		}
+	}
+	for _, mapped := range []error{
+		mapNodeEndpointConstraintError(ctx, client, secondID, &serverNodeEndpoint{Host: "free.example.test", Port: 7000}, sqlite3.CONSTRAINT_UNIQUE),
+		mapNodeEndpointConstraintError(ctx, client, secondID, nil, sqlite3.CONSTRAINT_UNIQUE),
+	} {
+		var domain *ServerDomainError
+		if errors.As(mapped, &domain) || !errors.Is(mapped, sqlite3.CONSTRAINT_UNIQUE) {
+			t.Fatalf("unattributed unique error = %v, want internal error", mapped)
+		}
+	}
+}
 
 func startNodeForMetadataTest(t *testing.T, directory string) (string, func()) {
 	t.Helper()

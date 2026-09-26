@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hackycy/hackycy-cli/internal/filesession"
@@ -24,7 +25,7 @@ func TestOpenStateCreatesFreshGoSessionAndSQLitePrimitives(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = state.Close() })
 
-	wantDirectory := filepath.Join(baseDirectory, "go-v1")
+	wantDirectory := filepath.Join(baseDirectory, "server-state-v1")
 	if state.sessions.Directory() != wantDirectory {
 		t.Fatalf("session directory = %q, want %q", state.sessions.Directory(), wantDirectory)
 	}
@@ -38,7 +39,7 @@ func TestOpenStateCreatesFreshGoSessionAndSQLitePrimitives(t *testing.T) {
 	assertDatabasePragmasAndSchema(t, state)
 }
 
-func TestOpenStateRejectsOldAndUnknownSchemasWithoutChangingFiles(t *testing.T) {
+func TestOpenStateIgnoresOldAndUnknownSchemasWithoutChangingFiles(t *testing.T) {
 	for _, version := range []string{"1", "2", "99"} {
 		t.Run(version, func(t *testing.T) {
 			root := t.TempDir()
@@ -66,9 +67,12 @@ func TestOpenStateRejectsOldAndUnknownSchemasWithoutChangingFiles(t *testing.T) 
 				t.Fatal(err)
 			}
 			before := databaseFileBytes(t, path)
-			if state, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
-				_ = state.Close()
-				t.Fatal("OpenState() accepted incompatible database")
+			state, err := OpenState(StateOptions{DataDirectory: root})
+			if err != nil {
+				t.Fatalf("OpenState() read legacy database: %v", err)
+			}
+			if err := state.Close(); err != nil {
+				t.Fatal(err)
 			}
 			assertDatabaseFilesUnchanged(t, path, before)
 			_ = database.Close()
@@ -129,7 +133,7 @@ func databaseFileBytes(t *testing.T, path string) map[string][]byte {
 	return result
 }
 
-func TestOpenStateRestartsOnlyFreshGoSessionAndSQLiteState(t *testing.T) {
+func TestOpenStateRestartsOnlyServerV1SessionAndSQLiteState(t *testing.T) {
 	baseDirectory := t.TempDir()
 	first, err := OpenState(StateOptions{DataDirectory: baseDirectory})
 	if err != nil {
@@ -207,7 +211,7 @@ func TestOpenStateControllerIdentityMismatchAndMissingDoNotChangeDatabase(t *tes
 	}
 }
 
-func TestOpenStateReusesControllerIdentityWhenOnlyDatabaseIsLost(t *testing.T) {
+func TestOpenStateRejectsMissingV1DatabaseWithoutReplacingIdentity(t *testing.T) {
 	root := t.TempDir()
 	first, err := OpenState(StateOptions{DataDirectory: root})
 	if err != nil {
@@ -226,17 +230,112 @@ func TestOpenStateReusesControllerIdentityWhenOnlyDatabaseIsLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	second, err := OpenState(StateOptions{DataDirectory: root})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		_ = second.Close()
+		t.Fatal("OpenState() recreated missing v1 database")
 	}
-	defer second.Close()
 	keyAfter, err := os.ReadFile(keyPath)
 	if err != nil || string(keyBefore) != string(keyAfter) {
 		t.Fatalf("Controller identity changed after database recreation: %v", err)
 	}
 }
 
-func TestOpenStateRejectsIncompleteV3WithoutChangingFiles(t *testing.T) {
+func TestOpenStateRejectsIncompleteOrDamagedV1WithoutRewritingDatabase(t *testing.T) {
+	for _, change := range []string{"missing session key", "damaged database", "schema mismatch"} {
+		t.Run(change, func(t *testing.T) {
+			root := t.TempDir()
+			state, err := OpenState(StateOptions{DataDirectory: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := state.databasePath
+			if err := state.Close(); err != nil {
+				t.Fatal(err)
+			}
+			switch change {
+			case "missing session key":
+				err = os.Remove(filepath.Join(filepath.Dir(path), ".session-key"))
+			case "damaged database":
+				err = os.WriteFile(path, []byte("not a SQLite database"), 0o600)
+			case "schema mismatch":
+				var database *sql.DB
+				database, err = sql.Open("sqlite3", databaseFileURI(path))
+				if err == nil {
+					_, err = database.Exec("DROP TABLE node_observations")
+					_ = database.Close()
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := databaseFileBytes(t, path)
+			if reopened, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
+				_ = reopened.Close()
+				t.Fatal("OpenState() accepted incomplete or damaged v1 state")
+			}
+			assertDatabaseFilesUnchanged(t, path, before)
+		})
+	}
+}
+
+func TestOpenStateRejectsCrossRecordV1InvariantsWithoutRewritingDatabase(t *testing.T) {
+	for _, test := range []struct {
+		name, mutation, want string
+	}{
+		{"Tunnel Client Node mismatch", `UPDATE tunnels SET node_id='remote' WHERE id='transport'`, "different Node"},
+		{"occupied port outside pool", `UPDATE node_port_pools SET port_start=20001,port_end=20001 WHERE node_id='local'`, "outside its Node pool"},
+		{"hostname split across Nodes", `
+			INSERT INTO tunnels(id,client_internal_id,node_id,protocol,custom_domains,local_host,local_port,created_at,updated_at)
+			VALUES('remote-http','remote-client','remote','http','["shared.example.test"]','localhost',8080,'now','now');
+			INSERT INTO tunnel_http_routes(id,tunnel_id,hostname,location)
+			VALUES('remote-route','remote-http','shared.example.test','/other')`, "split across Nodes"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			state, err := OpenState(StateOptions{DataDirectory: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := state.databasePath
+			_, err = state.database.Exec(`
+				INSERT INTO nodes(node_id,kind,name,created_at,updated_at) VALUES('remote','remote','Remote','now','now');
+				INSERT INTO node_port_pools(node_id,port_start,port_end) VALUES('local',20000,20001),('remote',20000,20001);
+				INSERT INTO accounts(internal_id,kind,username,username_key,role,created_at,updated_at)
+				VALUES('owner','environment','admin','admin','admin','now','now');
+				INSERT INTO clients(internal_id,owner_account_id,node_id,token,created_at)
+				VALUES('local-client','owner','local','local-token','now'),('remote-client','owner','remote','remote-token','now');
+				INSERT INTO tunnels(id,client_internal_id,node_id,protocol,server_port,local_host,local_port,created_at,updated_at)
+				VALUES('transport','local-client','local','tcp',20000,'localhost',8080,'now','now');
+				INSERT INTO tunnels(id,client_internal_id,node_id,protocol,custom_domains,local_host,local_port,created_at,updated_at)
+				VALUES('local-http','local-client','local','http','["shared.example.test"]','localhost',8080,'now','now');
+				INSERT INTO tunnel_http_routes(id,tunnel_id,hostname,location)
+				VALUES('local-route','local-http','shared.example.test','');
+			`)
+			if err == nil {
+				_, err = state.database.Exec(test.mutation)
+			}
+			if err != nil {
+				_ = state.Close()
+				t.Fatal(err)
+			}
+			if err := state.Close(); err != nil {
+				t.Fatal(err)
+			}
+			before := databaseFileBytes(t, path)
+			opened, err := OpenState(StateOptions{DataDirectory: root})
+			if err == nil {
+				_ = opened.Close()
+				t.Fatal("OpenState() accepted broken Server v1 invariant")
+			}
+			if !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("OpenState() error = %v, want %q", err, test.want)
+			}
+			assertDatabaseFilesUnchanged(t, path, before)
+		})
+	}
+}
+
+func TestOpenStateIgnoresIncompleteLegacyV3WithoutChangingFiles(t *testing.T) {
 	root := t.TempDir()
 	directory := filepath.Join(root, "go-v1")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
@@ -254,9 +353,12 @@ func TestOpenStateRejectsIncompleteV3WithoutChangingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := databaseFileBytes(t, path)
-	if state, err := OpenState(StateOptions{DataDirectory: root}); err == nil {
-		_ = state.Close()
-		t.Fatal("OpenState() accepted incomplete v3")
+	state, err := OpenState(StateOptions{DataDirectory: root})
+	if err != nil {
+		t.Fatalf("OpenState() read incomplete legacy database: %v", err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
 	}
 	assertDatabaseFilesUnchanged(t, path, before)
 }
@@ -283,10 +385,10 @@ func assertDatabasePragmasAndSchema(t *testing.T, state *State) {
 		t.Fatalf("busy_timeout = (%d, %v), want 5000", busyTimeout, err)
 	}
 	var version string
-	if err := state.database.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil || version != schemaVersion {
-		t.Fatalf("schema version = (%q, %v), want %q", version, err, schemaVersion)
+	if err := state.database.QueryRow(`SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil || version != serverV1SchemaVersion {
+		t.Fatalf("schema version = (%q, %v), want %q", version, err, serverV1SchemaVersion)
 	}
-	for _, table := range []string{"meta", "accounts", "clients", "tunnels", "tunnel_http_routes"} {
+	for _, table := range []string{"meta", "nodes", "remote_nodes", "node_port_pools", "accounts", "clients", "tunnels", "tunnel_http_routes", "node_management_candidates", "node_observations"} {
 		var found bool
 		if err := state.database.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)`, table).Scan(&found); err != nil || !found {
 			t.Fatalf("table %q exists = (%t, %v)", table, found, err)

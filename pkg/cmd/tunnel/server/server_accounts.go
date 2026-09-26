@@ -14,6 +14,9 @@ import (
 	"strings"
 	"time"
 
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/account"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 	"golang.org/x/crypto/argon2"
 )
 
@@ -108,22 +111,24 @@ func NewServerAccounts(ctx context.Context, options ServerAccountsOptions) (*Ser
 
 func (accounts *ServerAccounts) initializeEnvironmentAdministrator(ctx context.Context, username, usernameKey string) error {
 	timestamp := formatServerTimestamp(accounts.now())
-	_, err := withImmediateTransaction(ctx, accounts.database, func(connection *sql.Conn) (struct{}, error) {
-		if _, err := connection.ExecContext(ctx, `
-			INSERT INTO accounts(internal_id, kind, username, username_key, role, password_hash, created_at, updated_at)
-			VALUES(?, 'environment', ?, ?, 'admin', NULL, ?, ?)
-			ON CONFLICT(internal_id) DO UPDATE SET
-				username = excluded.username,
-				username_key = excluded.username_key,
-				role = 'admin',
-				password_hash = NULL,
-				updated_at = excluded.updated_at
-		`, environmentAdministratorID, username, usernameKey, timestamp, timestamp); err != nil {
-			return struct{}{}, mapEnvironmentAccountError(err)
-		}
-		return struct{}{}, nil
-	})
-	return err
+	tx, err := serverEntForQueryer(accounts.database).Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := tx.Account.Get(ctx, environmentAdministratorID)
+	if serverent.IsNotFound(err) {
+		_, err = tx.Account.Create().SetID(environmentAdministratorID).SetKind(account.KindEnvironment).
+			SetUsername(username).SetUsernameKey(usernameKey).SetRole(account.RoleAdmin).
+			SetCreatedAt(timestamp).SetUpdatedAt(timestamp).Save(ctx)
+	} else if err == nil {
+		_, err = tx.Account.UpdateOne(current).SetUsername(username).SetUsernameKey(usernameKey).
+			SetRole(account.RoleAdmin).ClearPasswordHash().SetUpdatedAt(timestamp).Save(ctx)
+	}
+	if err != nil {
+		return mapEnvironmentAccountError(ctx, tx.Account, usernameKey, err)
+	}
+	return tx.Commit()
 }
 
 func (accounts *ServerAccounts) GetAccount(ctx context.Context, accountID string) (ServerAccount, error) {
@@ -143,27 +148,20 @@ func (accounts *ServerAccounts) GetAccountByUsername(ctx context.Context, userna
 }
 
 func (accounts *ServerAccounts) ListAccounts(ctx context.Context) ([]ServerAccountView, error) {
-	rows, err := accounts.database.QueryContext(ctx, `
-		SELECT accounts.internal_id, accounts.kind, accounts.username, accounts.role, accounts.created_at, accounts.updated_at, count(clients.internal_id)
-		FROM accounts LEFT JOIN clients ON clients.owner_account_id = accounts.internal_id
-		GROUP BY accounts.internal_id, accounts.kind, accounts.username, accounts.role, accounts.created_at, accounts.updated_at, accounts.username_key
-		ORDER BY accounts.kind, accounts.username_key, accounts.internal_id
-	`)
+	client := serverEntForQueryer(accounts.database)
+	items, err := client.Account.Query().Order(account.ByKind(), account.ByUsernameKey(), account.ByID()).All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list Tunnel server accounts: %w", err)
 	}
-	defer rows.Close()
-	views := make([]ServerAccountView, 0)
-	for rows.Next() {
-		var view ServerAccountView
-		if err := rows.Scan(&view.ID, &view.Kind, &view.Username, &view.Role, &view.CreatedAt, &view.UpdatedAt, &view.ClientCount); err != nil {
-			return nil, fmt.Errorf("read Tunnel server account: %w", err)
+	views := make([]ServerAccountView, 0, len(items))
+	for _, item := range items {
+		count, err := item.QueryClients().Count(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("count Tunnel server account clients: %w", err)
 		}
+		view := ServerAccountView{ServerAccount: serverAccountFromRow(serverAccountRowFromEnt(item)), ClientCount: int64(count)}
 		view.ManagedByEnvironment = view.Kind == AccountKindEnvironment
 		views = append(views, view)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate Tunnel server accounts: %w", err)
 	}
 	return views, nil
 }
@@ -191,15 +189,15 @@ func (accounts *ServerAccounts) CreateLocalAccount(ctx context.Context, username
 		return ServerAccount{}, fmt.Errorf("generate local account ID: %w", err)
 	}
 	timestamp := formatServerTimestamp(accounts.now())
-	return withImmediateTransaction(ctx, accounts.database, func(connection *sql.Conn) (ServerAccount, error) {
-		if _, err := connection.ExecContext(ctx, `
-			INSERT INTO accounts(internal_id, kind, username, username_key, role, password_hash, created_at, updated_at)
-			VALUES(?, 'local', ?, ?, ?, ?, ?, ?)
-		`, accountID, username, usernameKey, role, passwordHash, timestamp, timestamp); err != nil {
-			return ServerAccount{}, mapLocalAccountError(err)
-		}
-		return selectAccount(ctx, connection, accountID)
-	})
+	client := serverEntForQueryer(accounts.database)
+	created, err := client.Account.Create().SetID(accountID).
+		SetKind(account.KindLocal).SetUsername(username).SetUsernameKey(usernameKey).
+		SetRole(account.Role(role)).SetPasswordHash(passwordHash).
+		SetCreatedAt(timestamp).SetUpdatedAt(timestamp).Save(ctx)
+	if err != nil {
+		return ServerAccount{}, mapLocalAccountError(ctx, client.Account, usernameKey, err)
+	}
+	return serverAccountFromRow(serverAccountRowFromEnt(created)), nil
 }
 
 func (accounts *ServerAccounts) ChangeLocalAccountRole(ctx context.Context, accountID string, role AccountRole) (ServerAccount, bool, error) {
@@ -207,45 +205,26 @@ func (accounts *ServerAccounts) ChangeLocalAccountRole(ctx context.Context, acco
 		return ServerAccount{}, false, serverDomainError("INVALID_ACCOUNT", "Account role must be admin or user")
 	}
 	timestamp := formatServerTimestamp(accounts.now())
-	result, err := withImmediateTransaction(ctx, accounts.database, func(connection *sql.Conn) (struct {
-		account ServerAccount
-		changed bool
-	}, error) {
-		account, err := selectLocalAccount(ctx, connection, accountID)
-		if err != nil {
-			return struct {
-				account ServerAccount
-				changed bool
-			}{}, err
-		}
-		if account.Role == role {
-			return struct {
-				account ServerAccount
-				changed bool
-			}{account: account}, nil
-		}
-		if _, err := connection.ExecContext(ctx, `UPDATE accounts SET role = ?, updated_at = ? WHERE internal_id = ?`, role, timestamp, accountID); err != nil {
-			return struct {
-				account ServerAccount
-				changed bool
-			}{}, fmt.Errorf("change local account role: %w", err)
-		}
-		updated, err := selectAccount(ctx, connection, accountID)
-		if err != nil {
-			return struct {
-				account ServerAccount
-				changed bool
-			}{}, err
-		}
-		return struct {
-			account ServerAccount
-			changed bool
-		}{account: updated, changed: true}, nil
-	})
+	tx, err := serverEntForQueryer(accounts.database).Tx(ctx)
 	if err != nil {
 		return ServerAccount{}, false, err
 	}
-	return result.account, result.changed, nil
+	defer tx.Rollback()
+	current, err := localAccountInEntTx(ctx, tx, accountID)
+	if err != nil {
+		return ServerAccount{}, false, err
+	}
+	if AccountRole(current.Role) == role {
+		return serverAccountFromRow(serverAccountRowFromEnt(current)), false, nil
+	}
+	updated, err := tx.Account.UpdateOne(current).SetRole(account.Role(role)).SetUpdatedAt(timestamp).Save(ctx)
+	if err != nil {
+		return ServerAccount{}, false, fmt.Errorf("change local account role: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return ServerAccount{}, false, err
+	}
+	return serverAccountFromRow(serverAccountRowFromEnt(updated)), true, nil
 }
 
 func (accounts *ServerAccounts) ResetLocalAccountPassword(ctx context.Context, accountID, password string) (ServerAccount, error) {
@@ -257,16 +236,37 @@ func (accounts *ServerAccounts) ResetLocalAccountPassword(ctx context.Context, a
 		return ServerAccount{}, fmt.Errorf("hash replacement local account password: %w", err)
 	}
 	timestamp := formatServerTimestamp(accounts.now())
-	return withImmediateTransaction(ctx, accounts.database, func(connection *sql.Conn) (ServerAccount, error) {
-		_, err := selectLocalAccount(ctx, connection, accountID)
-		if err != nil {
-			return ServerAccount{}, err
-		}
-		if _, err := connection.ExecContext(ctx, `UPDATE accounts SET password_hash = ?, updated_at = ? WHERE internal_id = ?`, passwordHash, timestamp, accountID); err != nil {
-			return ServerAccount{}, fmt.Errorf("reset local account password: %w", err)
-		}
-		return selectAccount(ctx, connection, accountID)
-	})
+	tx, err := serverEntForQueryer(accounts.database).Tx(ctx)
+	if err != nil {
+		return ServerAccount{}, err
+	}
+	defer tx.Rollback()
+	current, err := localAccountInEntTx(ctx, tx, accountID)
+	if err != nil {
+		return ServerAccount{}, err
+	}
+	updated, err := tx.Account.UpdateOne(current).SetPasswordHash(passwordHash).SetUpdatedAt(timestamp).Save(ctx)
+	if err != nil {
+		return ServerAccount{}, fmt.Errorf("reset local account password: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return ServerAccount{}, err
+	}
+	return serverAccountFromRow(serverAccountRowFromEnt(updated)), nil
+}
+
+func localAccountInEntTx(ctx context.Context, tx *serverent.Tx, accountID string) (*serverent.Account, error) {
+	item, err := tx.Account.Get(ctx, accountID)
+	if serverent.IsNotFound(err) {
+		return nil, serverDomainError("NOT_FOUND", "Control Plane Account was not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read Tunnel server account: %w", err)
+	}
+	if item.Kind == account.KindEnvironment {
+		return nil, serverDomainError("MANAGED_ACCOUNT", "Deployment Administrator is managed by environment variables")
+	}
+	return item, nil
 }
 
 func (accounts *ServerAccounts) ChangeOwnLocalAccountPassword(ctx context.Context, accountID, currentPassword, replacementPassword string) (ServerAccount, error) {
@@ -287,24 +287,26 @@ func (accounts *ServerAccounts) ChangeOwnLocalAccountPassword(ctx context.Contex
 }
 
 func (accounts *ServerAccounts) DeleteLocalAccount(ctx context.Context, accountID string) error {
-	_, err := withImmediateTransaction(ctx, accounts.database, func(connection *sql.Conn) (struct{}, error) {
-		_, err := selectLocalAccount(ctx, connection, accountID)
-		if err != nil {
-			return struct{}{}, err
-		}
-		var clientCount int64
-		if err := connection.QueryRowContext(ctx, `SELECT count(*) FROM clients WHERE owner_account_id = ?`, accountID).Scan(&clientCount); err != nil {
-			return struct{}{}, fmt.Errorf("count local account clients: %w", err)
-		}
-		if clientCount > 0 {
-			return struct{}{}, serverDomainError("ACCOUNT_NOT_EMPTY", "Control Plane Account still owns Trusted Tunnel Clients")
-		}
-		if _, err := connection.ExecContext(ctx, `DELETE FROM accounts WHERE internal_id = ?`, accountID); err != nil {
-			return struct{}{}, fmt.Errorf("delete local account: %w", err)
-		}
-		return struct{}{}, nil
-	})
-	return err
+	tx, err := serverEntForQueryer(accounts.database).Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := localAccountInEntTx(ctx, tx, accountID)
+	if err != nil {
+		return err
+	}
+	clientCount, err := current.QueryClients().Count(ctx)
+	if err != nil {
+		return fmt.Errorf("count local account clients: %w", err)
+	}
+	if clientCount > 0 {
+		return serverDomainError("ACCOUNT_NOT_EMPTY", "Control Plane Account still owns Trusted Tunnel Clients")
+	}
+	if err := tx.Account.DeleteOne(current).Exec(ctx); err != nil {
+		return fmt.Errorf("delete local account: %w", err)
+	}
+	return tx.Commit()
 }
 
 func (accounts *ServerAccounts) accountCredential(ctx context.Context, accountID string) (ServerAccount, string, error) {
@@ -383,19 +385,33 @@ func selectAccountByUsername(ctx context.Context, queryer accountQueryer, userna
 }
 
 func selectAccountRow(ctx context.Context, queryer accountQueryer, accountID string) (serverAccountRow, error) {
-	return scanAccount(queryer.QueryRowContext(ctx, `SELECT internal_id, kind, username, username_key, role, password_hash, created_at, updated_at FROM accounts WHERE internal_id = ?`, accountID))
+	item, err := serverEntForQueryer(queryer).Account.Get(ctx, accountID)
+	if serverent.IsNotFound(err) {
+		return serverAccountRow{}, sql.ErrNoRows
+	}
+	if err != nil {
+		return serverAccountRow{}, err
+	}
+	return serverAccountRowFromEnt(item), nil
 }
 
 func selectAccountRowByUsername(ctx context.Context, queryer accountQueryer, usernameKey string) (serverAccountRow, error) {
-	return scanAccount(queryer.QueryRowContext(ctx, `SELECT internal_id, kind, username, username_key, role, password_hash, created_at, updated_at FROM accounts WHERE username_key = ?`, usernameKey))
-}
-
-func scanAccount(scanner interface{ Scan(...any) error }) (serverAccountRow, error) {
-	var row serverAccountRow
-	if err := scanner.Scan(&row.ID, &row.Kind, &row.Username, &row.UsernameKey, &row.Role, &row.PasswordHash, &row.CreatedAt, &row.UpdatedAt); err != nil {
+	item, err := serverEntForQueryer(queryer).Account.Query().Where(account.UsernameKeyEQ(usernameKey)).Only(ctx)
+	if serverent.IsNotFound(err) {
+		return serverAccountRow{}, sql.ErrNoRows
+	}
+	if err != nil {
 		return serverAccountRow{}, err
 	}
-	return row, nil
+	return serverAccountRowFromEnt(item), nil
+}
+
+func serverAccountRowFromEnt(item *serverent.Account) serverAccountRow {
+	row := serverAccountRow{ID: item.ID, Kind: AccountKind(item.Kind), Username: item.Username, UsernameKey: item.UsernameKey, Role: AccountRole(item.Role), CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	if item.PasswordHash != nil {
+		row.PasswordHash = sql.NullString{String: *item.PasswordHash, Valid: true}
+	}
+	return row
 }
 
 func serverAccountFromRow(row serverAccountRow) ServerAccount {
@@ -490,18 +506,28 @@ func decodePHCBase64(value string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(value)
 }
 
-func mapEnvironmentAccountError(err error) error {
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "accounts.username_key") && strings.Contains(message, "unique") {
-		return serverDomainError("INVALID_CONFIG", "Environment administrator username conflicts with a local account")
+func mapEnvironmentAccountError(ctx context.Context, accounts *serverent.AccountClient, usernameKey string, err error) error {
+	if errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
+		owner, lookupErr := accounts.Query().Where(account.UsernameKeyEQ(usernameKey)).Only(ctx)
+		if lookupErr != nil && !serverent.IsNotFound(lookupErr) {
+			return fmt.Errorf("check environment administrator username conflict: %w", lookupErr)
+		}
+		if owner != nil && owner.ID != environmentAdministratorID {
+			return serverDomainError("INVALID_CONFIG", "Environment administrator username conflicts with a local account")
+		}
 	}
 	return fmt.Errorf("initialize environment administrator: %w", err)
 }
 
-func mapLocalAccountError(err error) error {
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "accounts.username_key") && strings.Contains(message, "unique") {
-		return serverDomainError("USERNAME_TAKEN", "Username is already in use")
+func mapLocalAccountError(ctx context.Context, accounts *serverent.AccountClient, usernameKey string, err error) error {
+	if errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
+		reserved, lookupErr := accounts.Query().Where(account.UsernameKeyEQ(usernameKey)).Exist(ctx)
+		if lookupErr != nil {
+			return fmt.Errorf("check local account username conflict: %w", lookupErr)
+		}
+		if reserved {
+			return serverDomainError("USERNAME_TAKEN", "Username is already in use")
+		}
 	}
 	return fmt.Errorf("create local account: %w", err)
 }

@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/nodeobservation"
 )
 
 const nodeObservationFreshness = 30 * time.Second
@@ -35,16 +38,6 @@ func newServerNodeObservations(database *sql.DB) (*serverNodeObservations, error
 	if database == nil {
 		return nil, errors.New("Node observation database is required")
 	}
-	_, err := database.Exec(`CREATE TABLE IF NOT EXISTS node_observations (
-		node_id TEXT PRIMARY KEY REFERENCES nodes(node_id) ON DELETE CASCADE,
-		status_json TEXT,
-		status_observed_at TEXT,
-		failure_code TEXT NOT NULL DEFAULT '',
-		attempted_at TEXT NOT NULL
-	)`)
-	if err != nil {
-		return nil, fmt.Errorf("initialize Node observations: %w", err)
-	}
 	return &serverNodeObservations{database: database, fresh: make(map[string]time.Time), listeners: make(map[uint64]func()), now: time.Now}, nil
 }
 
@@ -57,8 +50,23 @@ func (observations *serverNodeObservations) recordStatus(ctx context.Context, no
 		return err
 	}
 	now := observations.now()
-	_, err = observations.database.ExecContext(ctx, `INSERT INTO node_observations(node_id,status_json,status_observed_at,failure_code,attempted_at) VALUES(?,?,?,'',?) ON CONFLICT(node_id) DO UPDATE SET status_json=excluded.status_json,status_observed_at=excluded.status_observed_at,failure_code='',attempted_at=excluded.attempted_at`, nodeID, string(contents), status.ObservedAt, formatServerTimestamp(now))
+	tx, err := serverEntForQueryer(observations.database).Tx(ctx)
 	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := tx.NodeObservation.Query().Where(nodeobservation.NodeIDEQ(nodeID)).Only(ctx)
+	if serverent.IsNotFound(err) {
+		_, err = tx.NodeObservation.Create().SetNodeID(nodeID).SetStatusJSON(string(contents)).
+			SetStatusObservedAt(status.ObservedAt).SetFailureCode("").SetAttemptedAt(formatServerTimestamp(now)).Save(ctx)
+	} else if err == nil {
+		_, err = tx.NodeObservation.UpdateOne(current).SetStatusJSON(string(contents)).
+			SetStatusObservedAt(status.ObservedAt).SetFailureCode("").SetAttemptedAt(formatServerTimestamp(now)).Save(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	observations.mu.Lock()
@@ -75,8 +83,21 @@ func (observations *serverNodeObservations) recordFailure(ctx context.Context, n
 		code = "NODE_UNREACHABLE"
 	}
 	now := observations.now()
-	_, err := observations.database.ExecContext(ctx, `INSERT INTO node_observations(node_id,failure_code,attempted_at) VALUES(?,?,?) ON CONFLICT(node_id) DO UPDATE SET failure_code=excluded.failure_code,attempted_at=excluded.attempted_at`, nodeID, code, formatServerTimestamp(now))
+	tx, err := serverEntForQueryer(observations.database).Tx(ctx)
 	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := tx.NodeObservation.Query().Where(nodeobservation.NodeIDEQ(nodeID)).Only(ctx)
+	if serverent.IsNotFound(err) {
+		_, err = tx.NodeObservation.Create().SetNodeID(nodeID).SetFailureCode(code).SetAttemptedAt(formatServerTimestamp(now)).Save(ctx)
+	} else if err == nil {
+		_, err = tx.NodeObservation.UpdateOne(current).SetFailureCode(code).SetAttemptedAt(formatServerTimestamp(now)).Save(ctx)
+	}
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	observations.mu.Lock()
@@ -87,19 +108,17 @@ func (observations *serverNodeObservations) recordFailure(ctx context.Context, n
 }
 
 func (observations *serverNodeObservations) read(ctx context.Context, nodeID string) (serverNodeObservation, error) {
-	var statusJSON, observedAt sql.NullString
-	var failureCode, attemptedAt string
-	err := observations.database.QueryRowContext(ctx, `SELECT status_json,status_observed_at,failure_code,attempted_at FROM node_observations WHERE node_id=?`, nodeID).Scan(&statusJSON, &observedAt, &failureCode, &attemptedAt)
-	if errors.Is(err, sql.ErrNoRows) {
+	item, err := serverEntForQueryer(observations.database).NodeObservation.Query().Where(nodeobservation.NodeIDEQ(nodeID)).Only(ctx)
+	if serverent.IsNotFound(err) {
 		return serverNodeObservation{ManagementState: "unknown", FRPSState: "unknown", Stale: true}, nil
 	}
 	if err != nil {
 		return serverNodeObservation{}, err
 	}
-	view := serverNodeObservation{ManagementState: "unknown", FRPSState: "unknown", ObservedAt: attemptedAt, FailureCode: failureCode, Stale: true}
-	if statusJSON.Valid {
+	view := serverNodeObservation{ManagementState: "unknown", FRPSState: "unknown", ObservedAt: item.AttemptedAt, FailureCode: item.FailureCode, Stale: true}
+	if item.StatusJSON != nil {
 		var status nodeStatus
-		if err := json.Unmarshal([]byte(statusJSON.String), &status); err != nil {
+		if err := json.Unmarshal([]byte(*item.StatusJSON), &status); err != nil {
 			return serverNodeObservation{}, fmt.Errorf("read saved Node observation: %w", err)
 		}
 		view.LastKnown = &status
@@ -110,8 +129,8 @@ func (observations *serverNodeObservations) read(ctx context.Context, nodeID str
 	if !fresh || observations.now().Sub(lastFresh) >= nodeObservationFreshness {
 		return view, nil
 	}
-	if failureCode != "" {
-		switch failureCode {
+	if item.FailureCode != "" {
+		switch item.FailureCode {
 		case "NODE_PROTOCOL_INCOMPATIBLE":
 			view.ManagementState = "incompatible"
 		case "NODE_IDENTITY_MISMATCH":
@@ -127,7 +146,9 @@ func (observations *serverNodeObservations) read(ctx context.Context, nodeID str
 	view.ManagementState = "reachable"
 	view.Stale = false
 	view.Status = view.LastKnown
-	view.ObservedAt = observedAt.String
+	if item.StatusObservedAt != nil {
+		view.ObservedAt = *item.StatusObservedAt
+	}
 	switch view.Status.FRPSProcess {
 	case "running":
 		view.FRPSState = "running"

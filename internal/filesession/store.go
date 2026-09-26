@@ -35,6 +35,8 @@ var (
 // accesses its go-v1 child, leaving all sibling state unexamined.
 type Options struct {
 	BaseDirectory      string
+	StateDirectoryName string
+	LockBaseDirectory  bool
 	IdleLifetime       time.Duration
 	MaxSubjectSessions int
 	MaxSessions        int
@@ -115,7 +117,14 @@ func Open(options Options) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: resolve base directory: %v", ErrStorageUnavailable, err)
 	}
-	directory := filepath.Join(baseDirectory, goStateDirectoryName)
+	directoryName := options.StateDirectoryName
+	if directoryName == "" {
+		directoryName = goStateDirectoryName
+	}
+	if directoryName == "." || directoryName == ".." || filepath.Base(directoryName) != directoryName {
+		return nil, fmt.Errorf("%w: invalid state directory name", ErrStorageUnavailable)
+	}
+	directory := filepath.Join(baseDirectory, directoryName)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return nil, fmt.Errorf("%w: create session directory: %v", ErrStorageUnavailable, err)
 	}
@@ -123,7 +132,11 @@ func Open(options Options) (*Manager, error) {
 		return nil, fmt.Errorf("%w: protect session directory: %v", ErrStorageUnavailable, err)
 	}
 
-	lock, err := acquireLock(directory)
+	lockDirectory := directory
+	if options.LockBaseDirectory {
+		lockDirectory = baseDirectory
+	}
+	lock, err := acquireLock(lockDirectory)
 	if err != nil {
 		return nil, err
 	}

@@ -188,6 +188,30 @@ func openServerDomainState(t *testing.T) *State {
 	return state
 }
 
+func TestClientHostnamesOnConnectionUsesV1RouteRelation(t *testing.T) {
+	state := openServerDomainState(t)
+	ctx := t.Context()
+	now := "2026-08-24T00:00:00.000Z"
+	if _, err := state.database.ExecContext(ctx, `INSERT INTO clients(internal_id, owner_account_id, node_id, token, created_at) VALUES('client-1', 'environment-admin', 'local', 'token-1', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.database.ExecContext(ctx, `INSERT INTO tunnels(id, client_internal_id, node_id, protocol, custom_domains, local_host, local_port, created_at, updated_at) VALUES('tunnel-1', 'client-1', 'local', 'http', '["example.test"]', 'localhost', 8080, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.database.ExecContext(ctx, `INSERT INTO tunnel_http_routes(id, tunnel_id, hostname, location) VALUES('route-1', 'tunnel-1', 'example.test', '')`); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := state.database.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	hostnames, err := clientHostnamesOnConnection(ctx, connection, "client-1")
+	if err != nil || len(hostnames) != 1 || hostnames[0] != "example.test" {
+		t.Fatalf("Client hostnames = (%v, %v)", hostnames, err)
+	}
+}
+
 func insertServerDomainAccount(t *testing.T, state *State, id string) {
 	t.Helper()
 	now := "2026-08-24T00:00:00.000Z"

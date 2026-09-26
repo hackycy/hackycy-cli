@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"database/sql"
 	"sync"
 	"testing"
 
@@ -109,19 +108,13 @@ func TestNodeResourceTransactionsEnforcePortAndHostnameOwnership(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := withResourceTransaction(t.Context(), state.database, func(connection *sql.Conn) error {
-		if _, err := connection.ExecContext(t.Context(), `
-			INSERT INTO tunnels(id, client_internal_id, node_id, protocol, custom_domains, local_host, local_port, created_at, updated_at)
-			VALUES('remote-http', 'remote-client', 'remote', 'http', '["one.example.test"]', '127.0.0.1', 9000, 'now', 'now')
-		`); err != nil {
-			return err
-		}
-		_, err := connection.ExecContext(t.Context(), `INSERT INTO tunnel_http_routes(tunnel_id, node_id, hostname, location) VALUES('remote-http', 'remote', ?, '/other')`, host)
-		return err
+	otherLocation := "/other"
+	if _, err := plane.CreateTunnel(t.Context(), "remote-client", TunnelMutationInput{
+		Protocol: tunnelruntime.TunnelProtocolHTTP, CustomDomains: []string{host}, Location: &otherLocation, LocalPort: 9000,
 	}); err == nil {
 		t.Fatal("cross-Node hostname split was accepted")
 	}
-	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE id = 'remote-http'`).Scan(&tunnelCount); err != nil || tunnelCount != 0 {
+	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE client_internal_id = 'remote-client' AND protocol = 'http'`).Scan(&tunnelCount); err != nil || tunnelCount != 0 {
 		t.Fatalf("hostname conflict left partial Tunnel = (%d, %v)", tunnelCount, err)
 	}
 }
@@ -248,14 +241,14 @@ func TestConcurrentHTTPRoutesCannotSplitHostnameAcrossNodes(t *testing.T) {
 		t.Fatalf("concurrent cross-Node hostname = %d successes, %d failures", successes, failures)
 	}
 	var owner string
-	if err := state.database.QueryRow(`SELECT node_id FROM hostname_owners WHERE hostname_key='shared.example.test'`).Scan(&owner); err != nil {
+	if err := state.database.QueryRow(`SELECT DISTINCT t.node_id FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE r.hostname='shared.example.test'`).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
 	var tunnelCount, routeCount, revisionSum int
 	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE protocol='http'`).Scan(&tunnelCount); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes WHERE hostname='shared.example.test' AND node_id=?`, owner).Scan(&routeCount); err != nil {
+	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE r.hostname='shared.example.test' AND t.node_id=?`, owner).Scan(&routeCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.database.QueryRow(`SELECT sum(desired_revision) FROM clients WHERE internal_id IN (?, ?)`, local.ID, remote.ID).Scan(&revisionSum); err != nil {
@@ -264,11 +257,4 @@ func TestConcurrentHTTPRoutesCannotSplitHostnameAcrossNodes(t *testing.T) {
 	if tunnelCount != 1 || routeCount != 1 || revisionSum != 2 {
 		t.Fatalf("hostname race left partial resources: owner=%q tunnels=%d routes=%d revisions=%d", owner, tunnelCount, routeCount, revisionSum)
 	}
-}
-
-func withResourceTransaction(ctx context.Context, database *sql.DB, action func(*sql.Conn) error) error {
-	_, err := withImmediateTransaction(ctx, database, func(connection *sql.Conn) (struct{}, error) {
-		return struct{}{}, action(connection)
-	})
-	return err
 }

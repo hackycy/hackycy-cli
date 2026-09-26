@@ -2,10 +2,73 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	"strings"
 	"testing"
+
+	sqlite3 "github.com/ncruces/go-sqlite3"
 )
+
+func TestTunnelConstraintMappingUsesTypedCodeAndResourceConflict(t *testing.T) {
+	state := openServerDomainState(t)
+	plane := openServerControlPlane(t, state)
+	ctx := t.Context()
+	owner, err := plane.CreateClient(ctx, environmentAdministratorID, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := int64(20000)
+	if _, err := plane.CreateTunnel(ctx, owner.ID, TunnelMutationInput{Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port, LocalPort: 9000}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plane.CreateTunnel(ctx, owner.ID, TunnelMutationInput{Protocol: tunnelruntime.TunnelProtocolHTTP, CustomDomains: []string{"claimed.example.test"}, LocalPort: 9001}); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := state.database.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	client := serverEntOnConnection(connection)
+	unique := fmt.Errorf("wrapped: %w", sqlite3.CONSTRAINT_UNIQUE)
+	portValues := normalizedTunnelValues{protocol: tunnelruntime.TunnelProtocolTCP, serverPort: &port}
+	assertServerDomainCode(t, mapTunnelPortConstraintError(ctx, client, "local", "new", portValues, unique), "RESOURCE_RESERVED")
+	assertServerDomainCode(t, mapTunnelRouteConstraintError(ctx, client, "claimed.example.test", "", "new", unique), "RESOURCE_RESERVED")
+
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "primary key", err: sqlite3.CONSTRAINT_PRIMARYKEY},
+		{name: "foreign key", err: sqlite3.CONSTRAINT_FOREIGNKEY},
+		{name: "check with misleading text", err: fmt.Errorf("tunnel_http_routes unique server_port: %w", sqlite3.CONSTRAINT_CHECK)},
+		{name: "unattributed constraint", err: sqlite3.CONSTRAINT},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, mapped := range []error{
+				mapTunnelPortConstraintError(ctx, client, "local", "new", portValues, test.err),
+				mapTunnelRouteConstraintError(ctx, client, "claimed.example.test", "", "new", test.err),
+			} {
+				var domain *ServerDomainError
+				if errors.As(mapped, &domain) || !errors.Is(mapped, test.err) {
+					t.Fatalf("mapped error = %v, want internal error preserving %v", mapped, test.err)
+				}
+			}
+		})
+	}
+	freePort := int64(20001)
+	for _, mapped := range []error{
+		mapTunnelPortConstraintError(ctx, client, "local", "new", normalizedTunnelValues{protocol: tunnelruntime.TunnelProtocolTCP, serverPort: &freePort}, unique),
+		mapTunnelRouteConstraintError(ctx, client, "free.example.test", "", "new", unique),
+	} {
+		var domain *ServerDomainError
+		if errors.As(mapped, &domain) || !errors.Is(mapped, sqlite3.CONSTRAINT_UNIQUE) {
+			t.Fatalf("unattributed unique error = %v, want internal error", mapped)
+		}
+	}
+}
 
 func TestServerControlPlaneReservesHTTPRoutesTransactionally(t *testing.T) {
 	state := openServerDomainState(t)
@@ -54,6 +117,42 @@ func TestServerControlPlaneReservesHTTPRoutesTransactionally(t *testing.T) {
 	}
 	if _, err := plane.CreateTunnel(ctx, second.ID, TunnelMutationInput{Protocol: tunnelruntime.TunnelProtocolHTTP, CustomDomains: []string{"app.example.com"}, Location: &location, LocalPort: 3004}); err != nil {
 		t.Fatalf("CreateTunnel(released reservation) error = %v", err)
+	}
+}
+
+func TestDisabledTransportTunnelKeepsPortReserved(t *testing.T) {
+	state := openServerDomainState(t)
+	plane := openServerControlPlane(t, state)
+	ctx := t.Context()
+	first, err := plane.CreateClient(ctx, environmentAdministratorID, "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := plane.CreateClient(ctx, environmentAdministratorID, "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := int64(20000)
+	if _, err := plane.CreateTunnel(ctx, first.ID, TunnelMutationInput{
+		Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port,
+		LocalPort: 9000, Enabled: boolPointer(false),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	events := make([]ServerControlPlaneEvent, 0)
+	unsubscribe := plane.Subscribe(func(event ServerControlPlaneEvent) { events = append(events, event) })
+	defer unsubscribe()
+	_, err = plane.CreateTunnel(ctx, second.ID, TunnelMutationInput{
+		Protocol: tunnelruntime.TunnelProtocolTCP, ServerPort: &port, LocalPort: 9001,
+	})
+	assertServerDomainCode(t, err, "RESOURCE_RESERVED")
+	items, err := plane.ListTunnels(ctx, second.ID)
+	if err != nil || len(items) != 0 {
+		t.Fatalf("failed Client tunnels = (%#v, %v)", items, err)
+	}
+	unchanged, err := plane.GetClient(ctx, second.ID)
+	if err != nil || unchanged.DesiredRevision != 0 || len(events) != 0 {
+		t.Fatalf("failed Client state = (%#v, %v), events = %#v", unchanged, err, events)
 	}
 }
 

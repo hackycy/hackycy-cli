@@ -2,9 +2,53 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	sqlite3 "github.com/ncruces/go-sqlite3"
 )
+
+func TestAccountConstraintMappingRequiresUsernameConflict(t *testing.T) {
+	state := openServerDomainState(t)
+	accounts := openServerAccounts(t, state, "admin", "environment-secret")
+	ctx := t.Context()
+	if _, err := accounts.CreateLocalAccount(ctx, "operator", "operator-secret", AccountRoleUser); err != nil {
+		t.Fatal(err)
+	}
+	client := serverEntForQueryer(state.database).Account
+	unique := fmt.Errorf("wrapped: %w", sqlite3.CONSTRAINT_UNIQUE)
+	assertServerDomainCode(t, mapEnvironmentAccountError(ctx, client, "operator", unique), "INVALID_CONFIG")
+	assertServerDomainCode(t, mapLocalAccountError(ctx, client, "operator", unique), "USERNAME_TAKEN")
+
+	for _, constraint := range []error{
+		sqlite3.CONSTRAINT_PRIMARYKEY,
+		sqlite3.CONSTRAINT_CHECK,
+		sqlite3.CONSTRAINT_FOREIGNKEY,
+		sqlite3.CONSTRAINT,
+	} {
+		misleading := fmt.Errorf("accounts.username_key unique: %w", constraint)
+		for _, mapped := range []error{
+			mapEnvironmentAccountError(ctx, client, "operator", misleading),
+			mapLocalAccountError(ctx, client, "operator", misleading),
+		} {
+			var domain *ServerDomainError
+			if errors.As(mapped, &domain) || !errors.Is(mapped, constraint) {
+				t.Fatalf("mapped error = %v, want internal error preserving %v", mapped, constraint)
+			}
+		}
+	}
+	for _, mapped := range []error{
+		mapEnvironmentAccountError(ctx, client, "available", unique),
+		mapLocalAccountError(ctx, client, "available", unique),
+	} {
+		var domain *ServerDomainError
+		if errors.As(mapped, &domain) || !errors.Is(mapped, sqlite3.CONSTRAINT_UNIQUE) {
+			t.Fatalf("unattributed unique error = %v, want internal error", mapped)
+		}
+	}
+}
 
 func TestServerAccountsManageEnvironmentAndLocalRecords(t *testing.T) {
 	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})

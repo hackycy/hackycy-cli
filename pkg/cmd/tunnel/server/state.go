@@ -1,13 +1,18 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
 	"github.com/hackycy/hackycy-cli/internal/filesession"
 )
 
@@ -18,6 +23,7 @@ const databaseFileName = "tunnel.sqlite"
 type State struct {
 	sessions     *filesession.Manager
 	database     *sql.DB
+	client       *serverent.Client
 	databasePath string
 }
 
@@ -32,19 +38,38 @@ func OpenState(options StateOptions) (*State, error) {
 	if strings.TrimSpace(options.DataDirectory) == "" {
 		return nil, errors.New("tunnel state directory is required")
 	}
-	databasePath := filepath.Join(options.DataDirectory, "go-v1", databaseFileName)
-	storedPublicKey, err := inspectExistingDatabase(databasePath)
+	stateDirectory := filepath.Join(options.DataDirectory, "server-state-v1")
+	entries, err := os.ReadDir(stateDirectory)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect Server v1 state directory: %w", err)
+	}
+	fresh := errors.Is(err, os.ErrNotExist) || len(entries) == 0
+	if fresh {
+		err = nil
+	}
+	databasePath := filepath.Join(stateDirectory, databaseFileName)
+	var storedPublicKey string
+	if !fresh {
+		for _, name := range []string{databaseFileName, controllerKeyFileName, ".session-key"} {
+			if _, err := os.Lstat(filepath.Join(stateDirectory, name)); err != nil {
+				return nil, fmt.Errorf("Server v1 state is incomplete: %s: %w", name, err)
+			}
+		}
+		storedPublicKey, err = inspectServerV1Database(context.Background(), databasePath)
+	}
 	if err != nil {
 		return nil, err
 	}
 	sessions, err := filesession.Open(filesession.Options{
-		BaseDirectory: options.DataDirectory,
-		IdleLifetime:  options.SessionIdleLifetime,
+		BaseDirectory:      options.DataDirectory,
+		StateDirectoryName: "server-state-v1",
+		LockBaseDirectory:  true,
+		IdleLifetime:       options.SessionIdleLifetime,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open Tunnel sessions: %w", err)
 	}
-	publicKey, err := loadControllerPublicKey(sessions.Directory(), storedPublicKey != "")
+	publicKey, err := loadControllerPublicKey(sessions.Directory(), !fresh)
 	if err != nil {
 		_ = sessions.Close()
 		return nil, err
@@ -54,14 +79,30 @@ func OpenState(options StateOptions) (*State, error) {
 		return nil, fmt.Errorf("Tunnel Controller identity does not match database; restore the original identity file")
 	}
 	databasePath = filepath.Join(sessions.Directory(), databaseFileName)
-	database, err := openDatabase(databasePath, publicKey)
+	var database *sql.DB
+	var client *serverent.Client
+	if fresh {
+		database, client, err = createServerV1Database(context.Background(), sessions.Directory())
+		if err == nil {
+			err = initializeServerV1Identity(context.Background(), client, publicKey)
+		}
+	} else {
+		database, err = openServerV1SQLDatabase(context.Background(), databasePath)
+		if err == nil {
+			client = serverent.NewClient(serverent.Driver(entsql.OpenDB(dialect.SQLite, database)))
+		}
+	}
 	if err != nil {
+		if database != nil {
+			_ = database.Close()
+		}
 		_ = sessions.Close()
 		return nil, err
 	}
 	return &State{
 		sessions:     sessions,
 		database:     database,
+		client:       client,
 		databasePath: databasePath,
 	}, nil
 }

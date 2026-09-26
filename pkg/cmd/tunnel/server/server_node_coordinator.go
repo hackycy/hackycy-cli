@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/hackycy/hackycy-cli/ent/server/nodemanagementcandidate"
+	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
 )
 
 type serverNodeCoordinator struct {
@@ -163,20 +166,26 @@ func (coordinator *serverNodeCoordinator) verifyCandidate(ctx context.Context, r
 		if errors.As(err, &domain) {
 			code = domain.Code
 		}
-		_, _ = coordinator.registry.database.ExecContext(ctx, `UPDATE node_management_candidates SET failure_code=? WHERE node_id=? AND candidate_address=?`, code, record.ID, record.PendingManagementAddress)
+		_, _ = serverEntForQueryer(coordinator.registry.database).NodeManagementCandidate.Update().Where(
+			nodemanagementcandidate.NodeIDEQ(record.ID),
+			nodemanagementcandidate.CandidateAddressEQ(record.PendingManagementAddress),
+		).SetFailureCode(code).Save(ctx)
 		coordinator.observations.notify()
 		return false
 	}
 	_, err = withImmediateTransaction(ctx, coordinator.registry.database, func(connection *sql.Conn) (struct{}, error) {
-		var candidate string
-		if err := connection.QueryRowContext(ctx, `SELECT candidate_address FROM node_management_candidates WHERE node_id=?`, record.ID).Scan(&candidate); err != nil || candidate != record.PendingManagementAddress {
+		client := serverEntOnConnection(connection)
+		candidate, err := client.NodeManagementCandidate.Query().Where(nodemanagementcandidate.NodeIDEQ(record.ID)).Only(ctx)
+		if err != nil || candidate.CandidateAddress != record.PendingManagementAddress {
 			return struct{}{}, errors.New("Node management candidate changed during verification")
 		}
-		if _, err := connection.ExecContext(ctx, `UPDATE remote_nodes SET management_address=? WHERE node_id=?`, candidate, record.ID); err != nil {
+		if _, err := client.RemoteNode.Update().Where(remotenode.NodeIDEQ(record.ID)).SetManagementAddress(candidate.CandidateAddress).Save(ctx); err != nil {
 			return struct{}{}, err
 		}
-		_, err := connection.ExecContext(ctx, `DELETE FROM node_management_candidates WHERE node_id=?`, record.ID)
-		return struct{}{}, err
+		if err := client.NodeManagementCandidate.DeleteOne(candidate).Exec(ctx); err != nil {
+			return struct{}{}, err
+		}
+		return struct{}{}, nil
 	})
 	if err != nil {
 		return false

@@ -5,9 +5,15 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/node"
+	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
+	sqlite3 "github.com/ncruces/go-sqlite3"
 )
 
 type serverNodeRecord struct {
@@ -43,13 +49,6 @@ func newServerNodeRegistry(database *sql.DB) (*serverNodeRegistry, error) {
 	if database == nil {
 		return nil, fmt.Errorf("Node registry database is required")
 	}
-	if _, err := database.Exec(`CREATE TABLE IF NOT EXISTS node_management_candidates (
-		node_id TEXT PRIMARY KEY REFERENCES nodes(node_id) ON DELETE CASCADE,
-		candidate_address TEXT NOT NULL,
-		failure_code TEXT NOT NULL DEFAULT ''
-	)`); err != nil {
-		return nil, fmt.Errorf("initialize Node management-address candidates: %w", err)
-	}
 	return &serverNodeRegistry{database: database}, nil
 }
 
@@ -71,15 +70,21 @@ func (registry *serverNodeRegistry) register(ctx context.Context, nodeID, name, 
 	}
 	createdAt := formatServerTimestamp(time.Now())
 	result, err := withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (serverNodeRecord, error) {
-		_, err := connection.ExecContext(ctx, `INSERT INTO nodes(node_id,kind,name,lifecycle,created_at,updated_at) VALUES(?,'remote',?,'active',?,?)`, nodeID, name, createdAt, createdAt)
+		client := serverEntOnConnection(connection)
+		_, err := client.Node.Create().SetID(nodeID).SetKind(node.KindRemote).SetName(name).
+			SetLifecycle(node.LifecycleActive).SetCreatedAt(createdAt).SetUpdatedAt(createdAt).Save(ctx)
 		if err != nil {
-			return serverNodeRecord{}, serverDomainError("NODE_ALREADY_REGISTERED", "Node is already registered")
+			return serverNodeRecord{}, mapNodeRegistrationConstraintError(ctx, client, nodeID, err)
 		}
-		_, err = connection.ExecContext(ctx, `INSERT INTO remote_nodes(node_id,node_public_key,management_address,frp_bind_port,http_vhost_port,port_start,port_end,desired_revision,active_token) VALUES(?,?,?,?,?,?,?,?,?)`, nodeID, hex.EncodeToString(publicKey), address, 7000, 8080, 20000, 29999, highestRevision, token)
+		publicKeyHex := hex.EncodeToString(publicKey)
+		_, err = client.RemoteNode.Create().SetNodeID(nodeID).SetNodePublicKey(publicKeyHex).
+			SetManagementAddress(address).SetFrpBindPort(7000).SetHTTPVhostPort(8080).
+			SetPortStart(20000).SetPortEnd(29999).SetDesiredRevision(highestRevision).
+			SetActiveToken(token).Save(ctx)
 		if err != nil {
-			return serverNodeRecord{}, serverDomainError("NODE_ALREADY_REGISTERED", "Node identity or management address is already registered")
+			return serverNodeRecord{}, mapRemoteNodeRegistrationConstraintError(ctx, client, nodeID, publicKeyHex, address, err)
 		}
-		if _, err := connection.ExecContext(ctx, `INSERT INTO node_port_pools(node_id,port_start,port_end) VALUES(?,?,?)`, nodeID, 20000, 29999); err != nil {
+		if _, err := client.NodePortPool.Create().SetNodeID(nodeID).SetPortStart(20000).SetPortEnd(29999).Save(ctx); err != nil {
 			return serverNodeRecord{}, err
 		}
 		return serverNodeRecord{ID: nodeID, Kind: "remote", Name: name, Lifecycle: "active", ManagementAddress: address, PublicKey: append([]byte(nil), publicKey...), DesiredRevision: highestRevision, FRPBindPort: 7000, HTTPVhostPort: 8080, PortStart: 20000, PortEnd: 29999, CreatedAt: createdAt, UpdatedAt: createdAt}, nil
@@ -87,50 +92,93 @@ func (registry *serverNodeRegistry) register(ctx context.Context, nodeID, name, 
 	return result, err
 }
 
-func (registry *serverNodeRegistry) get(ctx context.Context, nodeID string) (serverNodeRecord, error) {
-	row := registry.database.QueryRowContext(ctx, `SELECT n.node_id,n.kind,n.name,n.lifecycle,n.advertised_frp_host,n.advertised_frp_port,n.http_ingress_host,n.http_ingress_port,n.created_at,n.updated_at,r.node_public_key,r.management_address,r.desired_revision,r.desired_hash,r.desired_snapshot,r.staged_token_revision,r.frp_bind_port,r.http_vhost_port,r.port_start,r.port_end FROM nodes n JOIN remote_nodes r ON r.node_id=n.node_id WHERE n.node_id=?`, nodeID)
-	var record serverNodeRecord
-	var publicHex string
-	if err := row.Scan(&record.ID, &record.Kind, &record.Name, &record.Lifecycle, &record.AdvertisedFRPHost, &record.AdvertisedFRPPort, &record.HTTPIngressHost, &record.HTTPIngressPort, &record.CreatedAt, &record.UpdatedAt, &publicHex, &record.ManagementAddress, &record.DesiredRevision, &record.DesiredHash, &record.DesiredSnapshot, &record.StagedTokenRevision, &record.FRPBindPort, &record.HTTPVhostPort, &record.PortStart, &record.PortEnd); err != nil {
-		if err == sql.ErrNoRows {
-			return serverNodeRecord{}, serverDomainError("NOT_FOUND", "Node not found")
+func mapNodeRegistrationConstraintError(ctx context.Context, client *serverent.Client, nodeID string, err error) error {
+	if errors.Is(err, sqlite3.CONSTRAINT_PRIMARYKEY) || errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
+		registered, checkErr := client.Node.Query().Where(node.IDEQ(nodeID)).Exist(ctx)
+		if checkErr != nil {
+			return fmt.Errorf("check Node registration conflict: %w", checkErr)
 		}
+		if registered {
+			return serverDomainError("NODE_ALREADY_REGISTERED", "Node is already registered")
+		}
+	}
+	return fmt.Errorf("register Node: %w", err)
+}
+
+func mapRemoteNodeRegistrationConstraintError(ctx context.Context, client *serverent.Client, nodeID, publicKey, address string, err error) error {
+	if errors.Is(err, sqlite3.CONSTRAINT_UNIQUE) {
+		registered, checkErr := client.RemoteNode.Query().Where(remotenode.Or(
+			remotenode.NodeIDEQ(nodeID), remotenode.NodePublicKeyEQ(publicKey), remotenode.ManagementAddressEQ(address),
+		)).Exist(ctx)
+		if checkErr != nil {
+			return fmt.Errorf("check Remote Node registration conflict: %w", checkErr)
+		}
+		if registered {
+			return serverDomainError("NODE_ALREADY_REGISTERED", "Node identity or management address is already registered")
+		}
+	}
+	return fmt.Errorf("register Remote Node: %w", err)
+}
+
+func (registry *serverNodeRegistry) get(ctx context.Context, nodeID string) (serverNodeRecord, error) {
+	item, err := serverEntForQueryer(registry.database).Node.Query().Where(node.IDEQ(nodeID), node.KindEQ(node.KindRemote)).WithRemoteNode().WithManagementCandidate().Only(ctx)
+	if serverent.IsNotFound(err) {
+		return serverNodeRecord{}, serverDomainError("NOT_FOUND", "Node not found")
+	}
+	if err != nil {
 		return serverNodeRecord{}, err
 	}
-	var err error
-	record.PublicKey, err = hex.DecodeString(publicHex)
+	remote := item.Edges.RemoteNode
+	if remote == nil {
+		return serverNodeRecord{}, fmt.Errorf("stored Remote Node record is missing")
+	}
+	record := serverNodeRecord{
+		ID: item.ID, Kind: string(item.Kind), Name: item.Name, Lifecycle: string(item.Lifecycle),
+		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+		ManagementAddress: remote.ManagementAddress, DesiredRevision: remote.DesiredRevision,
+		FRPBindPort: int64(remote.FrpBindPort), HTTPVhostPort: int64(remote.HTTPVhostPort),
+		PortStart: int64(remote.PortStart), PortEnd: int64(remote.PortEnd),
+	}
+	if item.AdvertisedFrpHost != nil {
+		record.AdvertisedFRPHost = sql.NullString{String: *item.AdvertisedFrpHost, Valid: true}
+	}
+	if item.AdvertisedFrpPort != nil {
+		record.AdvertisedFRPPort = sql.NullInt64{Int64: int64(*item.AdvertisedFrpPort), Valid: true}
+	}
+	if item.HTTPIngressHost != nil {
+		record.HTTPIngressHost = sql.NullString{String: *item.HTTPIngressHost, Valid: true}
+	}
+	if item.HTTPIngressPort != nil {
+		record.HTTPIngressPort = sql.NullInt64{Int64: int64(*item.HTTPIngressPort), Valid: true}
+	}
+	if remote.DesiredHash != nil {
+		record.DesiredHash = sql.NullString{String: *remote.DesiredHash, Valid: true}
+	}
+	if remote.DesiredSnapshot != nil {
+		record.DesiredSnapshot = sql.NullString{String: *remote.DesiredSnapshot, Valid: true}
+	}
+	if remote.StagedTokenRevision != nil {
+		record.StagedTokenRevision = sql.NullInt64{Int64: *remote.StagedTokenRevision, Valid: true}
+	}
+	if item.Edges.ManagementCandidate != nil {
+		record.PendingManagementAddress = item.Edges.ManagementCandidate.CandidateAddress
+		record.CandidateError = item.Edges.ManagementCandidate.FailureCode
+	}
+	record.PublicKey, err = hex.DecodeString(remote.NodePublicKey)
 	if err != nil || len(record.PublicKey) != 32 {
 		return serverNodeRecord{}, fmt.Errorf("stored Node identity is invalid")
-	}
-	err = registry.database.QueryRowContext(ctx, `SELECT candidate_address,failure_code FROM node_management_candidates WHERE node_id=?`, nodeID).Scan(&record.PendingManagementAddress, &record.CandidateError)
-	if err != nil && err != sql.ErrNoRows {
-		return serverNodeRecord{}, err
 	}
 	return record, nil
 }
 
 func (registry *serverNodeRegistry) listRemote(ctx context.Context) ([]serverNodeRecord, error) {
-	rows, err := registry.database.QueryContext(ctx, `SELECT node_id FROM nodes WHERE kind='remote' ORDER BY created_at,node_id`)
+	items, err := serverEntForQueryer(registry.database).Node.Query().Where(node.KindEQ(node.KindRemote)).Order(node.ByCreatedAt(), node.ByID()).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
-	result := make([]serverNodeRecord, 0, len(ids))
-	for _, id := range ids {
-		record, err := registry.get(ctx, id)
+	result := make([]serverNodeRecord, 0, len(items))
+	for _, item := range items {
+		record, err := registry.get(ctx, item.ID)
 		if err != nil {
 			return nil, err
 		}

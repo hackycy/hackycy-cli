@@ -2,12 +2,48 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
 
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
+
+func TestMigrateClientNodeUpdatesV1OwnershipAtomically(t *testing.T) {
+	state := openServerDomainState(t)
+	ctx := t.Context()
+	if _, err := state.database.ExecContext(ctx, `
+		INSERT INTO nodes(node_id,kind,name,created_at,updated_at) VALUES('remote','remote','Remote','now','now');
+		INSERT INTO node_port_pools(node_id,port_start,port_end) VALUES('remote',20000,20010);
+		INSERT INTO clients(internal_id,owner_account_id,node_id,token,created_at) VALUES('client-1','environment-admin','local','token-1','now');
+		INSERT INTO tunnels(id,client_internal_id,node_id,protocol,custom_domains,local_host,local_port,created_at,updated_at)
+		VALUES('tunnel-1','client-1','local','http','["example.test"]','localhost',8080,'now','now');
+		INSERT INTO tunnel_http_routes(id,tunnel_id,hostname,location) VALUES('route-1','tunnel-1','example.test','');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	client, err := selectClient(ctx, state.database, "client-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = withImmediateTransaction(ctx, state.database, func(connection *sql.Conn) (struct{}, error) {
+		return struct{}{}, migrateClientNode(ctx, connection, client, "remote")
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var clientNode, tunnelNode string
+	if err := state.database.QueryRowContext(ctx, "SELECT node_id FROM clients WHERE internal_id='client-1'").Scan(&clientNode); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.database.QueryRowContext(ctx, "SELECT node_id FROM tunnels WHERE id='tunnel-1'").Scan(&tunnelNode); err != nil {
+		t.Fatal(err)
+	}
+	if clientNode != "remote" || tunnelNode != "remote" {
+		t.Fatalf("Node ownership = (%q, %q), want remote", clientNode, tunnelNode)
+	}
+}
 
 func TestClientNodeAssignmentMigratesResourcesAndKeepsPendingSeparate(t *testing.T) {
 	state, err := OpenState(StateOptions{DataDirectory: t.TempDir()})
@@ -61,7 +97,7 @@ func TestClientNodeAssignmentMigratesResourcesAndKeepsPendingSeparate(t *testing
 	if nodeID != "remote" {
 		t.Fatalf("migrated TCP node = %q", nodeID)
 	}
-	if err := state.database.QueryRow(`SELECT node_id FROM hostname_owners WHERE hostname_key=?`, host).Scan(&ownerNode); err != nil {
+	if err := state.database.QueryRow(`SELECT DISTINCT t.node_id FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE r.hostname=?`, host).Scan(&ownerNode); err != nil {
 		t.Fatal(err)
 	}
 	if ownerNode != "remote" {
@@ -276,20 +312,20 @@ func TestClientNodeAssignmentRejectsSplitHostnameAndRollsBack(t *testing.T) {
 		t.Fatalf("failed assignment changed Client = (%+v, %v)", client, err)
 	}
 	var owner string
-	if err := state.database.QueryRow(`SELECT node_id FROM hostname_owners WHERE hostname_key=?`, host).Scan(&owner); err != nil || owner != "local" {
+	if err := state.database.QueryRow(`SELECT DISTINCT t.node_id FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE r.hostname=?`, host).Scan(&owner); err != nil || owner != "local" {
 		t.Fatalf("failed assignment changed hostname owner = (%q, %v)", owner, err)
 	}
 	var localTunnels, localRoutes, remoteTunnels, remoteRoutes int
 	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE node_id='local' AND protocol='http'`).Scan(&localTunnels); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes WHERE node_id='local' AND hostname=?`, host).Scan(&localRoutes); err != nil {
+	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE t.node_id='local' AND r.hostname=?`, host).Scan(&localRoutes); err != nil {
 		t.Fatal(err)
 	}
 	if err := state.database.QueryRow(`SELECT count(*) FROM tunnels WHERE node_id='remote' AND protocol='http'`).Scan(&remoteTunnels); err != nil {
 		t.Fatal(err)
 	}
-	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes WHERE node_id='remote' AND hostname=?`, host).Scan(&remoteRoutes); err != nil {
+	if err := state.database.QueryRow(`SELECT count(*) FROM tunnel_http_routes r JOIN tunnels t ON t.id=r.tunnel_id WHERE t.node_id='remote' AND r.hostname=?`, host).Scan(&remoteRoutes); err != nil {
 		t.Fatal(err)
 	}
 	if localTunnels != 2 || localRoutes != 2 || remoteTunnels != 0 || remoteRoutes != 0 {

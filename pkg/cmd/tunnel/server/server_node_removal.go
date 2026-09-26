@@ -10,6 +10,9 @@ import (
 	"math"
 	"time"
 
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/node"
+	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 
@@ -18,39 +21,35 @@ import (
 // later slice after the lifecycle/API contract is wired.
 func (registry *serverNodeRegistry) requestNodeRemoval(ctx context.Context, nodeID string) (int64, error) {
 	return withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (int64, error) {
-		var kind, lifecycle string
-		var currentRevision sql.NullInt64
-		if err := connection.QueryRowContext(ctx, `
-			SELECT n.kind,n.lifecycle,r.desired_revision
-			FROM nodes n LEFT JOIN remote_nodes r ON r.node_id=n.node_id
-			WHERE n.node_id=?`, nodeID).Scan(&kind, &lifecycle, &currentRevision); err != nil {
-			if err == sql.ErrNoRows {
-				return 0, serverDomainError("NOT_FOUND", "Node not found")
-			}
+		client := serverEntOnConnection(connection)
+		current, err := client.Node.Query().Where(node.IDEQ(nodeID)).WithRemoteNode().Only(ctx)
+		if serverent.IsNotFound(err) {
+			return 0, serverDomainError("NOT_FOUND", "Node not found")
+		}
+		if err != nil {
 			return 0, err
 		}
-		if kind == "local" {
+		if current.Kind == "local" {
 			return 0, serverDomainError("NODE_REMOVE_FORBIDDEN", "Local Node cannot be removed")
 		}
-		if !currentRevision.Valid {
+		if current.Edges.RemoteNode == nil {
 			return 0, fmt.Errorf("Remote Node record is incomplete")
 		}
-		if lifecycle == "removing" {
-			return currentRevision.Int64, nil
+		remote := current.Edges.RemoteNode
+		if current.Lifecycle == "removing" {
+			return remote.DesiredRevision, nil
 		}
-		var dependencyCount int
-		if err := connection.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM clients
-			WHERE node_id=? OR pending_node_id=?`, nodeID, nodeID).Scan(&dependencyCount); err != nil {
+		dependencyCount, err := nodeClientDependencyCount(ctx, client, nodeID)
+		if err != nil {
 			return 0, err
 		}
 		if dependencyCount != 0 {
 			return 0, serverDomainError("NODE_HAS_CLIENTS", "Node has assigned or pending Clients")
 		}
-		if currentRevision.Int64 < 0 || currentRevision.Int64 == math.MaxInt64 {
+		if remote.DesiredRevision < 0 || remote.DesiredRevision == math.MaxInt64 {
 			return 0, serverDomainError("NODE_REVISION_CONFLICT", "Node revision cannot advance")
 		}
-		revision := currentRevision.Int64 + 1
+		revision := remote.DesiredRevision + 1
 		// Disabled snapshots intentionally contain no Token. Applying one must
 		// clear the Node's effective runtime credentials before completion.
 		snapshot := serverDesiredNodeSnapshot{
@@ -65,13 +64,10 @@ func (registry *serverNodeRegistry) requestNodeRemoval(ctx context.Context, node
 			return 0, fmt.Errorf("encode Node disabled snapshot: %w", err)
 		}
 		digest := sha256.Sum256(contents)
-		if _, err := connection.ExecContext(ctx, `UPDATE nodes SET lifecycle='removing',updated_at=? WHERE node_id=?`, formatServerTimestamp(time.Now()), nodeID); err != nil {
+		if _, err := client.Node.UpdateOne(current).SetLifecycle(node.LifecycleRemoving).SetUpdatedAt(formatServerTimestamp(time.Now())).Save(ctx); err != nil {
 			return 0, fmt.Errorf("mark Node removing: %w", err)
 		}
-		if _, err := connection.ExecContext(ctx, `
-			UPDATE remote_nodes
-			SET desired_revision=?,desired_hash=?,desired_snapshot=?
-			WHERE node_id=?`, revision, hex.EncodeToString(digest[:]), string(contents), nodeID); err != nil {
+		if _, err := client.RemoteNode.UpdateOne(remote).SetDesiredRevision(revision).SetDesiredHash(hex.EncodeToString(digest[:])).SetDesiredSnapshot(string(contents)).Save(ctx); err != nil {
 			return 0, fmt.Errorf("save Node disabled snapshot: %w", err)
 		}
 		return revision, nil
@@ -83,28 +79,25 @@ func (coordinator *serverNodeCoordinator) finishNodeRemoval(ctx context.Context,
 		return false
 	}
 	removed, err := withImmediateTransaction(ctx, coordinator.registry.database, func(connection *sql.Conn) (bool, error) {
-		var lifecycle, digest string
-		var revision int64
-		if err := connection.QueryRowContext(ctx, `
-			SELECT n.lifecycle,r.desired_revision,r.desired_hash
-			FROM nodes n JOIN remote_nodes r ON r.node_id=n.node_id
-			WHERE n.node_id=?`, record.ID).Scan(&lifecycle, &revision, &digest); err != nil {
-			if err == sql.ErrNoRows {
-				return false, nil
-			}
-			return false, err
-		}
-		if lifecycle != "removing" || revision != record.DesiredRevision || digest != record.DesiredHash.String {
+		client := serverEntOnConnection(connection)
+		current, err := client.Node.Query().Where(node.IDEQ(record.ID)).WithRemoteNode().Only(ctx)
+		if serverent.IsNotFound(err) {
 			return false, nil
 		}
-		var dependencies int
-		if err := connection.QueryRowContext(ctx, `SELECT COUNT(*) FROM clients WHERE node_id=? OR pending_node_id=?`, record.ID, record.ID).Scan(&dependencies); err != nil {
+		if err != nil {
+			return false, err
+		}
+		if current.Lifecycle != "removing" || current.Edges.RemoteNode == nil || current.Edges.RemoteNode.DesiredHash == nil || current.Edges.RemoteNode.DesiredRevision != record.DesiredRevision || *current.Edges.RemoteNode.DesiredHash != record.DesiredHash.String {
+			return false, nil
+		}
+		dependencies, err := nodeClientDependencyCount(ctx, client, record.ID)
+		if err != nil {
 			return false, err
 		}
 		if dependencies != 0 {
 			return false, nil
 		}
-		if _, err := connection.ExecContext(ctx, `DELETE FROM nodes WHERE node_id=?`, record.ID); err != nil {
+		if err := client.Node.DeleteOne(current).Exec(ctx); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -120,30 +113,35 @@ func (coordinator *serverNodeCoordinator) finishNodeRemoval(ctx context.Context,
 
 func (registry *serverNodeRegistry) forceForget(ctx context.Context, nodeID string, managementFault bool) error {
 	_, err := withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (struct{}, error) {
-		var kind, lifecycle string
-		if err := connection.QueryRowContext(ctx, `SELECT kind,lifecycle FROM nodes WHERE node_id=?`, nodeID).Scan(&kind, &lifecycle); err != nil {
-			if err == sql.ErrNoRows {
-				return struct{}{}, serverDomainError("NOT_FOUND", "Node not found")
-			}
+		client := serverEntOnConnection(connection)
+		current, err := client.Node.Get(ctx, nodeID)
+		if serverent.IsNotFound(err) {
+			return struct{}{}, serverDomainError("NOT_FOUND", "Node not found")
+		}
+		if err != nil {
 			return struct{}{}, err
 		}
-		if kind == "local" {
+		if current.Kind == "local" {
 			return struct{}{}, serverDomainError("NODE_REMOVE_FORBIDDEN", "Local Node cannot be forgotten")
 		}
-		var dependencies int
-		if err := connection.QueryRowContext(ctx, `SELECT COUNT(*) FROM clients WHERE node_id=? OR pending_node_id=?`, nodeID, nodeID).Scan(&dependencies); err != nil {
+		dependencies, err := nodeClientDependencyCount(ctx, client, nodeID)
+		if err != nil {
 			return struct{}{}, err
 		}
 		if dependencies != 0 {
 			return struct{}{}, serverDomainError("NODE_HAS_CLIENTS", "Node has assigned or pending Clients")
 		}
-		if lifecycle != "removing" && !managementFault {
+		if current.Lifecycle != "removing" && !managementFault {
 			return struct{}{}, serverDomainError("NODE_FORCE_FORGET_UNAVAILABLE", "Node can be forgotten only while removing or management is failing")
 		}
-		if _, err := connection.ExecContext(ctx, `DELETE FROM nodes WHERE node_id=?`, nodeID); err != nil {
+		if err := client.Node.DeleteOne(current).Exec(ctx); err != nil {
 			return struct{}{}, err
 		}
 		return struct{}{}, nil
 	})
 	return err
+}
+
+func nodeClientDependencyCount(ctx context.Context, client *serverent.Client, nodeID string) (int, error) {
+	return client.ServerClient.Query().Where(serverclient.Or(serverclient.NodeIDEQ(nodeID), serverclient.PendingNodeIDEQ(nodeID))).Count(ctx)
 }

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
 	"github.com/hackycy/hackycy-cli/internal/logging"
 	webassets "github.com/hackycy/hackycy-cli/web"
 )
@@ -299,23 +300,25 @@ func resolveServerInternalFRPToken(ctx context.Context, database *sql.DB, config
 		}
 		return token, nil
 	}
-	var token string
-	err := database.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, serverInternalFRPTokenMetaKey).Scan(&token)
-	if err == nil && token != "" {
-		return token, nil
+	stored, err := serverEntForQueryer(database).Meta.Get(ctx, serverInternalFRPTokenMetaKey)
+	if err == nil && stored.Value != "" {
+		return stored.Value, nil
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !serverent.IsNotFound(err) {
 		return "", fmt.Errorf("read Tunnel server Internal FRP Token: %w", err)
 	}
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
 		return "", fmt.Errorf("generate Tunnel server Internal FRP Token: %w", err)
 	}
-	token = base64.RawURLEncoding.EncodeToString(bytes)
-	if _, err := database.ExecContext(ctx, `
-		INSERT INTO meta(key, value) VALUES(?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value
-	`, serverInternalFRPTokenMetaKey, token); err != nil {
+	token := base64.RawURLEncoding.EncodeToString(bytes)
+	client := serverEntForQueryer(database)
+	if stored == nil {
+		_, err = client.Meta.Create().SetID(serverInternalFRPTokenMetaKey).SetValue(token).Save(ctx)
+	} else {
+		_, err = client.Meta.UpdateOne(stored).SetValue(token).Save(ctx)
+	}
+	if err != nil {
 		return "", fmt.Errorf("persist Tunnel server Internal FRP Token: %w", err)
 	}
 	return token, nil

@@ -5,6 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
+
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/nodeportpool"
+	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
 )
 
 func syncLocalNodeProjection(ctx context.Context, database *sql.DB, settings ServerHTTPServerSettings) error {
@@ -18,41 +23,47 @@ func syncLocalNodeProjection(ctx context.Context, database *sql.DB, settings Ser
 		}
 	}
 	_, err := withImmediateTransaction(ctx, database, func(connection *sql.Conn) (struct{}, error) {
-		var port int
-		err := connection.QueryRowContext(ctx, `
-			SELECT server_port FROM tunnels WHERE node_id = 'local'
-			  AND protocol IN ('tcp', 'udp') AND (server_port < ? OR server_port > ?)
-			LIMIT 1
-		`, pool.Start, pool.End).Scan(&port)
+		client := serverEntOnConnection(connection)
+		occupied, err := client.Tunnel.Query().Where(
+			tunnel.NodeIDEQ("local"), tunnel.ProtocolIn(tunnel.ProtocolTCP, tunnel.ProtocolUDP),
+			tunnel.Or(tunnel.ServerPortLT(int(pool.Start)), tunnel.ServerPortGT(int(pool.End))),
+		).First(ctx)
 		if err == nil {
-			return struct{}{}, fmt.Errorf("Local Node port pool %d-%d excludes occupied port %d", pool.Start, pool.End, port)
+			return struct{}{}, fmt.Errorf("Local Node port pool %d-%d excludes occupied port %d", pool.Start, pool.End, *occupied.ServerPort)
 		}
-		if err != sql.ErrNoRows {
+		if !serverent.IsNotFound(err) {
 			return struct{}{}, fmt.Errorf("check Local Node port pool: %w", err)
 		}
-		var frpHost, frpPort, httpHost, httpPort any
+		var frpHost, httpHost string
+		var frpPort, httpPort int
 		if settings.AdvertiseFRPAddr != nil {
 			frpHost = strings.ToLower(settings.AdvertiseFRPAddr.Host)
-			frpPort = settings.AdvertiseFRPAddr.Port
+			frpPort = int(settings.AdvertiseFRPAddr.Port)
 			httpHost = frpHost
-			httpPort = settings.HTTPPort
+			httpPort = int(settings.HTTPPort)
 		} else if settings.Address != "" && settings.Address != "0.0.0.0" && settings.Address != "::" {
 			frpHost = strings.ToLower(settings.Address)
-			frpPort = settings.FRPPort
+			frpPort = int(settings.FRPPort)
 			httpHost = frpHost
-			httpPort = settings.HTTPPort
+			httpPort = int(settings.HTTPPort)
 		}
-		if _, err := connection.ExecContext(ctx, `
-			UPDATE nodes SET advertised_frp_host = ?, advertised_frp_port = ?,
-			  http_ingress_host = ?, http_ingress_port = ?, updated_at = datetime('now')
-			WHERE node_id = 'local'
-		`, frpHost, frpPort, httpHost, httpPort); err != nil {
+		update := client.Node.UpdateOneID("local").SetUpdatedAt(time.Now().UTC().Format("2006-01-02 15:04:05"))
+		if frpHost == "" {
+			update.ClearAdvertisedFrpHost().ClearAdvertisedFrpPort().ClearHTTPIngressHost().ClearHTTPIngressPort()
+		} else {
+			update.SetAdvertisedFrpHost(frpHost).SetAdvertisedFrpPort(frpPort).
+				SetHTTPIngressHost(httpHost).SetHTTPIngressPort(httpPort)
+		}
+		if _, err := update.Save(ctx); err != nil {
 			return struct{}{}, fmt.Errorf("project Local Node endpoint: %w", err)
 		}
-		if _, err := connection.ExecContext(ctx, `
-			INSERT INTO node_port_pools(node_id, port_start, port_end) VALUES('local', ?, ?)
-			ON CONFLICT(node_id) DO UPDATE SET port_start = excluded.port_start, port_end = excluded.port_end
-		`, pool.Start, pool.End); err != nil {
+		currentPool, err := client.NodePortPool.Query().Where(nodeportpool.NodeIDEQ("local")).Only(ctx)
+		if serverent.IsNotFound(err) {
+			_, err = client.NodePortPool.Create().SetNodeID("local").SetPortStart(int(pool.Start)).SetPortEnd(int(pool.End)).Save(ctx)
+		} else if err == nil {
+			_, err = client.NodePortPool.UpdateOne(currentPool).SetPortStart(int(pool.Start)).SetPortEnd(int(pool.End)).Save(ctx)
+		}
+		if err != nil {
 			return struct{}{}, fmt.Errorf("project Local Node port pool: %w", err)
 		}
 		return struct{}{}, nil

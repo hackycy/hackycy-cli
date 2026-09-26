@@ -43,6 +43,33 @@ func TestOpenCreatesOnlyGoOwnedStateBelowTheBaseDirectory(t *testing.T) {
 	assertPrivatePath(t, lockPath, 0o600)
 }
 
+func TestOpenUsesSelectedStateDirectoryAndBaseLock(t *testing.T) {
+	base := t.TempDir()
+	options := Options{BaseDirectory: base, StateDirectoryName: "server-state-v1", LockBaseDirectory: true}
+	first, err := Open(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Directory() != filepath.Join(base, "server-state-v1") {
+		t.Fatalf("session directory = %q", first.Directory())
+	}
+	if _, err := os.Stat(filepath.Join(base, sessionLockFileName)); err != nil {
+		t.Fatalf("base lock: %v", err)
+	}
+	if _, err := Open(options); !errors.Is(err, ErrDirectoryInUse) {
+		t.Fatalf("second Open() error = %v, want ErrDirectoryInUse", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(base, sessionLockFileName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("base lock after Close() = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, goStateDirectoryName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy session directory created: %v", err)
+	}
+}
+
 func TestManagerUsesOneLiveLockAndReleasesOnlyItsOwnLock(t *testing.T) {
 	base := t.TempDir()
 	first, err := Open(Options{BaseDirectory: base})

@@ -55,6 +55,23 @@ func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 	if want := tunnelruntime.FRPRuntimePathsFor(frpDirectory, artifact.Target); paths != want {
 		t.Fatalf("pinned runtime paths = %#v, want %#v", paths, want)
 	}
+	clientFRPDirectory, err := tunnelruntime.DefaultFRPRuntimeDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(clientFRPDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	clientPaths := tunnelruntime.FRPRuntimePathsFor(clientFRPDirectory, artifact.Target)
+	for _, pair := range [][2]string{{paths.FRPC, clientPaths.FRPC}, {paths.FRPS, clientPaths.FRPS}} {
+		contents, err := os.ReadFile(pair[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(pair[1], contents, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	httpPort := startGoToGoHTTPBackend(t)
 	tcpPort := startGoToGoTCPBackend(t)

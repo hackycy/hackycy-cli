@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
-	"database/sql"
+
+	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	"github.com/hackycy/hackycy-cli/ent/server/node"
 )
 
 type serverNodeStateView struct {
@@ -30,27 +32,13 @@ type serverNodeSummary struct {
 }
 
 func (service *serverNodeService) listSummaries(ctx context.Context) ([]serverNodeSummary, error) {
-	rows, err := service.registry.database.QueryContext(ctx, `SELECT node_id FROM nodes ORDER BY kind,name,node_id`)
+	items, err := serverEntForQueryer(service.registry.database).Node.Query().Order(node.ByKind(), node.ByName(), node.ByID()).All(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, err
-	}
-	_ = rows.Close()
-	summaries := make([]serverNodeSummary, 0, len(ids))
-	for _, id := range ids {
-		summary, err := service.summary(ctx, id)
+	summaries := make([]serverNodeSummary, 0, len(items))
+	for _, item := range items {
+		summary, err := service.summary(ctx, item.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -60,21 +48,19 @@ func (service *serverNodeService) listSummaries(ctx context.Context) ([]serverNo
 }
 
 func (service *serverNodeService) summary(ctx context.Context, nodeID string) (serverNodeSummary, error) {
-	var summary serverNodeSummary
-	var frpHost, ingressHost sql.NullString
-	var frpPort, ingressPort sql.NullInt64
-	err := service.registry.database.QueryRowContext(ctx, `SELECT node_id,name,kind,lifecycle,advertised_frp_host,advertised_frp_port,http_ingress_host,http_ingress_port FROM nodes WHERE node_id=?`, nodeID).Scan(&summary.ID, &summary.Name, &summary.Kind, &summary.Lifecycle, &frpHost, &frpPort, &ingressHost, &ingressPort)
-	if err == sql.ErrNoRows {
+	item, err := serverEntForQueryer(service.registry.database).Node.Get(ctx, nodeID)
+	if serverent.IsNotFound(err) {
 		return serverNodeSummary{}, serverDomainError("NOT_FOUND", "Node not found")
 	}
 	if err != nil {
 		return serverNodeSummary{}, err
 	}
-	if frpHost.Valid && frpPort.Valid {
-		summary.AdvertisedFRPAddress = &serverNodeEndpoint{Host: frpHost.String, Port: frpPort.Int64}
+	summary := serverNodeSummary{ID: item.ID, Name: item.Name, Kind: string(item.Kind), Lifecycle: string(item.Lifecycle)}
+	if item.AdvertisedFrpHost != nil && item.AdvertisedFrpPort != nil {
+		summary.AdvertisedFRPAddress = &serverNodeEndpoint{Host: *item.AdvertisedFrpHost, Port: int64(*item.AdvertisedFrpPort)}
 	}
-	if ingressHost.Valid && ingressPort.Valid {
-		summary.HTTPIngressAddress = &serverNodeEndpoint{Host: ingressHost.String, Port: ingressPort.Int64}
+	if item.HTTPIngressHost != nil && item.HTTPIngressPort != nil {
+		summary.HTTPIngressAddress = &serverNodeEndpoint{Host: *item.HTTPIngressHost, Port: int64(*item.HTTPIngressPort)}
 	}
 	if summary.Kind == "local" {
 		summary.Management = serverNodeStateView{State: "local"}
