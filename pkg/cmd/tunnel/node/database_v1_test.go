@@ -1,6 +1,7 @@
 package node
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,5 +38,38 @@ func TestOpenEmptyNodeV1Database(t *testing.T) {
 	got, err := os.ReadFile(legacyPath)
 	if err != nil || string(got) != string(legacyContents) {
 		t.Fatalf("legacy database changed: %q, %v", got, err)
+	}
+}
+
+func TestInitializeNodeV1IdentityIsAtomic(t *testing.T) {
+	root := t.TempDir()
+	db, client, err := openEmptyNodeV1Database(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := initializeNodeV1Identity(t.Context(), client); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := client.Identity.Get(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !validIdentity(identity.NodeID, identity.PrivateKey, identity.PublicKey) {
+		t.Fatalf("invalid initialized identity: %v", err)
+	}
+	runtime, err := client.RuntimeState.Get(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.HighestRevision != 0 || string(runtime.Phase) != "idle" {
+		t.Fatalf("invalid initial runtime: %+v, %v", runtime, err)
+	}
+	if err := initializeNodeV1Identity(context.Background(), client); err == nil {
+		t.Fatal("duplicate initialization succeeded")
+	}
+	identities, err := client.Identity.Query().Count(t.Context())
+	if err != nil || identities != 1 {
+		t.Fatalf("duplicate initialization changed identity count: %d, %v", identities, err)
 	}
 }

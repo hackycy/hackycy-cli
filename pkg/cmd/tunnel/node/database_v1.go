@@ -2,8 +2,11 @@ package node
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,4 +98,27 @@ func openEmptyNodeV1Database(ctx context.Context, dataDirectory string) (*sql.DB
 		return nil, nil, err
 	}
 	return db, nodeent.NewClient(nodeent.Driver(entsql.OpenDB(dialect.SQLite, db))), nil
+}
+
+func initializeNodeV1Identity(ctx context.Context, client *nodeent.Client) error {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	nodeID := make([]byte, 16)
+	if _, err := rand.Read(nodeID); err != nil {
+		return err
+	}
+	tx, err := client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Identity.Create().SetID(1).SetNodeID(hex.EncodeToString(nodeID)).SetPrivateKey(key.Bytes()).SetPublicKey(key.PublicKey().Bytes()).Save(ctx); err != nil {
+		return err
+	}
+	if _, err := tx.RuntimeState.Create().SetID(1).Save(ctx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
