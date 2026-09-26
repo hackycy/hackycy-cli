@@ -97,8 +97,11 @@ func TestTunnelNodeStandaloneBinaryIdentityAndCLI(t *testing.T) {
 	if second := startAndStop(); first != second {
 		t.Fatalf("Node fingerprint changed after process restart: %q != %q", first, second)
 	}
-	if _, err := os.Stat(filepath.Join(directory, "node.sqlite")); err != nil {
+	if _, err := os.Stat(filepath.Join(directory, "node-state-v1", "node.sqlite")); err != nil {
 		t.Fatalf("Node did not persist identity: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, "node.sqlite")); !os.IsNotExist(err) {
+		t.Fatalf("Node unexpectedly created legacy root database: %v", err)
 	}
 }
 

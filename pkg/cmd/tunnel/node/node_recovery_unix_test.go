@@ -49,7 +49,7 @@ func TestNodeCrashRecoveryHelper(t *testing.T) {
 		t.Helper()
 		snapshot := desiredSnapshot{FormatVersion: 1, FRPVersion: tunnelruntime.FRPVersion, NodeID: state.nodeID, Revision: revision, State: stateName}
 		if stateName == "running" {
-			snapshot.BindAddress, snapshot.BindPort, snapshot.VhostHTTPPort, snapshot.PortRangeStart, snapshot.PortRangeEnd, snapshot.Token = "127.0.0.1", port(start), port(start+1), port(start+2), port(start+2), "secret"
+			snapshot.BindAddress, snapshot.BindPort, snapshot.VhostHTTPPort, snapshot.PortRangeStart, snapshot.PortRangeEnd, snapshot.Token, snapshot.Custom404Page = "127.0.0.1", port(start), port(start+1), port(start+2), port(start+2), "secret", "recovered-404"
 		}
 		contents, err := json.Marshal(snapshot)
 		if err != nil {
@@ -185,8 +185,17 @@ func TestNodeSIGKILLRecoveryAtRuntimeCommitBoundaries(t *testing.T) {
 			}
 			disabled := phase == "disabling" || strings.HasPrefix(phase, "disabled")
 			if disabled {
-				if !record.BootDisabled || !record.DisabledComplete || record.AppliedRevision != 2 || runtime.processState().State != tunnelruntime.FRPProcessStopped {
+				if !record.BootDisabled || !record.DisabledComplete || record.AppliedRevision != 2 || record.Phase != "disabled" || len(record.LastGood) != 0 || record.OwnerPID != 0 || runtime.processState().State != tunnelruntime.FRPProcessStopped {
 					t.Fatalf("disabled recovery at %s: %+v, %+v", phase, record, runtime.processState())
+				}
+				files, err := filepath.Glob(filepath.Join(state.directory, "frps-*"))
+				if err != nil || len(files) != 0 {
+					t.Fatalf("disabled recovery left generated files at %s: %v, %v", phase, files, err)
+				}
+				connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports[0])), time.Second)
+				if err == nil {
+					_ = connection.Close()
+					t.Fatalf("old FRPS still listens after disabled recovery at %s", phase)
 				}
 			} else {
 				wantRevision := int64(1)
@@ -196,6 +205,16 @@ func TestNodeSIGKILLRecoveryAtRuntimeCommitBoundaries(t *testing.T) {
 				}
 				if record.AppliedRevision != wantRevision || runtime.processState().State != tunnelruntime.FRPProcessRunning {
 					t.Fatalf("running recovery at %s: %+v, %+v", phase, record, runtime.processState())
+				}
+				digest := snapshotDigest(record.LastGood)
+				configPath := filepath.Join(state.directory, "frps-"+digest+".toml")
+				if _, err := os.Stat(configPath); err != nil {
+					t.Fatalf("recovered config missing at %s: %v", phase, err)
+				}
+				pagePath := filepath.Join(state.directory, "frps-"+digest+"-404.html")
+				page, err := os.ReadFile(pagePath)
+				if err != nil || string(page) != "recovered-404" {
+					t.Fatalf("recovered 404 page at %s = %q, %v", phase, page, err)
 				}
 				connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(wantPort)), time.Second)
 				if err != nil {
@@ -283,6 +302,125 @@ func TestNodeIgnoresUnrecordedResidualFRPS(t *testing.T) {
 		t.Fatalf("unknown process was disturbed: %v", err)
 	}
 	_ = connection.Close()
+}
+
+type mismatchingProcessInspector struct{}
+
+func (mismatchingProcessInspector) Inspect(pid int) (tunnelruntime.ProcessSnapshot, error) {
+	return tunnelruntime.ProcessSnapshot{PID: pid, Executable: "/unexpected/frps", Args: []string{"/unexpected/frps", "-c", "/unexpected/config.toml"}}, nil
+}
+
+func TestNodeDoesNotTerminateRegisteredFRPSWithUnknownOwnership(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	artifact, err := tunnelruntime.CurrentFRPArtifact()
+	if err != nil {
+		t.Fatal(err)
+	}
+	frpDirectory, err := tunnelruntime.DefaultFRPRuntimeDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := tunnelruntime.EnsureFRPRuntimeAt(ctx, frpDirectory, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(t.TempDir(), "node")
+	state, err := OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if _, err := state.Claim(ctx, bytes.Repeat([]byte{11}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	ports := make([]int, 0, 3)
+	for len(ports) < 3 {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		_ = listener.Close()
+		seen := false
+		for _, prior := range ports {
+			seen = seen || prior == port
+		}
+		if !seen {
+			ports = append(ports, port)
+		}
+	}
+	contents, err := json.Marshal(desiredSnapshot{FormatVersion: 1, FRPVersion: tunnelruntime.FRPVersion, NodeID: state.nodeID, Revision: 1, State: "running", BindAddress: "127.0.0.1", BindPort: int64(ports[0]), VhostHTTPPort: int64(ports[1]), PortRangeStart: int64(ports[2]), PortRangeEnd: int64(ports[2]), Token: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.acceptCandidate(ctx, contents); err != nil {
+		t.Fatal(err)
+	}
+	runtime := newNodeRuntime(state)
+	runtime.ensureBinary = func(context.Context) (string, error) { return paths.FRPS, nil }
+	if record, code := runtime.applyAccepted(ctx); code != "" || record.OwnerPID == 0 {
+		t.Fatalf("initial FRPS = (%+v, %s)", record, code)
+	}
+	ownerPID := runtime.processState().PID
+	if ownerPID == nil {
+		t.Fatal("initial FRPS PID missing")
+	}
+	if runtime.supervisor != nil {
+		defer func() { _ = runtime.supervisor.Stop() }()
+	}
+	unknown := newNodeRuntime(state)
+	unknown.processInspector = mismatchingProcessInspector{}
+	if code := unknown.recover(ctx); code != "FRPS_OWNERSHIP_UNKNOWN" || unknown.recoveryCode() != code {
+		t.Fatalf("unknown ownership recovery = %s, state = %s", code, unknown.recoveryCode())
+	}
+	record, err := state.readRuntime(ctx)
+	if err != nil || record.OwnerPID != *ownerPID || record.OwnerConfig == "" || !bytes.Equal(record.LastGood, contents) {
+		t.Fatalf("unknown ownership changed durable state: %+v, %v", record, err)
+	}
+	if _, err := os.Stat(record.OwnerConfig); err != nil {
+		t.Fatalf("unknown ownership removed FRPS config: %v", err)
+	}
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprint(ports[0])), time.Second)
+	if err != nil {
+		t.Fatalf("unknown owner process was terminated: %v", err)
+	}
+	_ = connection.Close()
+}
+
+func TestNodeRecoveryRemovesAbandonedRuntimeFiles(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	directory := filepath.Join(t.TempDir(), "node")
+	state, err := OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+	if _, err := state.Claim(ctx, bytes.Repeat([]byte{12}, 32)); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"snapshot-interrupted", ".frps-file-interrupted"} {
+		if err := os.WriteFile(filepath.Join(state.directory, name), []byte("partial"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := filepath.Join(state.directory, "unrelated-file")
+	if err := os.WriteFile(keep, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime := newNodeRuntime(state)
+	if code := runtime.recover(ctx); code != "" {
+		t.Fatalf("recovery returned %s", code)
+	}
+	for _, name := range []string{"snapshot-interrupted", ".frps-file-interrupted"} {
+		if _, err := os.Stat(filepath.Join(state.directory, name)); !os.IsNotExist(err) {
+			t.Fatalf("abandoned runtime file %s remains: %v", name, err)
+		}
+	}
+	if contents, err := os.ReadFile(keep); err != nil || string(contents) != "keep" {
+		t.Fatalf("unrelated runtime file changed: %q, %v", contents, err)
+	}
 }
 
 func TestNodeSupervisorRestartUpdatesDurableOwner(t *testing.T) {

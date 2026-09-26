@@ -232,7 +232,7 @@ func (runtime *nodeRuntime) removeAbandonedTransfers() error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.Type().IsRegular() && strings.HasPrefix(entry.Name(), "snapshot-") {
+		if entry.Type().IsRegular() && (strings.HasPrefix(entry.Name(), "snapshot-") || strings.HasPrefix(entry.Name(), ".frps-file-")) {
 			if err := os.Remove(filepath.Join(runtime.state.directory, entry.Name())); err != nil {
 				return err
 			}
