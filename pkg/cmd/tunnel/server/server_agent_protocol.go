@@ -238,10 +238,13 @@ func (connection *ServerAgentConnection) recordFRPCStatus(ctx context.Context, s
 	if status.Revision != expected.Revision || status.NodeID != expected.NodeID || status.Digest != expected.Digest {
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseInvalidMessage, Message: "FRPC status does not match the current runtime"}
 	}
-	if !connection.gateway.recordFRPCStatus(connection.clientID, connection.slot, status) {
+	accepted, changed := connection.gateway.recordFRPCStatus(connection.clientID, connection.slot, status)
+	if !accepted {
 		return &ServerAgentProtocolError{CloseCode: serverAgentCloseRevoked, Message: "Client Token revoked"}
 	}
-	connection.gateway.notifyAgentChange(connection.clientID)
+	if changed {
+		connection.gateway.notifyAgentChange(connection.clientID)
+	}
 	return nil
 }
 

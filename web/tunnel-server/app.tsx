@@ -514,18 +514,28 @@ export function App(): React.JSX.Element {
     if (!authenticated)
       return
     const events = new EventSource('/api/events')
+    let refreshTimer: number | undefined
     events.onopen = () => setEventsConnected(true)
     events.onerror = () => setEventsConnected(false)
     events.onmessage = (message) => {
       const event = JSON.parse(message.data) as { event: 'changed' | 'session_revoked' }
       if (event.event === 'session_revoked') {
+        window.clearTimeout(refreshTimer)
         sessionEnded()
         return
       }
-      setRefreshSequence(value => value + 1)
-      void load()
+      if (refreshTimer === undefined) {
+        refreshTimer = window.setTimeout(() => {
+          refreshTimer = undefined
+          setRefreshSequence(value => value + 1)
+          void load()
+        }, 150)
+      }
     }
-    return () => events.close()
+    return () => {
+      window.clearTimeout(refreshTimer)
+      events.close()
+    }
   }, [authenticated, load, sessionEnded])
   useEffect(() => {
     if (!authenticated)

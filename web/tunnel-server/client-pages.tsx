@@ -9,6 +9,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
 import { apiJson, jsonRequest } from './api'
+import { ChangeNodeDialog, ClientRoutingOverview } from './client-node-routing'
 import { FormError, FormField, FormMessage } from './form'
 import { DialogShell, FormScrollArea, SegmentedControl, Select, Tabs } from './primitives'
 import { activeTunnelEditorSection, availableTunnelEditorSections, buildTunnelPayload, createTunnelSchema, draftToTunnelForm, firstTunnelError, tunnelEditorSectionErrorCounts } from './tunnel-form'
@@ -722,35 +723,44 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [confirmation, setConfirmation] = useState<ConfirmAction>()
   const [nodes, setNodes] = useState<NodeSummary[]>([])
+  const [nodesError, setNodesError] = useState('')
+  const [changingNode, setChangingNode] = useState(false)
   const loaded = useRef(false)
   const requestId = useRef(0)
   const { notify } = useFeedback()
-  const load = useCallback(async () => {
+  const load = useCallback(async (mode: 'manual' | 'live' = 'manual') => {
     const currentRequest = ++requestId.current
-    loaded.current ? setRefreshing(true) : setLoading(true)
-    try {
-      const body = await apiJson<{ client: ClientView, tunnels: TunnelView[] }>(`/api/clients/${encodeURIComponent(id)}`)
-      const nodeBody = await apiJson<{ nodes: NodeSummary[] }>('/api/nodes')
-      if (currentRequest !== requestId.current)
-        return
-      setClient(body.client)
-      setTunnels(body.tunnels)
-      setNodes(nodeBody.nodes)
+    if (!loaded.current)
+      setLoading(true)
+    else if (mode === 'manual')
+      setRefreshing(true)
+    const [clientResult, nodeResult] = await Promise.allSettled([
+      apiJson<{ client: ClientView, tunnels: TunnelView[] }>(`/api/clients/${encodeURIComponent(id)}`),
+      apiJson<{ nodes: NodeSummary[] }>('/api/nodes'),
+    ])
+    if (currentRequest !== requestId.current)
+      return
+    if (clientResult.status === 'fulfilled') {
+      setClient(clientResult.value.client)
+      setTunnels(clientResult.value.tunnels)
       setError('')
       loaded.current = true
     }
-    catch (cause) {
-      if (currentRequest === requestId.current)
-        setError(message(cause))
+    else {
+      setError(message(clientResult.reason))
     }
-    finally {
-      if (currentRequest === requestId.current) {
-        setLoading(false)
-        setRefreshing(false)
-      }
+    if (nodeResult.status === 'fulfilled') {
+      setNodes(nodeResult.value.nodes)
+      setNodesError('')
     }
+    else {
+      setNodes([])
+      setNodesError(message(nodeResult.reason))
+    }
+    setLoading(false)
+    setRefreshing(false)
   }, [id])
-  useEffect(() => void load(), [load, refreshSequence])
+  useEffect(() => void load('live'), [load, refreshSequence])
   const run = async (key: string, successMessage: string, action: () => Promise<void>): Promise<void> => {
     setPending(values => new Set(values).add(key))
     setError('')
@@ -798,12 +808,6 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
     setImporting(false)
     void load()
   }
-  const assignNode = async (nodeId: string): Promise<void> => {
-    await run('assignment', 'Client Node assignment saved', async () => {
-      await apiJson(`/api/clients/${encodeURIComponent(id)}/node-assignment`, jsonRequest('PUT', { nodeId }))
-      await load()
-    })
-  }
   const cancelAssignment = async (): Promise<void> => {
     await run('assignment', 'Pending Node assignment cancelled', async () => {
       await apiJson(`/api/clients/${encodeURIComponent(id)}/node-assignment/pending`, { method: 'DELETE' })
@@ -814,7 +818,6 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
     <>
       <PageHeader
         title={client?.remark || 'Unlabeled client'}
-        description="Public tunnel mappings, local endpoints, and agent synchronization."
         actions={(
           <>
             <IconButton label="Refresh client" loading={refreshing} onClick={() => void load()}><RefreshCw size={15} /></IconButton>
@@ -841,115 +844,16 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
               <>
                 {error && <ErrorState message={error} retrying={refreshing} onRetry={() => void load()} />}
                 {client && (
-                  <section className="client-summary" aria-label="Client summary">
-                    <div className="client-summary-token">
-                      <span>Client token</span>
-                      <Token value={client.token} />
-                    </div>
-                    <div className="client-summary-facts">
-                      <div className="summary-fact">
-                        <span>Connection</span>
-                        <Status value={client.runtime.connectionState} />
-                      </div>
-                      <div className="summary-fact">
-                        <span>Process</span>
-                        <Status value={client.runtime.processState} />
-                      </div>
-                      <div className="summary-fact">
-                        <span>Restart</span>
-                        <Status value={client.restart.state} />
-                      </div>
-                      <div className="summary-fact">
-                        <span>Revision</span>
-                        <strong className="mono">
-                          {client.lastAppliedRevision}
-                          {' / '}
-                          {client.desiredRevision}
-                        </strong>
-                      </div>
-                      {showOwner && (
-                        <div className="summary-fact">
-                          <span>Owner</span>
-                          <strong>{client.owner.username}</strong>
-                        </div>
-                      )}
-                    </div>
-                    <div className="client-assignment">
-                      <div className="client-assignment-heading">
-                        <h2>Node routing</h2>
-                        <span>Client traffic and application state</span>
-                      </div>
-                      <div className="client-route">
-                        <div className="summary-fact">
-                          <span>Current Node</span>
-                          <strong>{nodes.find(node => node.id === client.assignment.nodeId)?.name ?? client.assignment.nodeId}</strong>
-                        </div>
-                        <ArrowRight className="client-route-arrow" size={16} aria-hidden="true" />
-                        <div className="summary-fact">
-                          <span>Pending Node</span>
-                          <strong>{client.assignment.pendingNodeId ? nodes.find(node => node.id === client.assignment.pendingNodeId)?.name ?? client.assignment.pendingNodeId : 'None'}</strong>
-                        </div>
-                        <ArrowRight className="client-route-arrow" size={16} aria-hidden="true" />
-                        <div className="summary-fact">
-                          <span>Client applied Node</span>
-                          <strong>{client.assignment.appliedNodeId ? nodes.find(node => node.id === client.assignment.appliedNodeId)?.name ?? client.assignment.appliedNodeId : 'Not yet reported'}</strong>
-                        </div>
-                      </div>
-                      <div className="client-assignment-signals">
-                        {client.assignment.pendingNodeId && client.assignment.pendingNode && !client.assignment.pendingNode.selectability.selectable && (
-                          <div className="summary-fact">
-                            <span>Pending target</span>
-                            <Status value={client.assignment.pendingNode.selectability.reason ?? 'unavailable'} />
-                          </div>
-                        )}
-                        <div className="summary-fact">
-                          <span>Target application</span>
-                          <Status value={client.assignment.appliedNodeId === client.assignment.nodeId && client.lastAppliedRevision === client.desiredRevision ? 'applied' : 'pending'} />
-                        </div>
-                        <div className="summary-fact">
-                          <span>FRPC connection</span>
-                          <Status value={client.frpc.connection} />
-                        </div>
-                        <div className="summary-fact">
-                          <span>Proxy observation</span>
-                          <strong>
-                            {client.frpc.proxies.length}
-                            {' '}
-                            observed
-                          </strong>
-                        </div>
-                      </div>
-                      {tunnels.some(tunnel => tunnel.protocol === 'http') && (
-                        <div className="client-assignment-dns">
-                          <span>HTTP DNS target</span>
-                          <strong className="mono">{client.assignment.node?.httpIngressAddress?.host ?? 'No HTTP ingress address set'}</strong>
-                          {client.assignment.pendingNodeId && (
-                            <small>
-                              Pending target:
-                              {' '}
-                              {client.assignment.pendingNode?.httpIngressAddress?.host ?? 'No HTTP ingress address set'}
-                            </small>
-                          )}
-                        </div>
-                      )}
-                      <div className="client-assignment-actions">
-                        <label>
-                          <span>Choose Node</span>
-                          <select value={client.assignment.pendingNodeId ?? client.assignment.nodeId} disabled={pending.has('assignment')} onChange={event => void assignNode(event.target.value)} aria-label="Choose Client Node">
-                            {nodes.map(node => (
-                              <option key={node.id} value={node.id} disabled={!node.selectability.selectable && node.id !== client.assignment.nodeId}>
-                                {node.name}
-                                {' ('}
-                                {node.selectability.selectable ? 'available' : node.selectability.reason ?? 'unavailable'}
-                                )
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        {client.assignment.pendingNodeId && <button type="button" disabled={pending.has('assignment')} onClick={() => void cancelAssignment()}>Cancel pending switch</button>}
-                      </div>
-                    </div>
-                  </section>
+                  <ClientRoutingOverview
+                    client={client}
+                    tunnels={tunnels}
+                    nodes={nodes}
+                    nodesError={nodesError}
+                    showOwner={showOwner}
+                    cancelling={pending.has('assignment')}
+                    onChangeNode={() => setChangingNode(true)}
+                    onCancelPending={() => void cancelAssignment()}
+                  />
                 )}
                 {client?.runtime.lastError && <p className="runtime-error" role="alert">{client.runtime.lastError.message}</p>}
                 {client?.restart.error && <p className="runtime-error" role="alert">{client.restart.error.message}</p>}
@@ -1022,6 +926,16 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
             )}
       {editing !== undefined && <TunnelEditor clientId={id} initial={editing ?? undefined} onClose={() => setEditing(undefined)} onSaved={saved} />}
       {importing && <ImportConfigurationDialog clientId={id} onClose={() => setImporting(false)} onImported={imported} />}
+      {changingNode && (
+        <ChangeNodeDialog
+          clientId={id}
+          onClose={() => setChangingNode(false)}
+          onSaved={() => {
+            setChangingNode(false)
+            void load()
+          }}
+        />
+      )}
       {confirmation && <ConfirmationDialog request={confirmation} onClose={() => setConfirmation(undefined)} />}
     </>
   )

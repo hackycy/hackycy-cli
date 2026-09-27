@@ -31,12 +31,47 @@ func TestServerAgentFRPCStatusRequiresCurrentRuntimeAndExpires(t *testing.T) {
 		ProcessGeneration: "generation-1", Process: tunnelruntime.FRPProcessRunning,
 		Connection: "unknown", Proxies: []tunnelruntime.ProxyState{},
 	}
+	notifications := 0
+	stop := connection.gateway.ObserveAgentChanges(func(id string) {
+		if id == connection.ClientID() {
+			notifications++
+		}
+	})
+	defer stop()
 	frame, _ := json.Marshal(status)
 	if err := connection.AcceptActiveMessage(context.Background(), frame); err != nil {
 		t.Fatal(err)
 	}
+	if notifications != 1 {
+		t.Fatalf("first FRPC report emitted %d notifications, want 1", notifications)
+	}
+	connection.gateway.mu.Lock()
+	stored := connection.gateway.runtime[connection.ClientID()]
+	stored.frpcReceivedAt = time.Now().Add(-time.Second)
+	connection.gateway.runtime[connection.ClientID()] = stored
+	connection.gateway.mu.Unlock()
+	if err := connection.AcceptActiveMessage(context.Background(), frame); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 1 {
+		t.Fatalf("unchanged FRPC report emitted %d notifications, want 1", notifications)
+	}
+	connection.gateway.mu.Lock()
+	refreshedAt := connection.gateway.runtime[connection.ClientID()].frpcReceivedAt
+	connection.gateway.mu.Unlock()
+	if !refreshedAt.After(stored.frpcReceivedAt) {
+		t.Fatal("unchanged FRPC report did not refresh observation time")
+	}
 	if observed := connection.gateway.FRPCObservation(connection.ClientID()); observed.Connection != "unknown" || observed.Process != tunnelruntime.FRPProcessRunning || observed.ProcessGeneration != "generation-1" {
 		t.Fatalf("accepted FRPC observation = %#v", observed)
+	}
+	status.Connection = "disconnected"
+	frame, _ = json.Marshal(status)
+	if err := connection.AcceptActiveMessage(context.Background(), frame); err != nil {
+		t.Fatal(err)
+	}
+	if notifications != 2 {
+		t.Fatalf("changed FRPC report emitted %d notifications, want 2", notifications)
 	}
 	status.Digest = "sha256:wrong"
 	frame, _ = json.Marshal(status)
@@ -51,7 +86,7 @@ func TestServerAgentFRPCStatusRequiresCurrentRuntimeAndExpires(t *testing.T) {
 	}
 	status.Connection = "unknown"
 	connection.gateway.mu.Lock()
-	stored := connection.gateway.runtime[connection.ClientID()]
+	stored = connection.gateway.runtime[connection.ClientID()]
 	stored.frpcReceivedAt = time.Now().Add(-serverAgentFRPCObservationTTL - time.Second)
 	connection.gateway.runtime[connection.ClientID()] = stored
 	connection.gateway.mu.Unlock()
@@ -62,6 +97,9 @@ func TestServerAgentFRPCStatusRequiresCurrentRuntimeAndExpires(t *testing.T) {
 	frame, _ = json.Marshal(status)
 	if err := connection.AcceptActiveMessage(context.Background(), frame); err != nil {
 		t.Fatal(err)
+	}
+	if notifications != 3 {
+		t.Fatalf("restored FRPC observation emitted %d notifications, want 3", notifications)
 	}
 	connection.Close()
 	if observed := connection.gateway.FRPCObservation(connection.ClientID()); observed.Connection != "unknown" || observed.ProcessGeneration != "" {

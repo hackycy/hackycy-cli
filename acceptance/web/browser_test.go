@@ -526,7 +526,7 @@ func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSessi
 		network.Enable(),
 		network.SetCookie(browserSession.Name, browserSession.Value).WithURL(pageURL).WithHTTPOnly(browserSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
 		chromedp.Navigate(pageURL+"/clients/"+clientID),
-		chromedp.WaitVisible(`[aria-label="Choose Client Node"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.client-routing`, chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("open Client assignment page: %v", err)
 	}
@@ -535,22 +535,20 @@ func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSessi
 			t.Fatalf("set Client viewport %d: %v", viewport.width, err)
 		}
 		var result struct {
-			Labels     []string `json:"labels"`
-			Route      []string `json:"route"`
-			DNS        string   `json:"dns"`
-			NodeOption string   `json:"nodeOption"`
-			Overflow   bool     `json:"overflow"`
+			Labels   []string `json:"labels"`
+			Route    []string `json:"route"`
+			Ingress  string   `json:"ingress"`
+			Overflow bool     `json:"overflow"`
 		}
 		if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
-			labels: [...document.querySelectorAll('.client-assignment .summary-fact > span')].map(element => element.textContent.trim()),
-			route: [...document.querySelectorAll('.client-route .summary-fact > span')].map(element => element.textContent.trim()),
-			dns: document.querySelector('.client-assignment-dns strong')?.textContent.trim() ?? '',
-			nodeOption: document.querySelector('[aria-label="Choose Client Node"] option:checked')?.textContent.trim() ?? '',
-			overflow: document.documentElement.scrollWidth > window.innerWidth + 1
+			labels: [...document.querySelectorAll('.client-node-health > div > span, .client-runtime-summary > div > span')].map(element => element.textContent.trim()),
+			route: [...document.querySelectorAll('.client-route-step > span:first-child')].map(element => element.textContent.trim()),
+			ingress: [...document.querySelectorAll('.client-node-endpoints dd')].map(element => element.textContent.trim()).join(' '),
+			overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
 		}))()`, &result)); err != nil {
 			t.Fatalf("inspect Client viewport %d: %v", viewport.width, err)
 		}
-		for _, label := range []string{"Current Node", "Pending Node", "Client applied Node", "Target application", "FRPC connection", "Proxy observation"} {
+		for _, label := range []string{"Availability", "Management", "FRPS", "Connection", "Node application", "Configuration"} {
 			found := false
 			for _, actual := range result.Labels {
 				if actual == label {
@@ -561,11 +559,39 @@ func assertTunnelClientAssignmentPage(t *testing.T, pageURL string, browserSessi
 				t.Fatalf("Client viewport %d omitted %q: %+v", viewport.width, label, result)
 			}
 		}
-		if result.DNS == "" || result.NodeOption == "" || result.Overflow {
-			t.Fatalf("Client viewport %d DNS, Node selection or layout: %+v", viewport.width, result)
+		if result.Ingress == "" || result.Overflow {
+			t.Fatalf("Client viewport %d ingress or layout: %+v", viewport.width, result)
 		}
 		if !slices.Equal(result.Route, []string{"Current Node", "Pending Node", "Client applied Node"}) {
 			t.Fatalf("Client viewport %d Node route order: %+v", viewport.width, result.Route)
+		}
+		if err := chromedp.Run(ctx,
+			chromedp.Click(`//button[normalize-space()="Change Node"]`, chromedp.BySearch),
+			chromedp.WaitVisible(`[role="dialog"]`, chromedp.ByQuery),
+			chromedp.WaitVisible(`[role="radiogroup"]`, chromedp.ByQuery),
+		); err != nil {
+			t.Fatalf("open Client Node dialog at %d: %v", viewport.width, err)
+		}
+		var dialog struct {
+			CurrentDisabled bool `json:"currentDisabled"`
+			ConfirmDisabled bool `json:"confirmDisabled"`
+			Overflow        bool `json:"overflow"`
+		}
+		if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => ({
+			currentDisabled: document.querySelector('.change-node-option input')?.disabled ?? false,
+			confirmDisabled: document.querySelector('[role="dialog"] button[type="submit"]')?.disabled ?? false,
+			overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1
+		}))()`, &dialog)); err != nil {
+			t.Fatalf("inspect Client Node dialog at %d: %v", viewport.width, err)
+		}
+		if !dialog.CurrentDisabled || !dialog.ConfirmDisabled || dialog.Overflow {
+			t.Fatalf("Client Node dialog at %d permits an unintended switch: %+v", viewport.width, dialog)
+		}
+		if err := chromedp.Run(ctx,
+			chromedp.Click(`//div[@role="dialog"]//button[normalize-space()="Cancel"]`, chromedp.BySearch),
+			chromedp.WaitNotPresent(`[role="dialog"]`, chromedp.ByQuery),
+		); err != nil {
+			t.Fatalf("cancel Client Node dialog at %d: %v", viewport.width, err)
 		}
 	}
 }

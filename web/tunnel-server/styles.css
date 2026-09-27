@@ -868,155 +868,359 @@ th:last-child {
   line-height: 1.45;
 }
 
-.client-summary {
-  display: grid;
-  grid-template-columns: minmax(280px, 1.2fr) minmax(0, 2fr);
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.client-routing {
+  min-width: 0;
+  border-block: 1px solid var(--border);
   background: var(--surface);
 }
 
-.client-summary-token {
+.client-routing-top {
   display: grid;
-  align-content: center;
-  gap: 8px;
-  border-right: 1px solid var(--border);
-  padding: 16px 20px;
-  background: var(--surface-subtle);
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.client-summary-token > span,
-.summary-fact > span {
+.client-node-main {
+  min-width: 0;
+  padding: 14px 20px 12px;
+}
+
+.client-node-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.client-node-heading > div {
+  min-width: 0;
+}
+
+.client-routing-label,
+.client-node-health > div > span,
+.client-node-endpoints dt,
+.client-runtime-summary > div > span,
+.client-route-step > span,
+.client-routing-identity > div > span {
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
 }
 
-.client-summary-token .token code {
-  color: var(--text);
-}
-
-.client-summary-facts {
-  display: grid;
-  grid-template-columns: minmax(188px, 1.5fr) repeat(4, minmax(0, 1fr));
-}
-
-.client-assignment {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: minmax(0, 1fr);
-  border-top: 1px solid var(--border);
-}
-
-.client-assignment-heading {
-  display: flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 12px;
-  padding: 16px 20px 10px;
-}
-
-.client-assignment-heading h2 {
-  font-size: 15px;
-}
-
-.client-assignment-heading span {
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.client-route {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr) 24px minmax(0, 1fr);
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px 16px;
-}
-
-.client-route .summary-fact {
-  min-height: 72px;
-  border: 0;
-  border-left: 2px solid var(--accent);
-  padding: 10px 12px;
-  background: var(--surface-subtle);
-}
-
-.client-route .summary-fact:nth-of-type(2) {
-  border-left-color: var(--warning);
-}
-
-.client-route .summary-fact:last-child {
-  border-left-color: var(--muted);
-}
-
-.client-route .summary-fact strong,
-.client-assignment-signals .summary-fact strong {
-  overflow: visible;
+.client-node-heading h2 {
+  margin: 3px 0 1px;
   overflow-wrap: anywhere;
-  text-overflow: clip;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.25;
+  text-wrap: balance;
+}
+
+.client-node-kind {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.client-node-heading button {
+  flex-shrink: 0;
+}
+
+.client-node-health {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.client-node-health > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  justify-items: start;
+  gap: 4px;
+}
+
+.client-node-health .status-label,
+.client-runtime-summary .status-label {
+  overflow-wrap: anywhere;
+}
+
+.client-runtime-summary .status {
+  max-width: 100%;
   white-space: normal;
 }
 
-.client-route-arrow {
-  justify-self: center;
-  color: var(--muted);
-}
-
-.client-assignment-signals {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  border-top: 1px solid var(--border);
-}
-
-.client-assignment-signals .summary-fact {
-  min-height: 70px;
-  padding-block: 12px;
-}
-
-.client-assignment-dns,
-.client-assignment-actions {
+.client-node-endpoints {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  margin: 12px 0 0;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.client-node-endpoints > div {
   min-width: 0;
+}
+
+.client-node-endpoints dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.client-node-notice {
+  margin: 12px 0 0;
+  color: var(--warning);
+  line-height: 1.45;
+}
+
+.client-runtime-summary {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px 20px;
+  border-top: 1px solid var(--border);
+  padding: 10px 20px;
+  background: var(--surface-subtle);
+}
+
+.client-runtime-summary > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  justify-items: start;
+  gap: 5px;
+  padding: 4px 0;
+}
+
+.client-runtime-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+
+.client-route-strip {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr) 20px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   border-top: 1px solid var(--border);
-  padding: 12px 16px;
+  padding: 12px 20px;
 }
 
-.client-assignment-dns {
+.client-route-strip > svg {
+  color: var(--muted);
+}
+
+.client-route-step {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 5px;
+  border-left: 2px solid var(--border-strong);
+  padding-left: 12px;
+}
+
+.client-route-step.is-current {
+  border-left-color: var(--accent);
+}
+
+.client-route-step.is-pending {
+  border-left-color: var(--warning);
+}
+
+.client-route-step strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.client-pending-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-top: 1px solid var(--border);
+  padding: 12px 20px;
+  background: var(--warning-soft);
+}
+
+.client-pending-switch > div {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 4px;
+}
+
+.client-pending-switch strong {
+  overflow-wrap: anywhere;
+}
+
+.client-pending-switch span {
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.client-pending-switch button {
+  flex-shrink: 0;
+}
+
+.client-routing-identity {
+  display: flex;
   flex-wrap: wrap;
+  gap: 16px 36px;
+  border-top: 1px solid var(--border);
+  padding: 10px 20px;
+  background: var(--surface-subtle);
 }
 
-.client-assignment-dns span,
-.client-assignment-actions label span {
+.client-routing-identity > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.client-routing-identity > div:first-child {
+  flex: 1 1 300px;
+}
+
+.client-routing-identity strong {
+  overflow-wrap: anywhere;
+}
+
+.change-node-modal {
+  width: min(700px, calc(100% - 32px));
+}
+
+.change-node-intro,
+.change-node-hint,
+.change-node-impact p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+.change-node-list {
+  display: grid;
+  max-height: 340px;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.change-node-option {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--surface-subtle);
+  cursor: pointer;
+}
+
+.change-node-option:hover:not([data-disabled="true"]),
+.change-node-option[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.change-node-option[data-disabled="true"] {
+  cursor: not-allowed;
+  opacity: .68;
+}
+
+.change-node-option input {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 2px 0 0;
+}
+
+.change-node-option-content {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.change-node-option-heading,
+.change-node-option-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 12px;
+}
+
+.change-node-option-heading strong {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+}
+
+.change-node-option-heading small,
+.change-node-option-status > span:not(.status),
+.change-node-option-address {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.change-node-option-address {
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+}
+
+.change-node-impact {
+  display: grid;
+  gap: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.change-node-impact > strong,
+.change-node-impact dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+
+.change-node-impact dl {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+
+.change-node-impact dt {
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
 }
 
-.client-assignment-dns strong,
-.client-assignment-dns small {
-  overflow-wrap: anywhere;
+.change-node-impact dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
-.client-assignment-actions {
-  justify-content: space-between;
-}
-
-.client-assignment-actions label {
+.change-node-loading,
+.change-node-load-error {
   display: flex;
-  min-width: 0;
   align-items: center;
   gap: 10px;
+  margin: 0;
 }
 
-.client-assignment-actions select {
-  min-width: 0;
-  max-width: 320px;
+.change-node-load-error {
+  justify-content: space-between;
+  color: var(--danger);
 }
 
 .summary-fact {
@@ -1724,23 +1928,6 @@ th:last-child {
 }
 
 @media (max-width: 1180px) {
-  .client-summary {
-    grid-template-columns: minmax(240px, 1fr);
-  }
-
-  .client-summary-token {
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .client-summary-facts {
-    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  }
-
-  .client-assignment-signals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .node-detail-layout {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1932,44 +2119,46 @@ th:last-child {
     width: 100%;
   }
 
-  .client-summary {
-    grid-template-columns: minmax(0, 1fr);
+  .client-node-main {
+    padding: 16px;
   }
 
-  .client-summary-token {
-    padding: 14px 16px;
+  .client-node-heading {
+    flex-wrap: wrap;
   }
 
-  .client-summary-facts {
+  .client-node-health {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .client-route {
+  .client-runtime-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-route-strip {
     grid-template-columns: minmax(0, 1fr);
     justify-items: stretch;
-    gap: 4px;
-    padding-inline: 16px;
+    gap: 8px;
+    padding: 16px;
   }
 
-  .client-route .summary-fact {
-    min-height: 56px;
-  }
-
-  .client-route-arrow {
-    justify-self: start;
-    margin-left: 16px;
+  .client-route-strip > svg {
+    margin-left: 12px;
     transform: rotate(90deg);
   }
 
-  .client-assignment-actions {
+  .client-pending-switch {
     align-items: stretch;
     flex-direction: column;
+    padding: 14px 16px;
   }
 
-  .client-assignment-actions label,
-  .client-assignment-actions select {
-    width: 100%;
-    max-width: none;
+  .client-pending-switch button {
+    align-self: flex-start;
+  }
+
+  .client-routing-identity {
+    padding: 12px 16px;
   }
 
   .node-health {
@@ -2167,6 +2356,21 @@ th:last-child {
     align-content: stretch;
   }
 
+  .change-node-modal .modal-form {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+
+  .change-node-modal .change-node-list {
+    min-height: 0;
+    flex: 0 1 auto;
+  }
+
+  .change-node-modal .modal-actions {
+    margin-top: auto;
+  }
+
   .field-row,
   .field-row.three-fields,
   .key-value-field-row {
@@ -2196,24 +2400,20 @@ th:last-child {
 }
 
 @media (max-width: 420px) {
-  .client-assignment-heading {
+  html,
+  body,
+  #root {
+    min-width: 0;
+  }
+
+  .client-node-heading button,
+  .client-pending-switch button {
+    width: 100%;
+  }
+
+  .change-node-option-status {
     align-items: flex-start;
     flex-direction: column;
-    gap: 4px;
-    padding-inline: 16px;
-  }
-
-  .client-assignment-signals {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .client-assignment-actions label {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .client-assignment-actions button {
-    width: 100%;
   }
 
   .node-modal .modal-actions {
@@ -2232,10 +2432,6 @@ th:last-child {
 
   .detail-grid {
     grid-template-columns: minmax(112px, .8fr) minmax(0, 1.2fr);
-  }
-
-  .client-summary-facts {
-    grid-template-columns: minmax(0, 1fr);
   }
 
   .summary-fact,

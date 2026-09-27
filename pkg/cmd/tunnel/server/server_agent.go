@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -384,22 +386,28 @@ func (gateway *ServerAgentGateway) tryPendingClientNode(ctx context.Context, cli
 	_, _ = gateway.controlPlane.AssignClientNode(ctx, clientID, target.ID, true, true)
 }
 
-func (gateway *ServerAgentGateway) recordFRPCStatus(clientID string, slot uint64, status tunnelruntime.FRPCStatus) bool {
+func (gateway *ServerAgentGateway) recordFRPCStatus(clientID string, slot uint64, status tunnelruntime.FRPCStatus) (bool, bool) {
 	if gateway == nil {
-		return false
+		return false, false
 	}
 	gateway.mu.Lock()
 	defer gateway.mu.Unlock()
 	current, found := gateway.slots[clientID]
 	if !found || !current.active || current.revoking || current.generation != slot {
-		return false
+		return false, false
 	}
 	runtime := gateway.runtime[clientID]
+	now := time.Now()
+	previous := runtime.frpcStatus
+	previous.Proxies = nil
+	incoming := status
+	incoming.Proxies = nil
+	changed := runtime.frpcReceivedAt.IsZero() || now.Sub(runtime.frpcReceivedAt) > serverAgentFRPCObservationTTL || !reflect.DeepEqual(previous, incoming) || !slices.Equal(runtime.frpcStatus.Proxies, status.Proxies)
 	runtime.frpcStatus = status
 	runtime.frpcStatus.Proxies = append([]tunnelruntime.ProxyState(nil), status.Proxies...)
-	runtime.frpcReceivedAt = time.Now()
+	runtime.frpcReceivedAt = now
 	gateway.runtime[clientID] = runtime
-	return true
+	return true, changed
 }
 
 func (gateway *ServerAgentGateway) recordProcessState(clientID string, slot uint64, processState tunnelruntime.FRPProcessState, lastError *tunnelruntime.StructuredRuntimeError) bool {
