@@ -12,7 +12,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
 	"github.com/hackycy/hackycy-cli/internal/filesession"
 )
 

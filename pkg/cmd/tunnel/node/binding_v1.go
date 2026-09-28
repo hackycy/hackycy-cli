@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 
-	nodeent "github.com/hackycy/hackycy-cli/ent/node"
+	nodeent "github.com/hackycy/hackycy-cli/ent/tunnel/node"
 	"github.com/ncruces/go-sqlite3"
 )
 

@@ -12,11 +12,11 @@ import (
 	"regexp"
 	"strings"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/nodeportpool"
-	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnelhttproute"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnelhttproute"
 	sqlite3 "github.com/ncruces/go-sqlite3"
 )
 

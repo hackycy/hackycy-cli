@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/node"
-	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/node"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
 	sqlite3 "github.com/ncruces/go-sqlite3"
 )
 

@@ -10,10 +10,10 @@ import (
 	"net"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/nodeportpool"
-	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 

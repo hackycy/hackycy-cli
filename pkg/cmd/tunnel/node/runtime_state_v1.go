@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	nodeent "github.com/hackycy/hackycy-cli/ent/node"
-	"github.com/hackycy/hackycy-cli/ent/node/runtimestate"
+	nodeent "github.com/hackycy/hackycy-cli/ent/tunnel/node"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/node/runtimestate"
 )
 
 func readNodeV1Runtime(ctx context.Context, client *nodeent.Client) (runtimeRecord, error) {

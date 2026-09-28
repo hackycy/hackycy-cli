@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"strings"
 
-	nodeent "github.com/hackycy/hackycy-cli/ent/node"
+	nodeent "github.com/hackycy/hackycy-cli/ent/tunnel/node"
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )

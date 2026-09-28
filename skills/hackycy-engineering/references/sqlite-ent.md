@@ -2,9 +2,9 @@
 
 ## 当前 v1 状态
 
-Tunnel Server 与 Node 分别在 `pkg/cmd/tunnel/server/` 和 `pkg/cmd/tunnel/node/` 拥有 SQLite 状态。各自当前空状态的结构文件为 `migrations/001_v1.sql`；运行状态位于 `<data-dir>/server-state-v1/` 与 `<data-dir>/node-state-v1/`。代码嵌入 v1 SQL，初始化空状态并校验已有状态；启动时尚无升级用的 migration runner。旧 `go-v1` 和 `node.sqlite` 状态不在自动升级范围。核对当前事实时，阅读两个所有者的 `database_v1.go`、状态代码及测试，并查看 `ent/server/schema/`、`ent/node/schema/` 和 `ent/schema_test.go`。
+Tunnel Server 与 Node 分别在 `pkg/cmd/tunnel/server/` 和 `pkg/cmd/tunnel/node/` 拥有 SQLite 状态。各自当前空状态的结构文件为 `migrations/001_v1.sql`；运行状态位于 `<data-dir>/server-state-v1/` 与 `<data-dir>/node-state-v1/`。代码嵌入 v1 SQL，初始化空状态并校验已有状态；启动时尚无升级用的 migration runner。旧 `go-v1` 和 `node.sqlite` 状态不在自动升级范围。核对当前事实时，阅读两个所有者的 `database_v1.go`、状态代码及测试，并查看 `ent/tunnel/server/schema/`、`ent/tunnel/node/schema/` 和 `ent/tunnel/schema_test.go`。
 
-两个所有者各自的 `migrations/*.sql` 是真实 SQLite Schema 及其演进的唯一事实来源；Ent Schema 提供 ORM 模型、关系、类型安全查询和生成代码。生产启动或升级不能用 Ent Auto Migration 建表、补列或修改约束。`ent/schema_test.go` 对照 v1 SQL 的结构和约束与生成的 Ent 元数据。`ent/generate.go` 提供 `go generate ./ent`；结构变化时提交受影响的生成代码，不能只修改 SQL 或只修改 Ent Schema。
+两个所有者各自的 `migrations/*.sql` 是真实 SQLite Schema 及其演进的唯一事实来源；Ent Schema 提供 ORM 模型、关系、类型安全查询和生成代码。生产启动或升级不能用 Ent Auto Migration 建表、补列或修改约束。`ent/tunnel/schema_test.go` 对照 v1 SQL 的结构和约束与生成的 Ent 元数据。`ent/generate.go` 提供 `go generate ./ent`；结构变化时提交受影响的生成代码，不能只修改 SQL 或只修改 Ent Schema。
 
 普通 CRUD 和关系查询优先使用 Ent。复杂查询、SQLite 特有操作或事务内原生 SQL 可以在所属 Server/Node 的 repository 或数据库访问层使用 `sql/execquery` 或 `*sql.DB`。持久化逻辑不泄漏到 HTTP handler 或 service；原生 SQL 也不能绕过 migration 对结构变更的所有权。如果实体采用软删除，默认查询要过滤 `deleted_at`；Ent 的 `HasXxxWith` 等关系子查询不一定继承软删除拦截逻辑，需要在对应子查询显式加入 `DeletedAtIsNil()`，并用查询测试覆盖。
 

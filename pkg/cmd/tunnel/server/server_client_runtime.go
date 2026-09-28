@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 

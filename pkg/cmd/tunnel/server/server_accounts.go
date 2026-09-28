@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/account"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/account"
 	sqlite3 "github.com/ncruces/go-sqlite3"
 	"golang.org/x/crypto/argon2"
 )

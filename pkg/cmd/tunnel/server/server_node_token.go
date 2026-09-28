@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
-	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
 )
 
 type serverNodeTokenPromotion struct {

@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/nodeobservation"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeobservation"
 )
 
 const nodeObservationFreshness = 30 * time.Second

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
 	"github.com/hackycy/hackycy-cli/internal/logging"
 	webassets "github.com/hackycy/hackycy-cli/web"
 )

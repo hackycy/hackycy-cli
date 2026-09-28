@@ -14,7 +14,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	nodeent "github.com/hackycy/hackycy-cli/ent/node"
+	nodeent "github.com/hackycy/hackycy-cli/ent/tunnel/node"
 )
 
 //go:embed migrations/001_v1.sql

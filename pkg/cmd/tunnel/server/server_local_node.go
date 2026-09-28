@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/nodeportpool"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 )
 
 func syncLocalNodeProjection(ctx context.Context, database *sql.DB, settings ServerHTTPServerSettings) error {

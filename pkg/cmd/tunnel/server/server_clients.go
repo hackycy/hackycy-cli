@@ -14,12 +14,12 @@ import (
 	"sync"
 	"time"
 
-	serverent "github.com/hackycy/hackycy-cli/ent/server"
-	"github.com/hackycy/hackycy-cli/ent/server/node"
-	"github.com/hackycy/hackycy-cli/ent/server/nodeportpool"
-	"github.com/hackycy/hackycy-cli/ent/server/serverclient"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnel"
-	"github.com/hackycy/hackycy-cli/ent/server/tunnelhttproute"
+	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/node"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnelhttproute"
 	tunnelruntime "github.com/hackycy/hackycy-cli/internal/tunnelruntime"
 )
 

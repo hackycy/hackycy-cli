@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hackycy/hackycy-cli/ent/server/nodemanagementcandidate"
-	"github.com/hackycy/hackycy-cli/ent/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodemanagementcandidate"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
 )
 
 type serverNodeCoordinator struct {
