@@ -17,7 +17,6 @@ import (
 
 	nodeent "github.com/hackycy/hackycy-cli/ent/node"
 	"github.com/hackycy/hackycy-cli/internal/tunnelruntime"
-	"github.com/hackycy/hackycy-cli/internal/windowsacl"
 	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
@@ -42,8 +41,8 @@ func OpenState(directory string) (_ *State, err error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := ensurePrivateDirectory(directory); err != nil {
-		return nil, err
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return nil, fmt.Errorf("create Node data directory %s: %w", directory, err)
 	}
 	lock, err := tunnelruntime.AcquireStateDirectoryLock(directory)
 	if err != nil {
@@ -55,14 +54,13 @@ func OpenState(directory string) (_ *State, err error) {
 		}
 	}()
 	stateDirectory := filepath.Join(directory, "node-state-v1")
-	if err := ensurePrivateDirectory(stateDirectory); err != nil {
-		return nil, err
+	if err := os.MkdirAll(stateDirectory, 0o700); err != nil {
+		return nil, fmt.Errorf("create Node state directory %s: %w", stateDirectory, err)
 	}
 	entries, err := os.ReadDir(stateDirectory)
 	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(stateDirectory, nodeDatabaseFile)
 	var db *sql.DB
 	var client *nodeent.Client
 	var identity nodeV1Identity
@@ -82,41 +80,13 @@ func OpenState(directory string) (_ *State, err error) {
 		}
 		identity = nodeV1Identity{nodeID: row.NodeID, private: row.PrivateKey, public: row.PublicKey}
 	} else {
-		identity, err = inspectNodeV1Database(context.Background(), stateDirectory)
+		db, client, identity, err = openExistingNodeV1Database(context.Background(), stateDirectory)
 		if err != nil {
 			return nil, err
 		}
-		db, client, err = openNodeV1Database(context.Background(), path)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err = secureDatabaseFiles(path); err != nil {
-		_ = db.Close()
-		return nil, err
 	}
 	state := &State{db: db, client: client, lock: lock, directory: stateDirectory, nodeID: identity.nodeID, private: identity.private, public: identity.public}
 	return state, nil
-}
-
-func secureDatabaseFiles(path string) error {
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		file := path + suffix
-		info, err := os.Lstat(file)
-		if errors.Is(err, os.ErrNotExist) && suffix != "" {
-			continue
-		}
-		if err != nil || !info.Mode().IsRegular() {
-			return fmt.Errorf("Node database file must be regular: %s", filepath.Base(file))
-		}
-		if err := os.Chmod(file, 0o600); err != nil {
-			return fmt.Errorf("protect Node database file %s: %w", filepath.Base(file), err)
-		}
-		if err := windowsacl.RestrictPrivatePath(file); err != nil {
-			return fmt.Errorf("protect Node database ACL %s: %w", filepath.Base(file), err)
-		}
-	}
-	return nil
 }
 
 func nodeDatabaseURI(path string) string {
@@ -125,23 +95,6 @@ func nodeDatabaseURI(path string) string {
 		return "file:" + (&url.URL{Path: normalized}).EscapedPath()
 	}
 	return (&url.URL{Scheme: "file", Path: path}).String()
-}
-
-func ensurePrivateDirectory(directory string) error {
-	info, err := os.Lstat(directory)
-	if errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
-			return fmt.Errorf("create Node state directory: %w", err)
-		}
-		info, err = os.Lstat(directory)
-	}
-	if err != nil {
-		return fmt.Errorf("inspect Node state directory: %w", err)
-	}
-	if !info.IsDir() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
-		return fmt.Errorf("Node state directory must be private and must not be a symlink")
-	}
-	return windowsacl.RestrictPrivatePath(directory)
 }
 
 func validIdentity(nodeID string, private, public []byte) bool {

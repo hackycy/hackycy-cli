@@ -3,7 +3,7 @@ Run a remote Tunnel Node management listener
 Usage:
   ycy tunnel node [flags]
 Flags:
-  --data-dir	Private Node state directory
+  --data-dir	Node state directory
   -h, --help	help for node
   --management-bind-address	Management HTTP bind IP
   --management-port	Management HTTP port

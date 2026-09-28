@@ -309,10 +309,6 @@ func writeNodeRuntimeFile(target, contents string) error {
 		return err
 	}
 	defer os.Remove(file.Name())
-	if err := tunnelruntime.ProtectPrivateFile(file.Name(), 0o600); err != nil {
-		_ = file.Close()
-		return err
-	}
 	if _, err := file.WriteString(contents); err != nil {
 		_ = file.Close()
 		return err

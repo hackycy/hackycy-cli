@@ -1,7 +1,6 @@
 package node
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -77,7 +76,7 @@ func TestInitializeNodeV1IdentityIsAtomic(t *testing.T) {
 	}
 }
 
-func TestInspectNodeV1DatabaseRejectsIncompleteStateWithoutRewriting(t *testing.T) {
+func TestOpenExistingNodeV1DatabaseRejectsIncompleteState(t *testing.T) {
 	mutate := func(statement string) func(string) error {
 		return func(root string) error {
 			db, err := sql.Open("sqlite3", nodeDatabaseURI(filepath.Join(root, "node-state-v1", nodeDatabaseFile)))
@@ -110,32 +109,27 @@ func TestInspectNodeV1DatabaseRejectsIncompleteStateWithoutRewriting(t *testing.
 				t.Fatal(err)
 			}
 			stateDirectory := filepath.Join(root, "node-state-v1")
-			if err := secureDatabaseFiles(filepath.Join(stateDirectory, nodeDatabaseFile)); err != nil {
+			if err := db.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := inspectNodeV1Database(t.Context(), stateDirectory); err != nil {
+			checked, _, _, err := openExistingNodeV1Database(t.Context(), stateDirectory)
+			if err != nil {
 				t.Fatalf("valid state rejected: %v", err)
 			}
-			if err := db.Close(); err != nil {
+			if err := checked.Close(); err != nil {
 				t.Fatal(err)
 			}
 			if err := damage(root); err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(stateDirectory, nodeDatabaseFile)
-			before, readErr := os.ReadFile(path)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				t.Fatal(readErr)
-			}
-			if _, err := inspectNodeV1Database(t.Context(), stateDirectory); err == nil {
+			if opened, _, _, err := openExistingNodeV1Database(t.Context(), stateDirectory); err == nil {
+				_ = opened.Close()
 				t.Fatal("incomplete state was accepted")
 			}
-			after, readErr := os.ReadFile(path)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				t.Fatal(readErr)
-			}
-			if !bytes.Equal(before, after) {
-				t.Fatal("rejection rewrote original database")
+			if name == "missing database" {
+				if _, err := os.Stat(filepath.Join(stateDirectory, nodeDatabaseFile)); !os.IsNotExist(err) {
+					t.Fatalf("missing database was recreated: %v", err)
+				}
 			}
 		})
 	}

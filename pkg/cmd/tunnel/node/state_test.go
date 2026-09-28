@@ -26,14 +26,6 @@ func TestNodeStateIdentityPersistsAndDirectoryIsExclusive(t *testing.T) {
 		t.Fatal(err)
 	}
 	fingerprint, nodeID := state.Fingerprint(), state.nodeID
-	if runtime.GOOS != "windows" {
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			info, err := os.Stat(filepath.Join(state.directory, nodeDatabaseFile+suffix))
-			if err != nil || info.Mode().Perm()&0o077 != 0 {
-				t.Fatalf("Node database%s is not private while open: (%v, %v)", suffix, info, err)
-			}
-		}
-	}
 	if !strings.HasPrefix(fingerprint, "SHA256:") || len(fingerprint) != len("SHA256:")+43 {
 		t.Fatalf("incomplete fingerprint %q", fingerprint)
 	}
@@ -53,13 +45,99 @@ func TestNodeStateIdentityPersistsAndDirectoryIsExclusive(t *testing.T) {
 	if err := state.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestNodeStateUsesExistingDirectoryAndFilePermissions(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "volume")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if runtime.GOOS != "windows" {
-		for _, name := range []string{"", nodeDatabaseFile} {
-			info, err := os.Stat(filepath.Join(directory, "node-state-v1", name))
-			if err != nil || info.Mode().Perm()&0o077 != 0 {
-				t.Fatalf("%s is not private: (%v, %v)", name, info, err)
+		if err := os.Chmod(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state, err := OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fingerprint := state.Fingerprint()
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		stateDirectory := filepath.Join(directory, "node-state-v1")
+		for path, mode := range map[string]os.FileMode{
+			stateDirectory: 0o755,
+			filepath.Join(stateDirectory, nodeInitializedFile): 0o644,
+			filepath.Join(stateDirectory, nodeDatabaseFile):    0o644,
+		} {
+			if err := os.Chmod(path, mode); err != nil {
+				t.Fatal(err)
 			}
 		}
+	}
+	state, err = OpenState(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Fingerprint() != fingerprint {
+		t.Fatal("existing volume changed Node identity")
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		for path, want := range map[string]os.FileMode{
+			directory: 0o755,
+			filepath.Join(directory, "node-state-v1"):                      0o755,
+			filepath.Join(directory, "node-state-v1", nodeInitializedFile): 0o644,
+			filepath.Join(directory, "node-state-v1", nodeDatabaseFile):    0o644,
+		} {
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != want {
+				t.Fatalf("mode for %s = (%v, %v), want %o", path, info, err, want)
+			}
+		}
+	}
+}
+
+func TestNodeStateAcceptsDirectorySymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating directory symlinks requires elevated privileges on Windows")
+	}
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "volume")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	state, err := OpenState(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := state.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNodeStateReportsWritePermissionError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix filesystem permissions and a non-root user")
+	}
+	directory := filepath.Join(t.TempDir(), "volume")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(directory, 0o700) })
+	if _, err := OpenState(directory); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("opening unwritable Node volume = %v, want permission denied", err)
 	}
 }
 

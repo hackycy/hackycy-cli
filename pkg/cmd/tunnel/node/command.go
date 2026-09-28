@@ -44,7 +44,7 @@ func NewCmdNode(factory *cmdutil.Factory, runF func(*Options) error) *cobra.Comm
 	}
 	command.Flags().StringVar(&bindAddress, "management-bind-address", "", "Management HTTP bind IP")
 	command.Flags().StringVar(&port, "management-port", "", "Management HTTP port")
-	command.Flags().StringVar(&dataDir, "data-dir", "", "Private Node state directory")
+	command.Flags().StringVar(&dataDir, "data-dir", "", "Node state directory")
 	return command
 }
 

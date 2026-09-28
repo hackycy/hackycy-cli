@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -56,6 +57,14 @@ func TestTunnelNodeStandaloneBinaryIdentityAndCLI(t *testing.T) {
 	port := portListener.Addr().(*net.TCPAddr).Port
 	_ = portListener.Close()
 	directory := filepath.Join(t.TempDir(), "node")
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
 	fingerprintPattern := regexp.MustCompile(`SHA256:[A-Za-z0-9_-]{43}`)
 	startAndStop := func() string {
 		t.Helper()
@@ -96,6 +105,12 @@ func TestTunnelNodeStandaloneBinaryIdentityAndCLI(t *testing.T) {
 	first := startAndStop()
 	if second := startAndStop(); first != second {
 		t.Fatalf("Node fingerprint changed after process restart: %q != %q", first, second)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(directory)
+		if err != nil || info.Mode().Perm() != 0o755 {
+			t.Fatalf("Node changed data directory permissions: (%v, %v)", info, err)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(directory, "node-state-v1", "node.sqlite")); err != nil {
 		t.Fatalf("Node did not persist identity: %v", err)

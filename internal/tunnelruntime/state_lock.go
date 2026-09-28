@@ -84,13 +84,13 @@ func acquireStateLock(stateDirectory string, kind stateLockKind, wait time.Durat
 	}
 	dependencies = normalizeStateLockDependencies(dependencies)
 	if err := os.MkdirAll(stateDirectory, 0o777); err != nil {
-		return nil, fmt.Errorf("%w: create Tunnel state directory: %v", ErrLockUnavailable, err)
+		return nil, fmt.Errorf("%w: create Tunnel state directory: %w", ErrLockUnavailable, err)
 	}
 
 	lockPath := filepath.Join(stateDirectory, stateLockName(kind))
 	ownerID, err := dependencies.newID()
 	if err != nil {
-		return nil, fmt.Errorf("%w: create Tunnel lock owner ID: %v", ErrLockUnavailable, err)
+		return nil, fmt.Errorf("%w: create Tunnel lock owner ID: %w", ErrLockUnavailable, err)
 	}
 	owner := stateLockOwner{
 		ID:             ownerID,
@@ -104,18 +104,18 @@ func acquireStateLock(stateDirectory string, kind stateLockKind, wait time.Durat
 		if err := os.Mkdir(lockPath, 0o777); err == nil {
 			if err := writeStateLockOwner(lockPath, owner); err != nil {
 				_ = os.RemoveAll(lockPath)
-				return nil, fmt.Errorf("%w: write Tunnel lock owner: %v", ErrLockUnavailable, err)
+				return nil, fmt.Errorf("%w: write Tunnel lock owner: %w", ErrLockUnavailable, err)
 			}
 			return &StateDirectoryLock{path: lockPath, owner: owner}, nil
 		} else if !errors.Is(err, os.ErrExist) {
-			return nil, fmt.Errorf("%w: create Tunnel state lock: %v", ErrLockUnavailable, err)
+			return nil, fmt.Errorf("%w: create Tunnel state lock: %w", ErrLockUnavailable, err)
 		}
 
 		current, hasOwner := readStateLockOwner(lockPath)
 		if hasOwner {
 			alive, err := dependencies.processAlive(current.PID)
 			if err != nil {
-				return nil, fmt.Errorf("%w: inspect Tunnel lock owner: %v", ErrLockUnavailable, err)
+				return nil, fmt.Errorf("%w: inspect Tunnel lock owner: %w", ErrLockUnavailable, err)
 			}
 			if alive {
 				if wait > 0 && dependencies.now().Before(deadline) {
@@ -129,7 +129,7 @@ func acquireStateLock(stateDirectory string, kind stateLockKind, wait time.Durat
 			continue
 		}
 		if err := removeStaleStateLock(lockPath, dependencies.newID); err != nil {
-			return nil, fmt.Errorf("%w: remove stale Tunnel lock: %v", ErrLockUnavailable, err)
+			return nil, fmt.Errorf("%w: remove stale Tunnel lock: %w", ErrLockUnavailable, err)
 		}
 	}
 

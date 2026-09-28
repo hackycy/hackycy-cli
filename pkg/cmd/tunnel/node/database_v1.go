@@ -7,19 +7,14 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"strings"
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	nodeent "github.com/hackycy/hackycy-cli/ent/node"
-	"github.com/hackycy/hackycy-cli/internal/windowsacl"
 )
 
 //go:embed migrations/001_v1.sql
@@ -36,8 +31,8 @@ func openEmptyNodeV1Database(ctx context.Context, dataDirectory string) (*sql.DB
 		return nil, nil, err
 	}
 	stateDirectory := filepath.Join(dataDirectory, "node-state-v1")
-	if err := ensurePrivateDirectory(stateDirectory); err != nil {
-		return nil, nil, err
+	if err := os.MkdirAll(stateDirectory, 0o700); err != nil {
+		return nil, nil, fmt.Errorf("create Node state directory %s: %w", stateDirectory, err)
 	}
 	entries, err := os.ReadDir(stateDirectory)
 	if err != nil {
@@ -62,18 +57,12 @@ func openEmptyNodeV1Database(ctx context.Context, dataDirectory string) (*sql.DB
 	if err := marker.Close(); err != nil {
 		return nil, nil, err
 	}
-	if err := windowsacl.RestrictPrivatePath(markerPath); err != nil {
-		return nil, nil, err
-	}
 	path := filepath.Join(stateDirectory, nodeDatabaseFile)
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create Node v1 database: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		return nil, nil, err
-	}
-	if err := windowsacl.RestrictPrivatePath(path); err != nil {
 		return nil, nil, err
 	}
 	db, client, err := openNodeV1Database(ctx, path)
@@ -141,72 +130,47 @@ type nodeV1Identity struct {
 	public  []byte
 }
 
-func inspectNodeV1Database(ctx context.Context, stateDirectory string) (nodeV1Identity, error) {
-	marker, err := os.Lstat(filepath.Join(stateDirectory, nodeInitializedFile))
-	if err != nil || !marker.Mode().IsRegular() || (runtime.GOOS != "windows" && marker.Mode().Perm()&0o077 != 0) {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 initialization marker is missing or invalid")
+func openExistingNodeV1Database(ctx context.Context, stateDirectory string) (*sql.DB, *nodeent.Client, nodeV1Identity, error) {
+	for _, name := range []string{nodeInitializedFile, nodeDatabaseFile} {
+		path := filepath.Join(stateDirectory, name)
+		if _, err := os.Stat(path); err != nil {
+			return nil, nil, nodeV1Identity{}, fmt.Errorf("find existing Node state file %s: %w", path, err)
+		}
 	}
 	path := filepath.Join(stateDirectory, nodeDatabaseFile)
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || (runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0) {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 database is missing or invalid")
-	}
-	copyDirectory, err := os.MkdirTemp("", "node-v1-inspect-")
+	db, client, err := openNodeV1Database(ctx, path)
 	if err != nil {
-		return nodeV1Identity{}, err
+		return nil, nil, nodeV1Identity{}, err
 	}
-	defer os.RemoveAll(copyDirectory)
-	if err := windowsacl.RestrictPrivatePath(copyDirectory); err != nil {
-		return nodeV1Identity{}, err
-	}
-	copyPath := filepath.Join(copyDirectory, nodeDatabaseFile)
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		sourcePath := path + suffix
-		part, err := os.Lstat(sourcePath)
-		if os.IsNotExist(err) && suffix != "" {
-			continue
-		}
-		if err != nil || !part.Mode().IsRegular() || (runtime.GOOS != "windows" && part.Mode().Perm()&0o077 != 0) {
-			return nodeV1Identity{}, fmt.Errorf("Node v1 database file is missing or invalid: %s", filepath.Base(sourcePath))
-		}
-		source, err := os.Open(sourcePath)
-		if err != nil {
-			return nodeV1Identity{}, err
-		}
-		target, err := os.OpenFile(copyPath+suffix, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, err = io.Copy(target, source)
-			err = errors.Join(err, target.Close())
-		}
-		_ = source.Close()
-		if err != nil {
-			return nodeV1Identity{}, fmt.Errorf("copy Node v1 database: %w", err)
-		}
-	}
-	copyDB, err := sql.Open("sqlite3", nodeDatabaseURI(copyPath))
+	identity, err := loadNodeV1Identity(ctx, client)
 	if err != nil {
-		return nodeV1Identity{}, err
+		_ = db.Close()
+		return nil, nil, nodeV1Identity{}, err
 	}
-	defer copyDB.Close()
-	var integrity string
-	if err := copyDB.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 database is damaged: %v", err)
-	}
-	if err := verifyNodeV1Schema(ctx, copyDB); err != nil {
-		return nodeV1Identity{}, err
-	}
-	client := nodeent.NewClient(nodeent.Driver(entsql.OpenDB(dialect.SQLite, copyDB)))
+	return db, client, identity, nil
+}
+
+func loadNodeV1Identity(ctx context.Context, client *nodeent.Client) (nodeV1Identity, error) {
 	identities, err := client.Identity.Query().All(ctx)
-	if err != nil || len(identities) != 1 || identities[0].ID != 1 || !validIdentity(identities[0].NodeID, identities[0].PrivateKey, identities[0].PublicKey) {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 identity is missing or damaged: %v", err)
+	if err != nil {
+		return nodeV1Identity{}, fmt.Errorf("read Node v1 identity: %w", err)
+	}
+	if len(identities) != 1 || identities[0].ID != 1 || !validIdentity(identities[0].NodeID, identities[0].PrivateKey, identities[0].PublicKey) {
+		return nodeV1Identity{}, fmt.Errorf("Node v1 identity is missing or invalid")
 	}
 	bindings, err := client.ControllerBinding.Query().All(ctx)
-	if err != nil || len(bindings) > 1 || (len(bindings) == 1 && (bindings[0].ID != 1 || len(bindings[0].ControllerPublic) != 32)) {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 Controller binding is damaged: %v", err)
+	if err != nil {
+		return nodeV1Identity{}, fmt.Errorf("read Node v1 Controller binding: %w", err)
+	}
+	if len(bindings) > 1 || (len(bindings) == 1 && (bindings[0].ID != 1 || len(bindings[0].ControllerPublic) != 32)) {
+		return nodeV1Identity{}, fmt.Errorf("Node v1 Controller binding is invalid")
 	}
 	runtimes, err := client.RuntimeState.Query().All(ctx)
-	if err != nil || len(runtimes) != 1 || runtimes[0].ID != 1 {
-		return nodeV1Identity{}, fmt.Errorf("Node v1 runtime state is missing or damaged: %v", err)
+	if err != nil {
+		return nodeV1Identity{}, fmt.Errorf("read Node v1 runtime state: %w", err)
+	}
+	if len(runtimes) != 1 || runtimes[0].ID != 1 {
+		return nodeV1Identity{}, fmt.Errorf("Node v1 runtime state is missing or invalid")
 	}
 	running := runtimes[0]
 	var candidate, lastGood []byte
@@ -236,46 +200,4 @@ func inspectNodeV1Database(ctx context.Context, stateDirectory string) (nodeV1Id
 		}
 	}
 	return nodeV1Identity{nodeID: identities[0].NodeID, private: append([]byte(nil), identities[0].PrivateKey...), public: append([]byte(nil), identities[0].PublicKey...)}, nil
-}
-
-type nodeSchemaEntry struct{ kind, name, table, statement string }
-
-func verifyNodeV1Schema(ctx context.Context, db *sql.DB) error {
-	expected, err := sql.Open("sqlite3", ":memory:")
-	if err != nil {
-		return err
-	}
-	defer expected.Close()
-	if _, err := expected.ExecContext(ctx, nodeV1Schema); err != nil {
-		return err
-	}
-	actualSchema, err := readNodeSchema(ctx, db)
-	if err != nil {
-		return err
-	}
-	expectedSchema, err := readNodeSchema(ctx, expected)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(actualSchema, expectedSchema) {
-		return fmt.Errorf("Node v1 database schema does not match the current SQL asset")
-	}
-	return nil
-}
-
-func readNodeSchema(ctx context.Context, db *sql.DB) ([]nodeSchemaEntry, error) {
-	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, COALESCE(sql, '') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var entries []nodeSchemaEntry
-	for rows.Next() {
-		var entry nodeSchemaEntry
-		if err := rows.Scan(&entry.kind, &entry.name, &entry.table, &entry.statement); err != nil {
-			return nil, err
-		}
-		entries = append(entries, entry)
-	}
-	return entries, rows.Err()
 }
