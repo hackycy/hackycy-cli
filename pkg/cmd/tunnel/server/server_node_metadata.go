@@ -21,10 +21,11 @@ type serverNodeEndpoint struct {
 }
 
 type serverNodeMetadataPatch struct {
-	Name                 *string             `json:"name,omitempty"`
-	ManagementAddress    *string             `json:"managementAddress,omitempty"`
-	AdvertisedFRPAddress *serverNodeEndpoint `json:"advertisedFrpAddress,omitempty"`
-	HTTPIngressAddress   *serverNodeEndpoint `json:"httpIngressAddress,omitempty"`
+	Name                    *string             `json:"name,omitempty"`
+	ManagementAddress       *string             `json:"managementAddress,omitempty"`
+	AdvertisedFRPAddress    *serverNodeEndpoint `json:"advertisedFrpAddress,omitempty"`
+	HTTPIngressAddress      *serverNodeEndpoint `json:"httpIngressAddress,omitempty"`
+	ClearHTTPIngressAddress bool                `json:"clearHttpIngressAddress,omitempty"`
 }
 
 func (registry *serverNodeRegistry) patchMetadata(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) error {
@@ -33,6 +34,9 @@ func (registry *serverNodeRegistry) patchMetadata(ctx context.Context, nodeID st
 }
 
 func (registry *serverNodeRegistry) patchMetadataWithEvents(ctx context.Context, nodeID string, patch serverNodeMetadataPatch) ([]ServerControlPlaneEvent, error) {
+	if patch.ClearHTTPIngressAddress && patch.HTTPIngressAddress != nil {
+		return nil, serverDomainError("INVALID_NODE_ENDPOINT", "HTTP ingress address cannot be set and cleared together")
+	}
 	var address string
 	if patch.ManagementAddress != nil {
 		var err error
@@ -86,6 +90,8 @@ func (registry *serverNodeRegistry) patchMetadataWithEvents(ctx context.Context,
 		}
 		if patch.HTTPIngressAddress != nil {
 			update.SetHTTPIngressHost(strings.ToLower(strings.TrimSpace(patch.HTTPIngressAddress.Host))).SetHTTPIngressPort(int(patch.HTTPIngressAddress.Port))
+		} else if patch.ClearHTTPIngressAddress {
+			update.ClearHTTPIngressHost().ClearHTTPIngressPort()
 		}
 		if patch.ManagementAddress != nil {
 			candidate, lookupErr := client.NodeManagementCandidate.Query().Where(nodemanagementcandidate.NodeIDEQ(nodeID)).Only(ctx)

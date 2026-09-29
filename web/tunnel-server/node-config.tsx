@@ -1,13 +1,13 @@
 import type { NodeManagementView } from './nodes-pages'
-import { KeyRound, MapPin, RotateCw, Save, ShieldAlert, Trash2 } from 'lucide-react'
+import { KeyRound, Pencil, RotateCw, Save, ShieldAlert, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { apiJson, jsonRequest } from './api'
 import { nodeActionError } from './node-claim'
 import { ConfirmDialog, DialogShell } from './primitives'
-import { ErrorState, RowActionMenu, Spinner, useFeedback } from './ui'
+import { ErrorState, RowActionMenu, Spinner, Switch, useFeedback } from './ui'
 
 export function NodeActions({ node, onSaved, onForgotten }: { node: NodeManagementView, onSaved: () => void, onForgotten: () => void }): React.JSX.Element | null {
-  const [activeAction, setActiveAction] = useState<'details' | 'rotate' | 'remove' | 'forget' | null>(null)
+  const [activeAction, setActiveAction] = useState<'name' | 'rotate' | 'remove' | 'forget' | null>(null)
   const [reapplying, setReapplying] = useState(false)
   const { notify } = useFeedback()
   const remote = node.kind === 'remote'
@@ -31,11 +31,10 @@ export function NodeActions({ node, onSaved, onForgotten }: { node: NodeManageme
   }
   return (
     <>
-      {remote && node.lifecycle === 'active' && <NodeConfigurationEditor node={node} onSaved={onSaved} />}
       <RowActionMenu
         label="More Node actions"
         actions={[
-          { label: 'Edit details', icon: MapPin, onSelect: () => setActiveAction('details') },
+          { label: 'Rename Node', icon: Pencil, onSelect: () => setActiveAction('name') },
           ...(running
             ? [
                 { label: 'Re-apply snapshot', icon: RotateCw, disabled: reapplying, onSelect: () => void reapply() },
@@ -46,20 +45,19 @@ export function NodeActions({ node, onSaved, onForgotten }: { node: NodeManageme
           ...(canForget ? [{ label: 'Force Forget', icon: ShieldAlert, destructive: true, onSelect: () => setActiveAction('forget') }] : []),
         ]}
       />
-      {activeAction === 'details' && <NodeMetadataEditor node={node} onSaved={onSaved} autoOpen onClose={() => setActiveAction(null)} />}
+      {activeAction === 'name' && <NodeMetadataEditor node={node} mode="name" onSaved={onSaved} onClose={() => setActiveAction(null)} />}
       {activeAction === 'rotate' && <NodeTokenRotationButton node={node} onSaved={onSaved} autoOpen onClose={() => setActiveAction(null)} />}
       {(activeAction === 'remove' || activeAction === 'forget') && <NodeRemovalControls node={node} onSaved={onSaved} onForgotten={onForgotten} initialAction={activeAction} onClose={() => setActiveAction(null)} />}
     </>
   )
 }
 
-export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagementView, onSaved: () => void }): React.JSX.Element | null {
-  const [open, setOpen] = useState(false)
-  const [bindAddress, setBindAddress] = useState('127.0.0.1')
+export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: NodeManagementView, onSaved: () => void, onClose: () => void }): React.JSX.Element | null {
+  const [bindAddress, setBindAddress] = useState('0.0.0.0')
   const [bindPort, setBindPort] = useState('7000')
   const [vhostPort, setVhostPort] = useState('8080')
   const [poolStart, setPoolStart] = useState('20000')
-  const [poolEnd, setPoolEnd] = useState('29999')
+  const [poolEnd, setPoolEnd] = useState('20100')
   const [custom404Page, setCustom404Page] = useState('')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -78,6 +76,14 @@ export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagemen
   if (node.kind === 'local' || node.lifecycle === 'removing')
     return null
   const save = async (): Promise<void> => {
+    const frpPort = Number(bindPort)
+    const httpPort = Number(vhostPort)
+    const firstPort = Number(poolStart)
+    const lastPort = Number(poolEnd)
+    if (firstPort > lastPort || frpPort === httpPort || [frpPort, httpPort].some(port => port >= firstPort && port <= lastPort)) {
+      setError('Use separate FRP and HTTP ports outside the port pool, with the pool start no higher than its end.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -85,15 +91,15 @@ export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagemen
         expectedRevision: node.desired.revision,
         settings: {
           bindAddress,
-          bindPort: Number(bindPort),
-          vhostHTTPPort: Number(vhostPort),
-          portRangeStart: Number(poolStart),
-          portRangeEnd: Number(poolEnd),
+          bindPort: frpPort,
+          vhostHTTPPort: httpPort,
+          portRangeStart: firstPort,
+          portRangeEnd: lastPort,
           custom404Page,
         },
       }))
-      setOpen(false)
-      notify('Node configuration saved')
+      onClose()
+      notify('FRPS settings saved on Server; waiting for Node application')
       onSaved()
     }
     catch (cause) {
@@ -104,66 +110,65 @@ export function NodeConfigurationEditor({ node, onSaved }: { node: NodeManagemen
     }
   }
   return (
-    <>
-      <button className="primary" type="button" onClick={() => setOpen(true)}>
-        <Save size={15} />
-        Edit configuration
-      </button>
-      <DialogShell
-        open={open}
-        title="Edit Node configuration"
-        className="node-modal"
-        busy={saving}
-        onOpenChange={next => !next && setOpen(false)}
-        onSubmit={(event) => {
-          event.preventDefault()
-          void save()
-        }}
-      >
-        <div className="node-form-section">
-          <h3>FRPS listener</h3>
-          <div className="form-grid form-grid-two">
-            <label>
-              Bind address
-              <input required value={bindAddress} onChange={event => setBindAddress(event.target.value)} />
-            </label>
-            <label>
-              Bind port
-              <input required type="number" min={1} max={65535} value={bindPort} onChange={event => setBindPort(event.target.value)} />
-            </label>
-            <label>
-              HTTP vhost port
-              <input required type="number" min={1} max={65535} value={vhostPort} onChange={event => setVhostPort(event.target.value)} />
-            </label>
-          </div>
+    <DialogShell
+      open
+      title="FRPS listener & port pool"
+      className="node-modal"
+      busy={saving}
+      onOpenChange={next => !next && onClose()}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void save()
+      }}
+    >
+      <div className="node-form-section">
+        <h3>FRPS listener</h3>
+        <p className="form-hint">Bind address is inside the Node container. Use 0.0.0.0 for Docker unless you need a narrower interface; do not enter the public IP here.</p>
+        <div className="form-grid form-grid-two">
+          <label>
+            Bind address
+            <input required value={bindAddress} onChange={event => setBindAddress(event.target.value)} />
+          </label>
+          <label>
+            Bind port
+            <input required type="number" min={1} max={65535} value={bindPort} onChange={event => setBindPort(event.target.value)} />
+          </label>
+          <label>
+            HTTP vhost port
+            <input required type="number" min={1} max={65535} value={vhostPort} onChange={event => setVhostPort(event.target.value)} />
+          </label>
         </div>
-        <div className="node-form-section">
-          <h3>Port allocation</h3>
-          <div className="form-grid form-grid-two">
-            <label>
-              Port pool start
-              <input required type="number" min={1} max={65535} value={poolStart} onChange={event => setPoolStart(event.target.value)} />
-            </label>
-            <label>
-              Port pool end
-              <input required type="number" min={1} max={65535} value={poolEnd} onChange={event => setPoolEnd(event.target.value)} />
-            </label>
-          </div>
+      </div>
+      <div className="node-form-section">
+        <h3>Port allocation</h3>
+        <p className="form-hint">Publish the FRP and HTTP ports plus this entire pool from Docker. Publish the pool for both TCP and UDP.</p>
+        <div className="form-grid form-grid-two">
+          <label>
+            Port pool start
+            <input required type="number" min={1} max={65535} value={poolStart} onChange={event => setPoolStart(event.target.value)} />
+          </label>
+          <label>
+            Port pool end
+            <input required type="number" min={1} max={65535} value={poolEnd} onChange={event => setPoolEnd(event.target.value)} />
+          </label>
         </div>
+      </div>
+      <details className="node-advanced-settings">
+        <summary>Advanced settings</summary>
         <label>
           Custom 404 page
           <textarea maxLength={524288} value={custom404Page} onChange={event => setCustom404Page(event.target.value)} />
         </label>
-        {error && <ErrorState message={error} />}
-        <div className="modal-actions">
-          <button type="button" disabled={saving} onClick={() => setOpen(false)}>Cancel</button>
-          <button className="primary" type="submit" disabled={saving}>
-            {saving ? <Spinner /> : <Save size={15} />}
-            Save and apply
-          </button>
-        </div>
-      </DialogShell>
-    </>
+      </details>
+      {error && <ErrorState message={error} />}
+      <div className="modal-actions">
+        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="primary" type="submit" disabled={saving}>
+          {saving ? <Spinner /> : <Save size={15} />}
+          Save settings
+        </button>
+      </div>
+    </DialogShell>
   )
 }
 
@@ -329,33 +334,33 @@ export function NodeRemovalControls({ node, onSaved, onForgotten, initialAction,
   )
 }
 
-export function NodeMetadataEditor({ node, onSaved, autoOpen = false, onClose }: { node: NodeManagementView, onSaved: () => void, autoOpen?: boolean, onClose?: () => void }): React.JSX.Element | null {
-  const [open, setOpen] = useState(autoOpen)
+export function NodeMetadataEditor({ node, mode, onSaved, onClose }: { node: NodeManagementView, mode: 'name' | 'management' | 'endpoints', onSaved: () => void, onClose: () => void }): React.JSX.Element | null {
   const [name, setName] = useState(node.name)
   const [managementAddress, setManagementAddress] = useState(node.managementAddress ?? '')
   const [frpHost, setFrpHost] = useState(node.advertisedFrpAddress?.host ?? '')
   const [frpPort, setFrpPort] = useState(String(node.advertisedFrpAddress?.port ?? ''))
+  const [httpEnabled, setHTTPEnabled] = useState(Boolean(node.httpIngressAddress))
   const [httpHost, setHttpHost] = useState(node.httpIngressAddress?.host ?? '')
   const [httpPort, setHttpPort] = useState(String(node.httpIngressAddress?.port ?? ''))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const { notify } = useFeedback()
-  const close = (): void => {
-    setOpen(false)
-    onClose?.()
-  }
   const save = async (): Promise<void> => {
     setSaving(true)
     setError('')
     try {
-      await apiJson(`/api/nodes/${encodeURIComponent(node.id)}`, jsonRequest('PATCH', {
-        name: name.trim(),
-        managementAddress: managementAddress.trim(),
-        advertisedFrpAddress: frpHost.trim() ? { host: frpHost.trim(), port: Number(frpPort) } : undefined,
-        httpIngressAddress: httpHost.trim() ? { host: httpHost.trim(), port: Number(httpPort) } : undefined,
-      }))
-      close()
-      notify('Node details saved')
+      const patch = mode === 'name'
+        ? { name: name.trim() }
+        : mode === 'management'
+          ? { managementAddress: managementAddress.trim() }
+          : {
+              advertisedFrpAddress: { host: frpHost.trim(), port: Number(frpPort) },
+              httpIngressAddress: httpEnabled ? { host: httpHost.trim(), port: Number(httpPort) } : undefined,
+              clearHttpIngressAddress: !httpEnabled && Boolean(node.httpIngressAddress),
+            }
+      await apiJson(`/api/nodes/${encodeURIComponent(node.id)}`, jsonRequest('PATCH', patch))
+      onClose()
+      notify(mode === 'endpoints' ? 'Public endpoints saved on Server' : mode === 'management' ? 'Management address saved for verification' : 'Node renamed')
       onSaved()
     }
     catch (cause) {
@@ -366,73 +371,83 @@ export function NodeMetadataEditor({ node, onSaved, autoOpen = false, onClose }:
     }
   }
   return (
-    <>
-      {!autoOpen && (
-        <button type="button" onClick={() => setOpen(true)}>
-          <MapPin size={15} />
-          Edit details
-        </button>
+    <DialogShell
+      open
+      title={mode === 'name' ? 'Rename Node' : mode === 'management' ? 'Management connection' : 'Public endpoints'}
+      className="node-modal"
+      busy={saving}
+      onOpenChange={next => !next && onClose()}
+      onSubmit={(event) => {
+        event.preventDefault()
+        void save()
+      }}
+    >
+      {mode === 'name' && (
+        <label>
+          Display name
+          <input required maxLength={100} value={name} onChange={event => setName(event.target.value)} />
+        </label>
       )}
-      <DialogShell
-        open={open}
-        title="Edit Node details"
-        className="node-modal"
-        busy={saving}
-        onOpenChange={next => !next && close()}
-        onSubmit={(event) => {
-          event.preventDefault()
-          void save()
-        }}
-      >
+      {mode === 'management' && (
         <div className="node-form-section">
-          <h3>Identity & management</h3>
-          <label>
-            Display name
-            <input required maxLength={100} value={name} onChange={event => setName(event.target.value)} />
-          </label>
+          <p className="form-hint">The Server uses this URL to reach the Node management port and verify its identity.</p>
           <label>
             Management address
             <input required type="url" value={managementAddress} onChange={event => setManagementAddress(event.target.value)} />
           </label>
+          {node.pendingManagementAddress && (
+            <p className="form-hint">
+              Pending address:
+              {' '}
+              <span className="mono break">{node.pendingManagementAddress}</span>
+              . It becomes active after the original Node identity is verified.
+            </p>
+          )}
         </div>
+      )}
+      {mode === 'endpoints' && (
         <div className="node-form-section">
-          <h3>Public endpoints</h3>
+          <p className="form-hint">Clients use the public FRP address. It can differ from the container bind address and port; saving it does not verify external reachability.</p>
           <div className="form-grid form-grid-two">
             <label>
-              FRP host
-              <input value={frpHost} onChange={event => setFrpHost(event.target.value)} />
+              Public FRP host
+              <input required value={frpHost} onChange={event => setFrpHost(event.target.value)} />
             </label>
             <label>
-              FRP port
-              <input type="number" min={1} max={65535} value={frpPort} onChange={event => setFrpPort(event.target.value)} />
-            </label>
-            <label>
-              HTTP ingress host
-              <input value={httpHost} onChange={event => setHttpHost(event.target.value)} />
-            </label>
-            <label>
-              HTTP ingress port
-              <input type="number" min={1} max={65535} value={httpPort} onChange={event => setHttpPort(event.target.value)} />
+              Public FRP port
+              <input required type="number" min={1} max={65535} value={frpPort} onChange={event => setFrpPort(event.target.value)} />
             </label>
           </div>
+          <div className="node-option-row">
+            <div>
+              <strong>HTTP ingress</strong>
+              <small>Optional public entry point for HTTP tunnels</small>
+            </div>
+            <Switch label="Enable HTTP ingress" checked={httpEnabled} onChange={setHTTPEnabled} />
+          </div>
+          {httpEnabled && (
+            <div className="form-grid form-grid-two">
+              <label>
+                HTTP ingress host
+                <input required value={httpHost} onChange={event => setHttpHost(event.target.value)} />
+              </label>
+              <label>
+                HTTP ingress port
+                <input required type="number" min={1} max={65535} value={httpPort} onChange={event => setHttpPort(event.target.value)} />
+              </label>
+            </div>
+          )}
+          <p className="form-hint">For Docker, publish the corresponding FRP and HTTP container ports. Public ports may differ when a proxy or port mapping is used.</p>
         </div>
-        {node.pendingManagementAddress && (
-          <p className="form-hint">
-            Pending management address:
-            {' '}
-            <span className="mono break">{node.pendingManagementAddress}</span>
-            . It becomes active only after the original Node identity is verified.
-          </p>
-        )}
-        {error && <ErrorState message={error} />}
-        <div className="modal-actions">
-          <button type="button" disabled={saving} onClick={close}>Cancel</button>
-          <button className="primary" type="submit" disabled={saving}>
-            {saving ? <Spinner /> : <Save size={15} />}
-            Save details
-          </button>
-        </div>
-      </DialogShell>
-    </>
+      )}
+      {error && <ErrorState message={error} />}
+      <div className="modal-actions">
+        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+        <button className="primary" type="submit" disabled={saving}>
+          {saving ? <Spinner /> : <Save size={15} />}
+          {mode === 'name' ? 'Save name' : mode === 'management' ? 'Save address' : 'Save endpoints'}
+        </button>
+      </div>
+    </DialogShell>
   )
 }

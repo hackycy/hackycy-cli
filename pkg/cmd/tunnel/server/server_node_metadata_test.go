@@ -71,6 +71,31 @@ func TestServerNodeEndpointConstraintMappingAndRollback(t *testing.T) {
 	}
 }
 
+func TestServerNodeHTTPIngressCanBeCleared(t *testing.T) {
+	state := openServerDomainState(t)
+	registry, err := newServerNodeRegistry(state.database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	id := "0123456789abcdef0123456789abcdef"
+	if _, err := registry.register(ctx, id, "Remote", "http://127.0.0.1:7600", make([]byte, 32), 0); err != nil {
+		t.Fatal(err)
+	}
+	address := &serverNodeEndpoint{Host: "http.example.test", Port: 8080}
+	if err := registry.patchMetadata(ctx, id, serverNodeMetadataPatch{HTTPIngressAddress: address}); err != nil {
+		t.Fatal(err)
+	}
+	assertServerDomainCode(t, registry.patchMetadata(ctx, id, serverNodeMetadataPatch{HTTPIngressAddress: address, ClearHTTPIngressAddress: true}), "INVALID_NODE_ENDPOINT")
+	if err := registry.patchMetadata(ctx, id, serverNodeMetadataPatch{ClearHTTPIngressAddress: true}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := registry.get(ctx, id)
+	if err != nil || record.HTTPIngressHost.Valid || record.HTTPIngressPort.Valid {
+		t.Fatalf("HTTP ingress was not cleared: (%+v, %v)", record, err)
+	}
+}
+
 func startNodeForMetadataTest(t *testing.T, directory string) (string, func()) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

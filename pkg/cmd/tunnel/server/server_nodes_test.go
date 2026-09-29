@@ -27,11 +27,11 @@ func TestServerNodeRegistryRegisterIsAtomicAndUnconfigured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if record.DesiredRevision != 7 || record.DesiredSnapshot.Valid || record.AdvertisedFRPHost.Valid {
+	if record.DesiredRevision != 7 || record.DesiredSnapshot.Valid || record.AdvertisedFRPHost.Valid || record.PortStart != 20000 || record.PortEnd != 20100 {
 		t.Fatalf("re-added Node became configured: %+v", record)
 	}
 	saved, err := registry.get(context.Background(), id)
-	if err != nil || saved.Name != "East Node" || saved.DesiredRevision != 7 || saved.DesiredSnapshot.Valid {
+	if err != nil || saved.Name != "East Node" || saved.DesiredRevision != 7 || saved.DesiredSnapshot.Valid || saved.PortStart != 20000 || saved.PortEnd != 20100 {
 		t.Fatalf("saved Node = (%+v, %v)", saved, err)
 	}
 	otherKey := append([]byte(nil), publicKey...)

@@ -1,8 +1,8 @@
-import { ArrowRight, Network, Plus, RefreshCw } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, Check, Globe2, Network, PlugZap, Plus, RefreshCw, Server } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiJson } from './api'
 import { NodeClaimDialog } from './node-claim'
-import { NodeActions } from './node-config'
+import { NodeActions, NodeConfigurationEditor, NodeMetadataEditor } from './node-config'
 import { EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, Status } from './ui'
 
 export interface NodeEndpoint {
@@ -93,6 +93,195 @@ export function NodeObservation({ at, stale = false, historical = false }: { at?
 
 function loadError(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+function managementNextStep(state: string): string {
+  switch (state) {
+    case 'identity_mismatch':
+      return 'Compare the full Node fingerprint with its local output before changing the address.'
+    case 'incompatible':
+      return 'Install the same supported release on the Server and Node.'
+    default:
+      return 'Check the management URL, Node process, and published management port.'
+  }
+}
+
+function applyNextStep(code?: string): string {
+  switch (code) {
+    case 'NODE_CONFIG_REJECTED':
+    case 'NODE_SNAPSHOT_INVALID':
+      return 'Review the bind address and port conflicts, then save corrected FRPS settings.'
+    case 'NODE_ROLLBACK_FAILED':
+      return 'FRPS may be stopped. Inspect Node logs and restore a working configuration.'
+    case 'NODE_REVISION_STALE':
+    case 'NODE_REVISION_CONFLICT':
+      return 'Refresh the Node status, then save the configuration again.'
+    default:
+      return 'Inspect Node logs and listener ports, then correct the settings or re-apply the snapshot.'
+  }
+}
+
+function NodeSetup({ node, onSaved, onReload }: { node: NodeManagementView, onSaved: () => void, onReload: () => void }): React.JSX.Element {
+  const [editing, setEditing] = useState<'management' | 'config' | 'endpoints' | null>(null)
+  const managementReady = node.management.state === 'reachable' && !node.management.stale
+  const settings = node.desired.settings
+  const endpointsReady = Boolean(node.advertisedFrpAddress)
+  const currentObservation = !node.observed.stale && !node.management.stale && !node.frps.stale
+  const latestApplied = currentObservation && node.observed.configuration === 'converged' && node.observed.appliedRevision === node.desired.revision
+  const runningNow = node.frps.state === 'running' && !node.frps.stale
+  const ready = Boolean(settings && endpointsReady && managementReady && latestApplied && runningNow && node.selectability.selectable)
+  const latestFailed = node.observed.failedRevision === node.desired.revision
+  const firstIncomplete = !managementReady ? 1 : !settings ? 2 : !endpointsReady ? 3 : !ready ? 4 : 0
+  let applyState: { value: string, tone: 'good' | 'warn' | 'error' | 'muted', description: string }
+  if (!settings || !endpointsReady)
+    applyState = { value: 'Waiting for setup', tone: 'muted', description: 'Save FRPS settings and a public FRP address first.' }
+  else if (!currentObservation)
+    applyState = { value: 'No current observation', tone: 'muted', description: 'The last Node report is historical. Refresh after the management connection recovers.' }
+  else if (latestFailed)
+    applyState = { value: 'Apply failed', tone: 'error', description: `${applyNextStep(node.observed.error?.code)}${runningNow && node.observed.appliedRevision > 0 ? ` Previous revision ${node.observed.appliedRevision} is still running.` : ''}` }
+  else if (ready)
+    applyState = { value: 'Ready to assign', tone: 'good', description: `Revision ${node.desired.revision} is applied and FRPS is running. Public reachability still depends on your network.` }
+  else if (!runningNow && latestApplied)
+    applyState = { value: 'FRPS stopped', tone: 'error', description: 'The latest revision was applied, but FRPS is stopped. Check Node logs and listener ports.' }
+  else if (node.observed.appliedRevision < node.desired.revision)
+    applyState = { value: 'Waiting for Node', tone: 'warn', description: `${runningNow && node.observed.appliedRevision > 0 ? `Previous revision ${node.observed.appliedRevision} is running. ` : ''}Saved revision ${node.desired.revision}; accepted by Node ${node.observed.highestAcceptedRevision}.` }
+  else
+    applyState = { value: 'Not available', tone: 'warn', description: 'The latest revision is not confirmed available. Check Management and FRPS now below.' }
+  const managementState = managementReady ? 'complete' : !node.management.stale && nodeTone(node.management.state) === 'error' ? 'error' : 'pending'
+  const applyVisualState = ready ? 'complete' : applyState.tone === 'error' ? 'error' : 'pending'
+  const stepStates = [managementState, settings ? 'saved' : 'pending', endpointsReady ? 'saved' : 'pending', applyVisualState]
+  const completedCount = Number(managementReady) + Number(Boolean(settings)) + Number(endpointsReady) + Number(ready)
+
+  return (
+    <>
+      <section className="node-setup" aria-labelledby="node-setup-title">
+        <div className="section-title node-setup-title">
+          <div>
+            <h2 id="node-setup-title">Node setup</h2>
+          </div>
+          <div className="node-setup-overview">
+            <span>
+              <strong>
+                {completedCount}
+                {' / 4'}
+              </strong>
+              {' milestones complete'}
+            </span>
+            <div className="node-setup-progress" role="progressbar" aria-label="Node setup milestones" aria-valuemin={0} aria-valuemax={4} aria-valuenow={completedCount}>
+              {stepStates.map((state, index) => <span className={`node-setup-segment node-setup-segment-${state}`} key={index} />)}
+            </div>
+          </div>
+        </div>
+        <ol className="node-setup-steps">
+          <li className={`node-setup-step node-setup-${managementState}${firstIncomplete === 1 ? ' node-setup-current' : ''}`} data-state={managementState}>
+            <div className="node-setup-marker" aria-hidden="true">
+              <span className="node-setup-index">STEP 01</span>
+              <span className="node-setup-symbol">{managementReady ? <Check size={17} /> : managementState === 'error' ? <AlertTriangle size={17} /> : <PlugZap size={17} />}</span>
+            </div>
+            <div className="node-setup-content">
+              <div className="node-setup-label">
+                <h3>Management connection</h3>
+                <Status value={managementReady ? 'Connected' : node.management.stale ? 'No current status' : node.management.state} tone={managementReady ? 'good' : nodeTone(node.management.state, node.management.stale)} />
+              </div>
+              <p>
+                Server to Node
+                {' '}
+                <code className="break">{node.managementAddress || 'Not set'}</code>
+              </p>
+              {!managementReady && <small>{managementNextStep(node.management.state)}</small>}
+              {node.pendingManagementAddress && (
+                <small>
+                  Pending verification:
+                  {' '}
+                  <code className="break">{node.pendingManagementAddress}</code>
+                  {node.candidateError && ` (${node.candidateError})`}
+                </small>
+              )}
+            </div>
+            {node.lifecycle === 'active' && <div className="node-setup-action"><button className={firstIncomplete === 1 ? 'primary' : ''} type="button" onClick={() => setEditing('management')}>Edit address</button></div>}
+          </li>
+          <li className={`node-setup-step node-setup-${settings ? 'saved' : 'pending'}${firstIncomplete === 2 ? ' node-setup-current' : ''}`} data-state={settings ? 'saved' : 'pending'}>
+            <div className="node-setup-marker" aria-hidden="true">
+              <span className="node-setup-index">STEP 02</span>
+              <span className="node-setup-symbol">{settings ? <Check size={17} /> : <Server size={17} />}</span>
+            </div>
+            <div className="node-setup-content">
+              <div className="node-setup-label">
+                <h3>FRPS listener & port pool</h3>
+                <Status value={settings ? 'Saved on Server' : 'Required'} tone={settings ? 'good' : 'warn'} />
+              </div>
+              {settings
+                ? (
+                    <p>
+                      <code className="break">{`${settings.bindAddress}:${settings.bindPort}`}</code>
+                      {' '}
+                      | HTTP
+                      {' '}
+                      <code>{settings.vhostHTTPPort}</code>
+                      {' '}
+                      | Pool
+                      {' '}
+                      <code>{`${settings.portRangeStart}-${settings.portRangeEnd}`}</code>
+                    </p>
+                  )
+                : <p>Set the Node's internal bind address, listener ports, and allocatable port pool.</p>}
+              <small>{settings ? `Target revision ${node.desired.revision}; Node application is tracked in step 4.` : 'For Docker, bind inside the container and publish the same ports and full TCP/UDP pool.'}</small>
+            </div>
+            {node.lifecycle === 'active' && <div className="node-setup-action"><button className={firstIncomplete === 2 ? 'primary' : ''} type="button" onClick={() => setEditing('config')}>{settings ? 'Edit FRPS settings' : 'Configure FRPS'}</button></div>}
+          </li>
+          <li className={`node-setup-step node-setup-${endpointsReady ? 'saved' : 'pending'}${firstIncomplete === 3 ? ' node-setup-current' : ''}`} data-state={endpointsReady ? 'saved' : 'pending'}>
+            <div className="node-setup-marker" aria-hidden="true">
+              <span className="node-setup-index">STEP 03</span>
+              <span className="node-setup-symbol">{endpointsReady ? <Check size={17} /> : <Globe2 size={17} />}</span>
+            </div>
+            <div className="node-setup-content">
+              <div className="node-setup-label">
+                <h3>Public endpoints</h3>
+                <Status value={endpointsReady ? 'Saved on Server' : 'Required'} tone={endpointsReady ? 'good' : 'warn'} />
+              </div>
+              {endpointsReady
+                ? (
+                    <p>
+                      FRP
+                      {' '}
+                      <code className="break">{endpoint(node.advertisedFrpAddress)}</code>
+                      {' '}
+                      | HTTP
+                      {' '}
+                      <code className="break">{node.httpIngressAddress ? endpoint(node.httpIngressAddress) : 'Optional, not set'}</code>
+                    </p>
+                  )
+                : <p>Set the public FRP address used by Clients. HTTP ingress is optional.</p>}
+              <small>Saving an address does not verify that Clients can reach it from outside.</small>
+            </div>
+            {node.lifecycle === 'active' && <div className="node-setup-action"><button className={firstIncomplete === 3 ? 'primary' : ''} type="button" onClick={() => setEditing('endpoints')}>{endpointsReady ? 'Edit endpoints' : 'Set endpoints'}</button></div>}
+          </li>
+          <li className={`node-setup-step node-setup-${applyVisualState}${firstIncomplete === 4 ? ' node-setup-current' : ''}`} data-state={applyVisualState}>
+            <div className="node-setup-marker" aria-hidden="true">
+              <span className="node-setup-index">STEP 04</span>
+              <span className="node-setup-symbol">{ready ? <Check size={17} /> : applyVisualState === 'error' ? <AlertTriangle size={17} /> : <Activity size={17} />}</span>
+            </div>
+            <div className="node-setup-content">
+              <div className="node-setup-label">
+                <h3>Apply & availability</h3>
+                <Status value={applyState.value} tone={applyState.tone} />
+              </div>
+              <p>{applyState.description}</p>
+              {latestFailed && node.observed.error && (
+                <small>
+                  {`Revision ${node.observed.error.revision}: ${node.observed.error.code} at ${node.observed.error.phase}${node.observed.stale ? ' (historical)' : ''}`}
+                </small>
+              )}
+            </div>
+            <div className="node-setup-action"><button className={firstIncomplete === 4 ? 'primary' : ''} type="button" onClick={onReload}>Refresh status</button></div>
+          </li>
+        </ol>
+      </section>
+      {editing === 'management' && <NodeMetadataEditor node={node} mode="management" onSaved={onSaved} onClose={() => setEditing(null)} />}
+      {editing === 'config' && <NodeConfigurationEditor node={node} onSaved={onSaved} onClose={() => setEditing(null)} />}
+      {editing === 'endpoints' && <NodeMetadataEditor node={node} mode="endpoints" onSaved={onSaved} onClose={() => setEditing(null)} />}
+    </>
+  )
 }
 
 export function NodesPage({ refreshSequence, isAdmin }: { refreshSequence: number, isAdmin: boolean }): React.JSX.Element {
@@ -280,6 +469,7 @@ export function NodeDetailContent({ node, management, loading = false, error = '
       {node.lifecycle === 'removing' && (
         <p className="form-hint" role="status">Removal pending. The Node remains listed until its saved disabled state and stopped FRPS are confirmed. While management is offline, its old FRPS may still run.</p>
       )}
+      {isAdmin && management?.kind === 'remote' && node.lifecycle === 'active' && <NodeSetup node={management} onSaved={onReload} onReload={onReload} />}
       <section className="node-health" aria-label="Current Node health">
         <div className="node-health-item node-health-primary">
           <span>Availability</span>

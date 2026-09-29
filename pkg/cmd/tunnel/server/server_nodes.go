@@ -79,15 +79,15 @@ func (registry *serverNodeRegistry) register(ctx context.Context, nodeID, name, 
 		publicKeyHex := hex.EncodeToString(publicKey)
 		_, err = client.RemoteNode.Create().SetNodeID(nodeID).SetNodePublicKey(publicKeyHex).
 			SetManagementAddress(address).SetFrpBindPort(7000).SetHTTPVhostPort(8080).
-			SetPortStart(20000).SetPortEnd(29999).SetDesiredRevision(highestRevision).
+			SetPortStart(20000).SetPortEnd(20100).SetDesiredRevision(highestRevision).
 			SetActiveToken(token).Save(ctx)
 		if err != nil {
 			return serverNodeRecord{}, mapRemoteNodeRegistrationConstraintError(ctx, client, nodeID, publicKeyHex, address, err)
 		}
-		if _, err := client.NodePortPool.Create().SetNodeID(nodeID).SetPortStart(20000).SetPortEnd(29999).Save(ctx); err != nil {
+		if _, err := client.NodePortPool.Create().SetNodeID(nodeID).SetPortStart(20000).SetPortEnd(20100).Save(ctx); err != nil {
 			return serverNodeRecord{}, err
 		}
-		return serverNodeRecord{ID: nodeID, Kind: "remote", Name: name, Lifecycle: "active", ManagementAddress: address, PublicKey: append([]byte(nil), publicKey...), DesiredRevision: highestRevision, FRPBindPort: 7000, HTTPVhostPort: 8080, PortStart: 20000, PortEnd: 29999, CreatedAt: createdAt, UpdatedAt: createdAt}, nil
+		return serverNodeRecord{ID: nodeID, Kind: "remote", Name: name, Lifecycle: "active", ManagementAddress: address, PublicKey: append([]byte(nil), publicKey...), DesiredRevision: highestRevision, FRPBindPort: 7000, HTTPVhostPort: 8080, PortStart: 20000, PortEnd: 20100, CreatedAt: createdAt, UpdatedAt: createdAt}, nil
 	})
 	return result, err
 }
