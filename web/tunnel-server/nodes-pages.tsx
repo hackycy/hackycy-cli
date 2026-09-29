@@ -40,7 +40,9 @@ export interface NodeManagementView extends NodeSummary {
       portRangeStart: number
       portRangeEnd: number
       custom404Page: string
+      custom404PageMode?: 'inherit' | 'custom' | 'default'
     }
+    effectiveCustom404Page?: string
   }
   observed: {
     highestAcceptedRevision: number

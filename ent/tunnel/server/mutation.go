@@ -18,6 +18,7 @@ import (
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/predicate"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/schemamigration"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnelhttproute"
@@ -39,6 +40,7 @@ const (
 	TypeNodeObservation         = "NodeObservation"
 	TypeNodePortPool            = "NodePortPool"
 	TypeRemoteNode              = "RemoteNode"
+	TypeSchemaMigration         = "SchemaMigration"
 	TypeServerClient            = "ServerClient"
 	TypeTunnel                  = "Tunnel"
 	TypeTunnelHTTPRoute         = "TunnelHTTPRoute"
@@ -4341,6 +4343,7 @@ type RemoteNodeMutation struct {
 	adddesired_revision      *int64
 	desired_hash             *string
 	desired_snapshot         *string
+	desired_policy           *string
 	active_token             *string
 	staged_token             *string
 	staged_token_revision    *int64
@@ -4937,6 +4940,42 @@ func (m *RemoteNodeMutation) ResetDesiredSnapshot() {
 	delete(m.clearedFields, remotenode.FieldDesiredSnapshot)
 }
 
+// SetDesiredPolicy sets the "desired_policy" field.
+func (m *RemoteNodeMutation) SetDesiredPolicy(s string) {
+	m.desired_policy = &s
+}
+
+// DesiredPolicy returns the value of the "desired_policy" field in the mutation.
+func (m *RemoteNodeMutation) DesiredPolicy() (r string, exists bool) {
+	v := m.desired_policy
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDesiredPolicy returns the old "desired_policy" field's value of the RemoteNode entity.
+// If the RemoteNode object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *RemoteNodeMutation) OldDesiredPolicy(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDesiredPolicy is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDesiredPolicy requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDesiredPolicy: %w", err)
+	}
+	return oldValue.DesiredPolicy, nil
+}
+
+// ResetDesiredPolicy resets all changes to the "desired_policy" field.
+func (m *RemoteNodeMutation) ResetDesiredPolicy() {
+	m.desired_policy = nil
+}
+
 // SetActiveToken sets the "active_token" field.
 func (m *RemoteNodeMutation) SetActiveToken(s string) {
 	m.active_token = &s
@@ -5153,7 +5192,7 @@ func (m *RemoteNodeMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *RemoteNodeMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 14)
 	if m.node != nil {
 		fields = append(fields, remotenode.FieldNodeID)
 	}
@@ -5183,6 +5222,9 @@ func (m *RemoteNodeMutation) Fields() []string {
 	}
 	if m.desired_snapshot != nil {
 		fields = append(fields, remotenode.FieldDesiredSnapshot)
+	}
+	if m.desired_policy != nil {
+		fields = append(fields, remotenode.FieldDesiredPolicy)
 	}
 	if m.active_token != nil {
 		fields = append(fields, remotenode.FieldActiveToken)
@@ -5221,6 +5263,8 @@ func (m *RemoteNodeMutation) Field(name string) (ent.Value, bool) {
 		return m.DesiredHash()
 	case remotenode.FieldDesiredSnapshot:
 		return m.DesiredSnapshot()
+	case remotenode.FieldDesiredPolicy:
+		return m.DesiredPolicy()
 	case remotenode.FieldActiveToken:
 		return m.ActiveToken()
 	case remotenode.FieldStagedToken:
@@ -5256,6 +5300,8 @@ func (m *RemoteNodeMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldDesiredHash(ctx)
 	case remotenode.FieldDesiredSnapshot:
 		return m.OldDesiredSnapshot(ctx)
+	case remotenode.FieldDesiredPolicy:
+		return m.OldDesiredPolicy(ctx)
 	case remotenode.FieldActiveToken:
 		return m.OldActiveToken(ctx)
 	case remotenode.FieldStagedToken:
@@ -5340,6 +5386,13 @@ func (m *RemoteNodeMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetDesiredSnapshot(v)
+		return nil
+	case remotenode.FieldDesiredPolicy:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDesiredPolicy(v)
 		return nil
 	case remotenode.FieldActiveToken:
 		v, ok := value.(string)
@@ -5543,6 +5596,9 @@ func (m *RemoteNodeMutation) ResetField(name string) error {
 	case remotenode.FieldDesiredSnapshot:
 		m.ResetDesiredSnapshot()
 		return nil
+	case remotenode.FieldDesiredPolicy:
+		m.ResetDesiredPolicy()
+		return nil
 	case remotenode.FieldActiveToken:
 		m.ResetActiveToken()
 		return nil
@@ -5628,6 +5684,392 @@ func (m *RemoteNodeMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown RemoteNode edge %s", name)
+}
+
+// SchemaMigrationMutation represents an operation that mutates the SchemaMigration nodes in the graph.
+type SchemaMigrationMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int
+	checksum      *string
+	applied_at    *string
+	clearedFields map[string]struct{}
+	done          bool
+	oldValue      func(context.Context) (*SchemaMigration, error)
+	predicates    []predicate.SchemaMigration
+}
+
+var _ ent.Mutation = (*SchemaMigrationMutation)(nil)
+
+// schemamigrationOption allows management of the mutation configuration using functional options.
+type schemamigrationOption func(*SchemaMigrationMutation)
+
+// newSchemaMigrationMutation creates new mutation for the SchemaMigration entity.
+func newSchemaMigrationMutation(c config, op Op, opts ...schemamigrationOption) *SchemaMigrationMutation {
+	m := &SchemaMigrationMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeSchemaMigration,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withSchemaMigrationID sets the ID field of the mutation.
+func withSchemaMigrationID(id int) schemamigrationOption {
+	return func(m *SchemaMigrationMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *SchemaMigration
+		)
+		m.oldValue = func(ctx context.Context) (*SchemaMigration, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().SchemaMigration.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withSchemaMigration sets the old SchemaMigration of the mutation.
+func withSchemaMigration(node *SchemaMigration) schemamigrationOption {
+	return func(m *SchemaMigrationMutation) {
+		m.oldValue = func(context.Context) (*SchemaMigration, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m SchemaMigrationMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m SchemaMigrationMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("server: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of SchemaMigration entities.
+func (m *SchemaMigrationMutation) SetID(id int) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *SchemaMigrationMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *SchemaMigrationMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().SchemaMigration.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetChecksum sets the "checksum" field.
+func (m *SchemaMigrationMutation) SetChecksum(s string) {
+	m.checksum = &s
+}
+
+// Checksum returns the value of the "checksum" field in the mutation.
+func (m *SchemaMigrationMutation) Checksum() (r string, exists bool) {
+	v := m.checksum
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldChecksum returns the old "checksum" field's value of the SchemaMigration entity.
+// If the SchemaMigration object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SchemaMigrationMutation) OldChecksum(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldChecksum is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldChecksum requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldChecksum: %w", err)
+	}
+	return oldValue.Checksum, nil
+}
+
+// ResetChecksum resets all changes to the "checksum" field.
+func (m *SchemaMigrationMutation) ResetChecksum() {
+	m.checksum = nil
+}
+
+// SetAppliedAt sets the "applied_at" field.
+func (m *SchemaMigrationMutation) SetAppliedAt(s string) {
+	m.applied_at = &s
+}
+
+// AppliedAt returns the value of the "applied_at" field in the mutation.
+func (m *SchemaMigrationMutation) AppliedAt() (r string, exists bool) {
+	v := m.applied_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAppliedAt returns the old "applied_at" field's value of the SchemaMigration entity.
+// If the SchemaMigration object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SchemaMigrationMutation) OldAppliedAt(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAppliedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAppliedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAppliedAt: %w", err)
+	}
+	return oldValue.AppliedAt, nil
+}
+
+// ResetAppliedAt resets all changes to the "applied_at" field.
+func (m *SchemaMigrationMutation) ResetAppliedAt() {
+	m.applied_at = nil
+}
+
+// Where appends a list predicates to the SchemaMigrationMutation builder.
+func (m *SchemaMigrationMutation) Where(ps ...predicate.SchemaMigration) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the SchemaMigrationMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *SchemaMigrationMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.SchemaMigration, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *SchemaMigrationMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *SchemaMigrationMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (SchemaMigration).
+func (m *SchemaMigrationMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *SchemaMigrationMutation) Fields() []string {
+	fields := make([]string, 0, 2)
+	if m.checksum != nil {
+		fields = append(fields, schemamigration.FieldChecksum)
+	}
+	if m.applied_at != nil {
+		fields = append(fields, schemamigration.FieldAppliedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *SchemaMigrationMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case schemamigration.FieldChecksum:
+		return m.Checksum()
+	case schemamigration.FieldAppliedAt:
+		return m.AppliedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *SchemaMigrationMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case schemamigration.FieldChecksum:
+		return m.OldChecksum(ctx)
+	case schemamigration.FieldAppliedAt:
+		return m.OldAppliedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown SchemaMigration field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SchemaMigrationMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case schemamigration.FieldChecksum:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetChecksum(v)
+		return nil
+	case schemamigration.FieldAppliedAt:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAppliedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown SchemaMigration field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *SchemaMigrationMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *SchemaMigrationMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *SchemaMigrationMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown SchemaMigration numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *SchemaMigrationMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *SchemaMigrationMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *SchemaMigrationMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown SchemaMigration nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *SchemaMigrationMutation) ResetField(name string) error {
+	switch name {
+	case schemamigration.FieldChecksum:
+		m.ResetChecksum()
+		return nil
+	case schemamigration.FieldAppliedAt:
+		m.ResetAppliedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown SchemaMigration field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *SchemaMigrationMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *SchemaMigrationMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *SchemaMigrationMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *SchemaMigrationMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *SchemaMigrationMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *SchemaMigrationMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *SchemaMigrationMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown SchemaMigration unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *SchemaMigrationMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown SchemaMigration edge %s", name)
 }
 
 // ServerClientMutation represents an operation that mutates the ServerClient nodes in the graph.

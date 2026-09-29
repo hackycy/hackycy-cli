@@ -24,7 +24,7 @@ import (
 const nodeManagementVersion = 1
 const nodeManagementPrologue = "ycy/tunnel-node-management/1"
 const nodeManagementResponseLimit = 96 << 10
-const nodeSnapshotLimit = 2 << 20
+const nodeSnapshotLimit = 4 << 20
 const nodeSnapshotChunkLimit = 32 << 10
 
 type nodeManagementPeer struct {

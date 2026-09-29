@@ -93,6 +93,18 @@ func (f RemoteNodeFunc) Mutate(ctx context.Context, m server.Mutation) (server.V
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *server.RemoteNodeMutation", m)
 }
 
+// The SchemaMigrationFunc type is an adapter to allow the use of ordinary
+// function as SchemaMigration mutator.
+type SchemaMigrationFunc func(context.Context, *server.SchemaMigrationMutation) (server.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SchemaMigrationFunc) Mutate(ctx context.Context, m server.Mutation) (server.Value, error) {
+	if mv, ok := m.(*server.SchemaMigrationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *server.SchemaMigrationMutation", m)
+}
+
 // The ServerClientFunc type is an adapter to allow the use of ordinary
 // function as ServerClient mutator.
 type ServerClientFunc func(context.Context, *server.ServerClientMutation) (server.Value, error)

@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -22,7 +24,11 @@ import (
 //go:embed migrations/001_v1.sql
 var serverV1Schema string
 
-const serverV1SchemaVersion = "1"
+//go:embed migrations/002_node_policies.sql
+var serverNodePoliciesMigration string
+
+const serverV1SchemaVersion = "2"
+const serverV1BaseSchemaVersion = "1"
 
 // openEmptyServerV1Database is called under the data directory's process lock.
 // The returned Ent client borrows db; the caller closes db exactly once.
@@ -71,6 +77,10 @@ func createServerV1Database(ctx context.Context, stateDirectory string) (*sql.DB
 		_ = db.Close()
 		return nil, nil, err
 	}
+	if err := applyServerNodePoliciesMigration(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, nil, fmt.Errorf("migrate fresh Server v1 schema: %w", err)
+	}
 	return db, serverent.NewClient(serverent.Driver(entsql.OpenDB(dialect.SQLite, db))), nil
 }
 
@@ -87,6 +97,97 @@ func openServerV1SQLDatabase(ctx context.Context, path string) (*sql.DB, error) 
 		}
 	}
 	return db, nil
+}
+
+func migrateServerV1Database(ctx context.Context, db *sql.DB) error {
+	transaction, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin Server database migration: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	var version string
+	if err := transaction.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = 'schema_version'`).Scan(&version); err != nil {
+		return fmt.Errorf("read Server database schema version: %w", err)
+	}
+	switch version {
+	case serverV1BaseSchemaVersion:
+		if _, err := transaction.ExecContext(ctx, serverNodePoliciesMigration); err != nil {
+			return fmt.Errorf("apply Server database migration 2: %w", err)
+		}
+		if err := recordServerMigrations(ctx, transaction); err != nil {
+			return err
+		}
+		if _, err := transaction.ExecContext(ctx, `UPDATE meta SET value = ? WHERE key = 'schema_version'`, serverV1SchemaVersion); err != nil {
+			return fmt.Errorf("record Server database schema version: %w", err)
+		}
+	case serverV1SchemaVersion:
+		if err := verifyServerMigrations(ctx, transaction); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported Server database schema version %q", version)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("commit Server database migration: %w", err)
+	}
+	return nil
+}
+
+func applyServerNodePoliciesMigration(ctx context.Context, db *sql.DB) error {
+	transaction, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx, serverNodePoliciesMigration); err != nil {
+		return err
+	}
+	if err := recordServerMigrations(ctx, transaction); err != nil {
+		return err
+	}
+	return transaction.Commit()
+}
+
+func serverMigrationChecksum(contents string) string {
+	digest := sha256.Sum256([]byte(contents))
+	return hex.EncodeToString(digest[:])
+}
+
+func recordServerMigrations(ctx context.Context, transaction *sql.Tx) error {
+	for index, contents := range []string{serverV1Schema, serverNodePoliciesMigration} {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES (?, ?, datetime('now'))`, index+1, serverMigrationChecksum(contents)); err != nil {
+			return fmt.Errorf("record Server migration %d: %w", index+1, err)
+		}
+	}
+	return nil
+}
+
+func verifyServerMigrations(ctx context.Context, transaction *sql.Tx) error {
+	rows, err := transaction.QueryContext(ctx, `SELECT version, checksum FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return fmt.Errorf("read Server migration history: %w", err)
+	}
+	defer rows.Close()
+	versions := []string{serverV1Schema, serverNodePoliciesMigration}
+	index := 0
+	for rows.Next() {
+		var version int
+		var checksum string
+		if err := rows.Scan(&version, &checksum); err != nil {
+			return err
+		}
+		if index >= len(versions) || version != index+1 || checksum != serverMigrationChecksum(versions[index]) {
+			return fmt.Errorf("Server database migration history differs from the current SQL assets")
+		}
+		index++
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if index != len(versions) {
+		return fmt.Errorf("Server database migration history is incomplete")
+	}
+	return nil
 }
 
 func serverEntOnConnection(connection *sql.Conn) *serverent.Client {
@@ -155,6 +256,9 @@ func inspectServerV1Database(ctx context.Context, path string) (string, error) {
 		return "", err
 	}
 	defer db.Close()
+	if err := migrateServerV1Database(ctx, db); err != nil {
+		return "", err
+	}
 	var integrity string
 	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
 		return "", fmt.Errorf("Server v1 database is damaged: %v (%s)", err, integrity)
@@ -251,6 +355,9 @@ func verifyServerV1Schema(ctx context.Context, db *sql.DB) error {
 	}
 	defer expected.Close()
 	if _, err := expected.ExecContext(ctx, serverV1Schema); err != nil {
+		return err
+	}
+	if _, err := expected.ExecContext(ctx, serverNodePoliciesMigration); err != nil {
 		return err
 	}
 	actualSchema, err := readServerSchema(ctx, db)

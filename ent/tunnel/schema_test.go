@@ -18,6 +18,13 @@ import (
 
 func TestServerV1SQLMatchesEnt(t *testing.T) {
 	db := createSchemaDatabase(t, "../../pkg/cmd/tunnel/server/migrations/001_v1.sql")
+	migration, err := os.ReadFile("../../pkg/cmd/tunnel/server/migrations/002_node_policies.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(string(migration)); err != nil {
+		t.Fatalf("execute Server migration: %v", err)
+	}
 	verifySchema(t, db, servermigrate.Tables)
 
 	if _, err := db.Exec(`INSERT INTO nodes(node_id,kind,name,created_at,updated_at) VALUES('local','remote','bad','now','now')`); err == nil {

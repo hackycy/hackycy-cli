@@ -19,6 +19,7 @@ import (
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeobservation"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/schemamigration"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnelhttproute"
@@ -89,6 +90,7 @@ func checkColumn(t, c string) error {
 			nodeobservation.Table:         nodeobservation.ValidColumn,
 			nodeportpool.Table:            nodeportpool.ValidColumn,
 			remotenode.Table:              remotenode.ValidColumn,
+			schemamigration.Table:         schemamigration.ValidColumn,
 			serverclient.Table:            serverclient.ValidColumn,
 			tunnel.Table:                  tunnel.ValidColumn,
 			tunnelhttproute.Table:         tunnelhttproute.ValidColumn,

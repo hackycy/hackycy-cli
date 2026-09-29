@@ -103,6 +103,11 @@ func DesiredSnapshot(v string) predicate.RemoteNode {
 	return predicate.RemoteNode(sql.FieldEQ(FieldDesiredSnapshot, v))
 }
 
+// DesiredPolicy applies equality check predicate on the "desired_policy" field. It's identical to DesiredPolicyEQ.
+func DesiredPolicy(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldEQ(FieldDesiredPolicy, v))
+}
+
 // ActiveToken applies equality check predicate on the "active_token" field. It's identical to ActiveTokenEQ.
 func ActiveToken(v string) predicate.RemoteNode {
 	return predicate.RemoteNode(sql.FieldEQ(FieldActiveToken, v))
@@ -661,6 +666,71 @@ func DesiredSnapshotEqualFold(v string) predicate.RemoteNode {
 // DesiredSnapshotContainsFold applies the ContainsFold predicate on the "desired_snapshot" field.
 func DesiredSnapshotContainsFold(v string) predicate.RemoteNode {
 	return predicate.RemoteNode(sql.FieldContainsFold(FieldDesiredSnapshot, v))
+}
+
+// DesiredPolicyEQ applies the EQ predicate on the "desired_policy" field.
+func DesiredPolicyEQ(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldEQ(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyNEQ applies the NEQ predicate on the "desired_policy" field.
+func DesiredPolicyNEQ(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldNEQ(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyIn applies the In predicate on the "desired_policy" field.
+func DesiredPolicyIn(vs ...string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldIn(FieldDesiredPolicy, vs...))
+}
+
+// DesiredPolicyNotIn applies the NotIn predicate on the "desired_policy" field.
+func DesiredPolicyNotIn(vs ...string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldNotIn(FieldDesiredPolicy, vs...))
+}
+
+// DesiredPolicyGT applies the GT predicate on the "desired_policy" field.
+func DesiredPolicyGT(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldGT(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyGTE applies the GTE predicate on the "desired_policy" field.
+func DesiredPolicyGTE(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldGTE(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyLT applies the LT predicate on the "desired_policy" field.
+func DesiredPolicyLT(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldLT(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyLTE applies the LTE predicate on the "desired_policy" field.
+func DesiredPolicyLTE(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldLTE(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyContains applies the Contains predicate on the "desired_policy" field.
+func DesiredPolicyContains(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldContains(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyHasPrefix applies the HasPrefix predicate on the "desired_policy" field.
+func DesiredPolicyHasPrefix(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldHasPrefix(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyHasSuffix applies the HasSuffix predicate on the "desired_policy" field.
+func DesiredPolicyHasSuffix(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldHasSuffix(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyEqualFold applies the EqualFold predicate on the "desired_policy" field.
+func DesiredPolicyEqualFold(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldEqualFold(FieldDesiredPolicy, v))
+}
+
+// DesiredPolicyContainsFold applies the ContainsFold predicate on the "desired_policy" field.
+func DesiredPolicyContainsFold(v string) predicate.RemoteNode {
+	return predicate.RemoteNode(sql.FieldContainsFold(FieldDesiredPolicy, v))
 }
 
 // ActiveTokenEQ applies the EQ predicate on the "active_token" field.

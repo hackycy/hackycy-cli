@@ -170,6 +170,7 @@ func NewServerRuntime(ctx context.Context, options ServerRuntimeOptions) (*Serve
 		return fail(err)
 	}
 	runtime.nodeService.localState = runtime.frps
+	runtime.nodes.default404Page = runtime.frps
 	runtime.gateway, err = NewServerAgentGateway(ServerAgentGatewayOptions{
 		ControlPlane:  runtime.controlPlane,
 		FRPS:          runtime.frps,

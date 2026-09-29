@@ -826,6 +826,21 @@ th:last-child {
   cursor: pointer;
 }
 
+.node-404-setting {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.node-404-setting > span {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.node-404-setting textarea {
+  min-height: 160px;
+}
+
 .node-advanced-settings label {
   margin-top: 12px;
 }

@@ -27,6 +27,9 @@ type NodePortPool func(*sql.Selector)
 // RemoteNode is the predicate function for remotenode builders.
 type RemoteNode func(*sql.Selector)
 
+// SchemaMigration is the predicate function for schemamigration builders.
+type SchemaMigration func(*sql.Selector)
+
 // ServerClient is the predicate function for serverclient builders.
 type ServerClient func(*sql.Selector)
 

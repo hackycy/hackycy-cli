@@ -22,6 +22,7 @@ import (
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeobservation"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/nodeportpool"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/remotenode"
+	"github.com/hackycy/hackycy-cli/ent/tunnel/server/schemamigration"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/serverclient"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnel"
 	"github.com/hackycy/hackycy-cli/ent/tunnel/server/tunnelhttproute"
@@ -46,6 +47,8 @@ type Client struct {
 	NodePortPool *NodePortPoolClient
 	// RemoteNode is the client for interacting with the RemoteNode builders.
 	RemoteNode *RemoteNodeClient
+	// SchemaMigration is the client for interacting with the SchemaMigration builders.
+	SchemaMigration *SchemaMigrationClient
 	// ServerClient is the client for interacting with the ServerClient builders.
 	ServerClient *ServerClientClient
 	// Tunnel is the client for interacting with the Tunnel builders.
@@ -70,6 +73,7 @@ func (c *Client) init() {
 	c.NodeObservation = NewNodeObservationClient(c.config)
 	c.NodePortPool = NewNodePortPoolClient(c.config)
 	c.RemoteNode = NewRemoteNodeClient(c.config)
+	c.SchemaMigration = NewSchemaMigrationClient(c.config)
 	c.ServerClient = NewServerClientClient(c.config)
 	c.Tunnel = NewTunnelClient(c.config)
 	c.TunnelHTTPRoute = NewTunnelHTTPRouteClient(c.config)
@@ -172,6 +176,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		NodeObservation:         NewNodeObservationClient(cfg),
 		NodePortPool:            NewNodePortPoolClient(cfg),
 		RemoteNode:              NewRemoteNodeClient(cfg),
+		SchemaMigration:         NewSchemaMigrationClient(cfg),
 		ServerClient:            NewServerClientClient(cfg),
 		Tunnel:                  NewTunnelClient(cfg),
 		TunnelHTTPRoute:         NewTunnelHTTPRouteClient(cfg),
@@ -201,6 +206,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		NodeObservation:         NewNodeObservationClient(cfg),
 		NodePortPool:            NewNodePortPoolClient(cfg),
 		RemoteNode:              NewRemoteNodeClient(cfg),
+		SchemaMigration:         NewSchemaMigrationClient(cfg),
 		ServerClient:            NewServerClientClient(cfg),
 		Tunnel:                  NewTunnelClient(cfg),
 		TunnelHTTPRoute:         NewTunnelHTTPRouteClient(cfg),
@@ -234,7 +240,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Account, c.Meta, c.Node, c.NodeManagementCandidate, c.NodeObservation,
-		c.NodePortPool, c.RemoteNode, c.ServerClient, c.Tunnel, c.TunnelHTTPRoute,
+		c.NodePortPool, c.RemoteNode, c.SchemaMigration, c.ServerClient, c.Tunnel,
+		c.TunnelHTTPRoute,
 	} {
 		n.Use(hooks...)
 	}
@@ -245,7 +252,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Account, c.Meta, c.Node, c.NodeManagementCandidate, c.NodeObservation,
-		c.NodePortPool, c.RemoteNode, c.ServerClient, c.Tunnel, c.TunnelHTTPRoute,
+		c.NodePortPool, c.RemoteNode, c.SchemaMigration, c.ServerClient, c.Tunnel,
+		c.TunnelHTTPRoute,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -268,6 +276,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.NodePortPool.mutate(ctx, m)
 	case *RemoteNodeMutation:
 		return c.RemoteNode.mutate(ctx, m)
+	case *SchemaMigrationMutation:
+		return c.SchemaMigration.mutate(ctx, m)
 	case *ServerClientMutation:
 		return c.ServerClient.mutate(ctx, m)
 	case *TunnelMutation:
@@ -1418,6 +1428,139 @@ func (c *RemoteNodeClient) mutate(ctx context.Context, m *RemoteNodeMutation) (V
 	}
 }
 
+// SchemaMigrationClient is a client for the SchemaMigration schema.
+type SchemaMigrationClient struct {
+	config
+}
+
+// NewSchemaMigrationClient returns a client for the SchemaMigration from the given config.
+func NewSchemaMigrationClient(c config) *SchemaMigrationClient {
+	return &SchemaMigrationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `schemamigration.Hooks(f(g(h())))`.
+func (c *SchemaMigrationClient) Use(hooks ...Hook) {
+	c.hooks.SchemaMigration = append(c.hooks.SchemaMigration, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `schemamigration.Intercept(f(g(h())))`.
+func (c *SchemaMigrationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SchemaMigration = append(c.inters.SchemaMigration, interceptors...)
+}
+
+// Create returns a builder for creating a SchemaMigration entity.
+func (c *SchemaMigrationClient) Create() *SchemaMigrationCreate {
+	mutation := newSchemaMigrationMutation(c.config, OpCreate)
+	return &SchemaMigrationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SchemaMigration entities.
+func (c *SchemaMigrationClient) CreateBulk(builders ...*SchemaMigrationCreate) *SchemaMigrationCreateBulk {
+	return &SchemaMigrationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SchemaMigrationClient) MapCreateBulk(slice any, setFunc func(*SchemaMigrationCreate, int)) *SchemaMigrationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SchemaMigrationCreateBulk{err: fmt.Errorf("calling to SchemaMigrationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SchemaMigrationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SchemaMigrationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SchemaMigration.
+func (c *SchemaMigrationClient) Update() *SchemaMigrationUpdate {
+	mutation := newSchemaMigrationMutation(c.config, OpUpdate)
+	return &SchemaMigrationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SchemaMigrationClient) UpdateOne(_m *SchemaMigration) *SchemaMigrationUpdateOne {
+	mutation := newSchemaMigrationMutation(c.config, OpUpdateOne, withSchemaMigration(_m))
+	return &SchemaMigrationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SchemaMigrationClient) UpdateOneID(id int) *SchemaMigrationUpdateOne {
+	mutation := newSchemaMigrationMutation(c.config, OpUpdateOne, withSchemaMigrationID(id))
+	return &SchemaMigrationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SchemaMigration.
+func (c *SchemaMigrationClient) Delete() *SchemaMigrationDelete {
+	mutation := newSchemaMigrationMutation(c.config, OpDelete)
+	return &SchemaMigrationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SchemaMigrationClient) DeleteOne(_m *SchemaMigration) *SchemaMigrationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SchemaMigrationClient) DeleteOneID(id int) *SchemaMigrationDeleteOne {
+	builder := c.Delete().Where(schemamigration.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SchemaMigrationDeleteOne{builder}
+}
+
+// Query returns a query builder for SchemaMigration.
+func (c *SchemaMigrationClient) Query() *SchemaMigrationQuery {
+	return &SchemaMigrationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSchemaMigration},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SchemaMigration entity by its id.
+func (c *SchemaMigrationClient) Get(ctx context.Context, id int) (*SchemaMigration, error) {
+	return c.Query().Where(schemamigration.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SchemaMigrationClient) GetX(ctx context.Context, id int) *SchemaMigration {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SchemaMigrationClient) Hooks() []Hook {
+	return c.hooks.SchemaMigration
+}
+
+// Interceptors returns the client interceptors.
+func (c *SchemaMigrationClient) Interceptors() []Interceptor {
+	return c.inters.SchemaMigration
+}
+
+func (c *SchemaMigrationClient) mutate(ctx context.Context, m *SchemaMigrationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SchemaMigrationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SchemaMigrationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SchemaMigrationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SchemaMigrationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("server: unknown SchemaMigration mutation op: %q", m.Op())
+	}
+}
+
 // ServerClientClient is a client for the ServerClient schema.
 type ServerClientClient struct {
 	config
@@ -1965,10 +2108,11 @@ func (c *TunnelHTTPRouteClient) mutate(ctx context.Context, m *TunnelHTTPRouteMu
 type (
 	hooks struct {
 		Account, Meta, Node, NodeManagementCandidate, NodeObservation, NodePortPool,
-		RemoteNode, ServerClient, Tunnel, TunnelHTTPRoute []ent.Hook
+		RemoteNode, SchemaMigration, ServerClient, Tunnel, TunnelHTTPRoute []ent.Hook
 	}
 	inters struct {
 		Account, Meta, Node, NodeManagementCandidate, NodeObservation, NodePortPool,
-		RemoteNode, ServerClient, Tunnel, TunnelHTTPRoute []ent.Interceptor
+		RemoteNode, SchemaMigration, ServerClient, Tunnel,
+		TunnelHTTPRoute []ent.Interceptor
 	}
 )

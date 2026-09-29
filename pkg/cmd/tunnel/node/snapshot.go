@@ -12,7 +12,7 @@ import (
 )
 
 const nodeSnapshotFormatVersion = 1
-const maximumSnapshotBytes = 2 << 20
+const maximumSnapshotBytes = 4 << 20
 const maximumSnapshotChunkBytes = 32 << 10
 
 type desiredSnapshot struct {

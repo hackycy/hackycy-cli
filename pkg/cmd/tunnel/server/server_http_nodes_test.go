@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -263,5 +264,22 @@ func TestServerHTTPNodePreviewAndClaimRequireAdminAndPinnedFingerprint(t *testin
 	result = get("/api/nodes", user.Token)
 	if result.Code != http.StatusOK || !bytes.Contains(result.Body.Bytes(), []byte(`"state":"incompatible"`)) || !bytes.Contains(result.Body.Bytes(), []byte(`"lastKnownFrps":{"state":"running"`)) {
 		t.Fatalf("disconnect/re-GET lost Node state: %d: %s", result.Code, result.Body.String())
+	}
+	settings := serverNodeSettings{BindAddress: "127.0.0.1", BindPort: 7000, VhostHTTPPort: 8080, PortRangeStart: 20000, PortRangeEnd: 20100, Custom404PageMode: "invalid"}
+	if response := mutate(http.MethodPut, desiredPath, admin.Token, map[string]any{"expectedRevision": 2, "settings": settings}); response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid 404 source = %d: %s", response.Code, response.Body.String())
+	}
+	settings.Custom404PageMode = "custom"
+	settings.Custom404Page = strings.Repeat("x", 512*1024+1)
+	if response := mutate(http.MethodPut, desiredPath, admin.Token, map[string]any{"expectedRevision": 2, "settings": settings}); response.Code != http.StatusBadRequest {
+		t.Fatalf("oversized 404 page = %d: %s", response.Code, response.Body.String())
+	}
+	settings.Custom404PageMode = "default"
+	settings.Custom404Page = ""
+	if response := mutate(http.MethodPut, desiredPath, admin.Token, map[string]any{"expectedRevision": 2, "settings": settings}); response.Code != http.StatusOK {
+		t.Fatalf("explicit FRP default = %d: %s", response.Code, response.Body.String())
+	}
+	if response := get(managementPath, admin.Token); response.Code != http.StatusOK || !bytes.Contains(response.Body.Bytes(), []byte(`"custom404PageMode":"default"`)) {
+		t.Fatalf("default 404 source projection = %d: %s", response.Code, response.Body.String())
 	}
 }

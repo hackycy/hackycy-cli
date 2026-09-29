@@ -32,6 +32,8 @@ const (
 	FieldDesiredHash = "desired_hash"
 	// FieldDesiredSnapshot holds the string denoting the desired_snapshot field in the database.
 	FieldDesiredSnapshot = "desired_snapshot"
+	// FieldDesiredPolicy holds the string denoting the desired_policy field in the database.
+	FieldDesiredPolicy = "desired_policy"
 	// FieldActiveToken holds the string denoting the active_token field in the database.
 	FieldActiveToken = "active_token"
 	// FieldStagedToken holds the string denoting the staged_token field in the database.
@@ -66,6 +68,7 @@ var Columns = []string{
 	FieldDesiredRevision,
 	FieldDesiredHash,
 	FieldDesiredSnapshot,
+	FieldDesiredPolicy,
 	FieldActiveToken,
 	FieldStagedToken,
 	FieldStagedTokenRevision,
@@ -84,6 +87,8 @@ func ValidColumn(column string) bool {
 var (
 	// DefaultDesiredRevision holds the default value on creation for the "desired_revision" field.
 	DefaultDesiredRevision int64
+	// DefaultDesiredPolicy holds the default value on creation for the "desired_policy" field.
+	DefaultDesiredPolicy string
 )
 
 // OrderOption defines the ordering options for the RemoteNode queries.
@@ -142,6 +147,11 @@ func ByDesiredHash(opts ...sql.OrderTermOption) OrderOption {
 // ByDesiredSnapshot orders the results by the desired_snapshot field.
 func ByDesiredSnapshot(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDesiredSnapshot, opts...).ToFunc()
+}
+
+// ByDesiredPolicy orders the results by the desired_policy field.
+func ByDesiredPolicy(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldDesiredPolicy, opts...).ToFunc()
 }
 
 // ByActiveToken orders the results by the active_token field.

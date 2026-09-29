@@ -89,6 +89,9 @@ func OpenState(options StateOptions) (*State, error) {
 	} else {
 		database, err = openServerV1SQLDatabase(context.Background(), databasePath)
 		if err == nil {
+			err = migrateServerV1Database(context.Background(), database)
+		}
+		if err == nil {
 			client = serverent.NewClient(serverent.Driver(entsql.OpenDB(dialect.SQLite, database)))
 		}
 	}

@@ -161,6 +161,7 @@ var (
 		{Name: "desired_revision", Type: field.TypeInt64, Default: 0},
 		{Name: "desired_hash", Type: field.TypeString, Nullable: true},
 		{Name: "desired_snapshot", Type: field.TypeString, Nullable: true},
+		{Name: "desired_policy", Type: field.TypeString, Default: "{\"version\":1,\"fields\":{\"custom404Page\":{\"mode\":\"inherit\"}}}"},
 		{Name: "active_token", Type: field.TypeString},
 		{Name: "staged_token", Type: field.TypeString, Nullable: true},
 		{Name: "staged_token_revision", Type: field.TypeInt64, Nullable: true},
@@ -174,11 +175,23 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "remote_nodes_nodes_remote_node",
-				Columns:    []*schema.Column{RemoteNodesColumns[13]},
+				Columns:    []*schema.Column{RemoteNodesColumns[14]},
 				RefColumns: []*schema.Column{NodesColumns[0]},
 				OnDelete:   schema.Cascade,
 			},
 		},
+	}
+	// SchemaMigrationsColumns holds the columns for the "schema_migrations" table.
+	SchemaMigrationsColumns = []*schema.Column{
+		{Name: "version", Type: field.TypeInt, Increment: true},
+		{Name: "checksum", Type: field.TypeString},
+		{Name: "applied_at", Type: field.TypeString},
+	}
+	// SchemaMigrationsTable holds the schema information for the "schema_migrations" table.
+	SchemaMigrationsTable = &schema.Table{
+		Name:       "schema_migrations",
+		Columns:    SchemaMigrationsColumns,
+		PrimaryKey: []*schema.Column{SchemaMigrationsColumns[0]},
 	}
 	// ClientsColumns holds the columns for the "clients" table.
 	ClientsColumns = []*schema.Column{
@@ -329,6 +342,7 @@ var (
 		NodeObservationsTable,
 		NodePortPoolsTable,
 		RemoteNodesTable,
+		SchemaMigrationsTable,
 		ClientsTable,
 		TunnelsTable,
 		TunnelHTTPRoutesTable,
@@ -383,6 +397,9 @@ func init() {
 		"remote_port_start_range":     "port_start BETWEEN 1 AND 65535",
 		"remote_revision_nonnegative": "desired_revision >= 0",
 		"staged_revision_nonnegative": "staged_token_revision IS NULL OR staged_token_revision >= 0",
+	}
+	SchemaMigrationsTable.Annotation = &entsql.Annotation{
+		Table: "schema_migrations",
 	}
 	ClientsTable.ForeignKeys[0].RefTable = AccountsTable
 	ClientsTable.ForeignKeys[1].RefTable = NodesTable

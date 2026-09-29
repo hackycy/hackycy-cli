@@ -18,12 +18,13 @@ import (
 )
 
 type serverNodeSettings struct {
-	BindAddress    string `json:"bindAddress"`
-	BindPort       int64  `json:"bindPort"`
-	VhostHTTPPort  int64  `json:"vhostHTTPPort"`
-	PortRangeStart int64  `json:"portRangeStart"`
-	PortRangeEnd   int64  `json:"portRangeEnd"`
-	Custom404Page  string `json:"custom404Page"`
+	BindAddress       string `json:"bindAddress"`
+	BindPort          int64  `json:"bindPort"`
+	VhostHTTPPort     int64  `json:"vhostHTTPPort"`
+	PortRangeStart    int64  `json:"portRangeStart"`
+	PortRangeEnd      int64  `json:"portRangeEnd"`
+	Custom404Page     string `json:"custom404Page"`
+	Custom404PageMode string `json:"custom404PageMode,omitempty"`
 }
 
 type serverDesiredNodeSnapshot struct {
@@ -45,6 +46,14 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 	if net.ParseIP(settings.BindAddress) == nil || !validServerNodePort(settings.BindPort) || !validServerNodePort(settings.VhostHTTPPort) || !validServerNodePort(settings.PortRangeStart) || !validServerNodePort(settings.PortRangeEnd) || settings.PortRangeStart > settings.PortRangeEnd || settings.BindPort == settings.VhostHTTPPort || settings.BindPort >= settings.PortRangeStart && settings.BindPort <= settings.PortRangeEnd || settings.VhostHTTPPort >= settings.PortRangeStart && settings.VhostHTTPPort <= settings.PortRangeEnd || len(settings.Custom404Page) > 512<<10 {
 		return 0, serverDomainError("INVALID_NODE_SETTINGS", "Node FRPS settings are invalid")
 	}
+	requestedPolicy, err := policyForNodeSettings(settings)
+	if err != nil {
+		return 0, err
+	}
+	globalPage, err := registry.readDefaultCustom404Page()
+	if err != nil {
+		return 0, err
+	}
 	return withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (int64, error) {
 		client := serverEntOnConnection(connection)
 		remote, err := client.RemoteNode.Query().Where(remotenode.NodeIDEQ(nodeID)).WithNode().Only(ctx)
@@ -59,6 +68,23 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 		}
 		if remote.DesiredRevision != expectedRevision {
 			return 0, serverDomainError("REVISION_CONFLICT", "Node configuration changed; refresh before saving")
+		}
+		policy := requestedPolicy
+		if remote.DesiredPolicy != "" {
+			existing, parseErr := parseNodeConfigurationPolicy(remote.DesiredPolicy)
+			if parseErr != nil {
+				return 0, serverDomainError("NODE_CONFIG_REJECTED", "Saved Node configuration policy is invalid")
+			}
+			policy = existing
+			policy.Fields["custom404Page"] = requestedPolicy.Fields["custom404Page"]
+		}
+		resolvedPage, err := resolveNodeField(policy.Fields["custom404Page"], globalPage)
+		if err != nil {
+			return 0, err
+		}
+		policyJSON, err := json.Marshal(policy)
+		if err != nil {
+			return 0, err
 		}
 		occupied, err := client.Tunnel.Query().Where(
 			tunnel.NodeIDEQ(nodeID), tunnel.ProtocolIn(tunnel.ProtocolTCP, tunnel.ProtocolUDP),
@@ -75,7 +101,7 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 		if remote.StagedToken != nil {
 			token = *remote.StagedToken
 		}
-		snapshot := serverDesiredNodeSnapshot{FormatVersion: 1, FRPVersion: tunnelruntime.FRPVersion, NodeID: nodeID, Revision: revision, State: "running", BindAddress: settings.BindAddress, BindPort: settings.BindPort, VhostHTTPPort: settings.VhostHTTPPort, PortRangeStart: settings.PortRangeStart, PortRangeEnd: settings.PortRangeEnd, Token: token, Custom404Page: settings.Custom404Page}
+		snapshot := serverDesiredNodeSnapshot{FormatVersion: 1, FRPVersion: tunnelruntime.FRPVersion, NodeID: nodeID, Revision: revision, State: "running", BindAddress: settings.BindAddress, BindPort: settings.BindPort, VhostHTTPPort: settings.VhostHTTPPort, PortRangeStart: settings.PortRangeStart, PortRangeEnd: settings.PortRangeEnd, Token: token, Custom404Page: resolvedPage}
 		contents, err := json.Marshal(snapshot)
 		if err != nil || len(contents) > nodeSnapshotLimit {
 			return 0, serverDomainError("NODE_SNAPSHOT_TOO_LARGE", "Node configuration is too large")
@@ -83,7 +109,7 @@ func (registry *serverNodeRegistry) saveDesired(ctx context.Context, nodeID stri
 		digest := sha256.Sum256(contents)
 		update := client.RemoteNode.UpdateOne(remote).SetFrpBindPort(int(settings.BindPort)).
 			SetHTTPVhostPort(int(settings.VhostHTTPPort)).SetPortStart(int(settings.PortRangeStart)).
-			SetPortEnd(int(settings.PortRangeEnd)).SetDesiredRevision(revision).
+			SetPortEnd(int(settings.PortRangeEnd)).SetDesiredPolicy(string(policyJSON)).SetDesiredRevision(revision).
 			SetDesiredHash(hex.EncodeToString(digest[:])).SetDesiredSnapshot(string(contents))
 		if remote.StagedToken != nil {
 			update.SetStagedTokenRevision(revision)
@@ -117,10 +143,65 @@ func (registry *serverNodeRegistry) reapply(ctx context.Context, nodeID string) 
 	if err := json.Unmarshal([]byte(record.DesiredSnapshot.String), &snapshot); err != nil || snapshot.State != "running" || snapshot.NodeID != nodeID || snapshot.Revision != record.DesiredRevision {
 		return 0, serverDomainError("NODE_CONFIG_REJECTED", "Saved Node configuration is invalid")
 	}
+	policy, err := parseNodeConfigurationPolicy(record.DesiredPolicy)
+	if err != nil {
+		return 0, err
+	}
+	field := policy.Fields["custom404Page"]
 	return registry.saveDesired(ctx, nodeID, record.DesiredRevision, serverNodeSettings{
 		BindAddress: snapshot.BindAddress, BindPort: snapshot.BindPort,
 		VhostHTTPPort: snapshot.VhostHTTPPort, PortRangeStart: snapshot.PortRangeStart,
-		PortRangeEnd: snapshot.PortRangeEnd, Custom404Page: snapshot.Custom404Page,
+		PortRangeEnd: snapshot.PortRangeEnd, Custom404Page: field.Value, Custom404PageMode: field.Mode,
+	})
+}
+
+func (registry *serverNodeRegistry) refreshInherited(ctx context.Context, nodeID string) (bool, error) {
+	globalPage, err := registry.readDefaultCustom404Page()
+	if err != nil {
+		return false, err
+	}
+	return withImmediateTransaction(ctx, registry.database, func(connection *sql.Conn) (bool, error) {
+		client := serverEntOnConnection(connection)
+		remote, err := client.RemoteNode.Query().Where(remotenode.NodeIDEQ(nodeID)).WithNode().Only(ctx)
+		if err != nil {
+			return false, err
+		}
+		if remote.Edges.Node == nil || remote.Edges.Node.Lifecycle != "active" || remote.DesiredSnapshot == nil {
+			return false, nil
+		}
+		policy, err := parseNodeConfigurationPolicy(remote.DesiredPolicy)
+		if err != nil {
+			return false, err
+		}
+		if policy.Fields["custom404Page"].Mode != "inherit" {
+			return false, nil
+		}
+		var snapshot serverDesiredNodeSnapshot
+		if err := json.Unmarshal([]byte(*remote.DesiredSnapshot), &snapshot); err != nil || snapshot.State != "running" || snapshot.NodeID != nodeID || snapshot.Revision != remote.DesiredRevision {
+			return false, serverDomainError("NODE_CONFIG_REJECTED", "Saved Node configuration is invalid")
+		}
+		if snapshot.Custom404Page == globalPage {
+			return false, nil
+		}
+		snapshot.Custom404Page = globalPage
+		snapshot.Revision++
+		contents, err := json.Marshal(snapshot)
+		if err != nil || len(contents) > nodeSnapshotLimit {
+			return false, serverDomainError("NODE_SNAPSHOT_TOO_LARGE", "Node configuration is too large")
+		}
+		digest := sha256.Sum256(contents)
+		update := client.RemoteNode.UpdateOne(remote).SetDesiredRevision(snapshot.Revision).
+			SetDesiredHash(hex.EncodeToString(digest[:])).SetDesiredSnapshot(string(contents))
+		if remote.StagedTokenRevision != nil {
+			update.SetStagedTokenRevision(snapshot.Revision)
+		}
+		if _, err := update.Save(ctx); err != nil {
+			return false, err
+		}
+		if _, err := client.Node.UpdateOneID(nodeID).SetUpdatedAt(formatServerTimestamp(time.Now())).Save(ctx); err != nil {
+			return false, err
+		}
+		return true, nil
 	})
 }
 

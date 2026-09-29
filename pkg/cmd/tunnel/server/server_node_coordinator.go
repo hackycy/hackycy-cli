@@ -82,6 +82,7 @@ func (coordinator *serverNodeCoordinator) reconcile(ctx context.Context) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		_, _ = coordinator.registry.refreshInherited(ctx, record.ID)
 		coordinator.reconcileNode(ctx, record)
 	}
 	return nil

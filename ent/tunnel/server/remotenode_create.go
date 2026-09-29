@@ -104,6 +104,20 @@ func (_c *RemoteNodeCreate) SetNillableDesiredSnapshot(v *string) *RemoteNodeCre
 	return _c
 }
 
+// SetDesiredPolicy sets the "desired_policy" field.
+func (_c *RemoteNodeCreate) SetDesiredPolicy(v string) *RemoteNodeCreate {
+	_c.mutation.SetDesiredPolicy(v)
+	return _c
+}
+
+// SetNillableDesiredPolicy sets the "desired_policy" field if the given value is not nil.
+func (_c *RemoteNodeCreate) SetNillableDesiredPolicy(v *string) *RemoteNodeCreate {
+	if v != nil {
+		_c.SetDesiredPolicy(*v)
+	}
+	return _c
+}
+
 // SetActiveToken sets the "active_token" field.
 func (_c *RemoteNodeCreate) SetActiveToken(v string) *RemoteNodeCreate {
 	_c.mutation.SetActiveToken(v)
@@ -182,6 +196,10 @@ func (_c *RemoteNodeCreate) defaults() {
 		v := remotenode.DefaultDesiredRevision
 		_c.mutation.SetDesiredRevision(v)
 	}
+	if _, ok := _c.mutation.DesiredPolicy(); !ok {
+		v := remotenode.DefaultDesiredPolicy
+		_c.mutation.SetDesiredPolicy(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -209,6 +227,9 @@ func (_c *RemoteNodeCreate) check() error {
 	}
 	if _, ok := _c.mutation.DesiredRevision(); !ok {
 		return &ValidationError{Name: "desired_revision", err: errors.New(`server: missing required field "RemoteNode.desired_revision"`)}
+	}
+	if _, ok := _c.mutation.DesiredPolicy(); !ok {
+		return &ValidationError{Name: "desired_policy", err: errors.New(`server: missing required field "RemoteNode.desired_policy"`)}
 	}
 	if _, ok := _c.mutation.ActiveToken(); !ok {
 		return &ValidationError{Name: "active_token", err: errors.New(`server: missing required field "RemoteNode.active_token"`)}
@@ -277,6 +298,10 @@ func (_c *RemoteNodeCreate) createSpec() (*RemoteNode, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DesiredSnapshot(); ok {
 		_spec.SetField(remotenode.FieldDesiredSnapshot, field.TypeString, value)
 		_node.DesiredSnapshot = &value
+	}
+	if value, ok := _c.mutation.DesiredPolicy(); ok {
+		_spec.SetField(remotenode.FieldDesiredPolicy, field.TypeString, value)
+		_node.DesiredPolicy = value
 	}
 	if value, ok := _c.mutation.ActiveToken(); ok {
 		_spec.SetField(remotenode.FieldActiveToken, field.TypeString, value)

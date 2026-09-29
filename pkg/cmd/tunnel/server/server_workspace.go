@@ -422,7 +422,13 @@ func (workspace *ServerWorkspace) WriteCustom404Page(ctx context.Context, conten
 	if workspace.custom404PageWriter == nil {
 		return serverDomainError("FRPS_UNAVAILABLE", "Managed frps is unavailable")
 	}
-	return workspace.custom404PageWriter.WriteCustom404Page(content)
+	if err := workspace.custom404PageWriter.WriteCustom404Page(content); err != nil {
+		return err
+	}
+	if workspace.nodes != nil && workspace.nodes.coordinator != nil {
+		workspace.nodes.coordinator.Wake()
+	}
+	return nil
 }
 
 func (workspace *ServerWorkspace) requireAdministrator(ctx context.Context) error {

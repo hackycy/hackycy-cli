@@ -19,6 +19,20 @@ func (Meta) Annotations() []schema.Annotation {
 	return []schema.Annotation{entsql.Annotation{Table: "meta"}}
 }
 
+type SchemaMigration struct{ ent.Schema }
+
+func (SchemaMigration) Fields() []ent.Field {
+	return []ent.Field{
+		field.Int("id").StorageKey("version"),
+		field.String("checksum"),
+		field.String("applied_at"),
+	}
+}
+
+func (SchemaMigration) Annotations() []schema.Annotation {
+	return []schema.Annotation{entsql.Annotation{Table: "schema_migrations"}}
+}
+
 type Node struct{ ent.Schema }
 
 func (Node) Fields() []ent.Field {
@@ -77,6 +91,7 @@ func (RemoteNode) Fields() []ent.Field {
 		field.Int64("desired_revision").Default(0),
 		field.String("desired_hash").Optional().Nillable(),
 		field.String("desired_snapshot").Optional().Nillable(),
+		field.String("desired_policy").Default(`{"version":1,"fields":{"custom404Page":{"mode":"inherit"}}}`),
 		field.String("active_token"), field.String("staged_token").Optional().Nillable(),
 		field.Int64("staged_token_revision").Optional().Nillable(),
 	}

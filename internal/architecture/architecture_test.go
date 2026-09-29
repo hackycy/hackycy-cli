@@ -48,6 +48,7 @@ var approvedPackageInventory = []string{
 	"ent/tunnel/server/remotenode",
 	"ent/tunnel/server/runtime",
 	"ent/tunnel/server/schema",
+	"ent/tunnel/server/schemamigration",
 	"ent/tunnel/server/serverclient",
 	"ent/tunnel/server/tunnel",
 	"ent/tunnel/server/tunnelhttproute",

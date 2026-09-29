@@ -9,10 +9,11 @@ import (
 )
 
 type serverNodeDesiredView struct {
-	Revision int64               `json:"revision"`
-	Digest   string              `json:"digest,omitempty"`
-	Mode     string              `json:"mode"`
-	Settings *serverNodeSettings `json:"settings,omitempty"`
+	Revision               int64               `json:"revision"`
+	Digest                 string              `json:"digest,omitempty"`
+	Mode                   string              `json:"mode"`
+	Settings               *serverNodeSettings `json:"settings,omitempty"`
+	EffectiveCustom404Page string              `json:"effectiveCustom404Page"`
 }
 
 type serverNodeObservedError struct {
@@ -87,9 +88,15 @@ func (service *serverNodeService) managementView(ctx context.Context, nodeID str
 		if err := json.Unmarshal([]byte(record.DesiredSnapshot.String), &snapshot); err != nil {
 			return serverNodeManagementView{}, err
 		}
+		policy, err := parseNodeConfigurationPolicy(record.DesiredPolicy)
+		if err != nil {
+			return serverNodeManagementView{}, err
+		}
+		field := policy.Fields["custom404Page"]
 		view.Desired.Mode = snapshot.State
 		view.Desired.Digest = "sha256:" + record.DesiredHash.String
-		view.Desired.Settings = &serverNodeSettings{BindAddress: snapshot.BindAddress, BindPort: snapshot.BindPort, VhostHTTPPort: snapshot.VhostHTTPPort, PortRangeStart: snapshot.PortRangeStart, PortRangeEnd: snapshot.PortRangeEnd, Custom404Page: snapshot.Custom404Page}
+		view.Desired.Settings = &serverNodeSettings{BindAddress: snapshot.BindAddress, BindPort: snapshot.BindPort, VhostHTTPPort: snapshot.VhostHTTPPort, PortRangeStart: snapshot.PortRangeStart, PortRangeEnd: snapshot.PortRangeEnd, Custom404Page: field.Value, Custom404PageMode: field.Mode}
+		view.Desired.EffectiveCustom404Page = snapshot.Custom404Page
 	}
 	if record.Lifecycle == "removing" {
 		view.Removal.State = "pending"

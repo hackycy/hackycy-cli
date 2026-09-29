@@ -35,6 +35,10 @@ func init() {
 	remotenodeDescDesiredRevision := remotenodeFields[7].Descriptor()
 	// remotenode.DefaultDesiredRevision holds the default value on creation for the desired_revision field.
 	remotenode.DefaultDesiredRevision = remotenodeDescDesiredRevision.Default.(int64)
+	// remotenodeDescDesiredPolicy is the schema descriptor for desired_policy field.
+	remotenodeDescDesiredPolicy := remotenodeFields[10].Descriptor()
+	// remotenode.DefaultDesiredPolicy holds the default value on creation for the desired_policy field.
+	remotenode.DefaultDesiredPolicy = remotenodeDescDesiredPolicy.Default.(string)
 	serverclientFields := schema.ServerClient{}.Fields()
 	_ = serverclientFields
 	// serverclientDescNodeID is the schema descriptor for node_id field.

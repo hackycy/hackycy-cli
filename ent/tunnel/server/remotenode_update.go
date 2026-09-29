@@ -215,6 +215,20 @@ func (_u *RemoteNodeUpdate) ClearDesiredSnapshot() *RemoteNodeUpdate {
 	return _u
 }
 
+// SetDesiredPolicy sets the "desired_policy" field.
+func (_u *RemoteNodeUpdate) SetDesiredPolicy(v string) *RemoteNodeUpdate {
+	_u.mutation.SetDesiredPolicy(v)
+	return _u
+}
+
+// SetNillableDesiredPolicy sets the "desired_policy" field if the given value is not nil.
+func (_u *RemoteNodeUpdate) SetNillableDesiredPolicy(v *string) *RemoteNodeUpdate {
+	if v != nil {
+		_u.SetDesiredPolicy(*v)
+	}
+	return _u
+}
+
 // SetActiveToken sets the "active_token" field.
 func (_u *RemoteNodeUpdate) SetActiveToken(v string) *RemoteNodeUpdate {
 	_u.mutation.SetActiveToken(v)
@@ -386,6 +400,9 @@ func (_u *RemoteNodeUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if _u.mutation.DesiredSnapshotCleared() {
 		_spec.ClearField(remotenode.FieldDesiredSnapshot, field.TypeString)
+	}
+	if value, ok := _u.mutation.DesiredPolicy(); ok {
+		_spec.SetField(remotenode.FieldDesiredPolicy, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ActiveToken(); ok {
 		_spec.SetField(remotenode.FieldActiveToken, field.TypeString, value)
@@ -641,6 +658,20 @@ func (_u *RemoteNodeUpdateOne) ClearDesiredSnapshot() *RemoteNodeUpdateOne {
 	return _u
 }
 
+// SetDesiredPolicy sets the "desired_policy" field.
+func (_u *RemoteNodeUpdateOne) SetDesiredPolicy(v string) *RemoteNodeUpdateOne {
+	_u.mutation.SetDesiredPolicy(v)
+	return _u
+}
+
+// SetNillableDesiredPolicy sets the "desired_policy" field if the given value is not nil.
+func (_u *RemoteNodeUpdateOne) SetNillableDesiredPolicy(v *string) *RemoteNodeUpdateOne {
+	if v != nil {
+		_u.SetDesiredPolicy(*v)
+	}
+	return _u
+}
+
 // SetActiveToken sets the "active_token" field.
 func (_u *RemoteNodeUpdateOne) SetActiveToken(v string) *RemoteNodeUpdateOne {
 	_u.mutation.SetActiveToken(v)
@@ -842,6 +873,9 @@ func (_u *RemoteNodeUpdateOne) sqlSave(ctx context.Context) (_node *RemoteNode, 
 	}
 	if _u.mutation.DesiredSnapshotCleared() {
 		_spec.ClearField(remotenode.FieldDesiredSnapshot, field.TypeString)
+	}
+	if value, ok := _u.mutation.DesiredPolicy(); ok {
+		_spec.SetField(remotenode.FieldDesiredPolicy, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.ActiveToken(); ok {
 		_spec.SetField(remotenode.FieldActiveToken, field.TypeString, value)

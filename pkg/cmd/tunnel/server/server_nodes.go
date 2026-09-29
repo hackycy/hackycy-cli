@@ -32,6 +32,7 @@ type serverNodeRecord struct {
 	DesiredRevision          int64
 	DesiredHash              sql.NullString
 	DesiredSnapshot          sql.NullString
+	DesiredPolicy            string
 	StagedTokenRevision      sql.NullInt64
 	FRPBindPort              int64
 	HTTPVhostPort            int64
@@ -42,7 +43,15 @@ type serverNodeRecord struct {
 }
 
 type serverNodeRegistry struct {
-	database *sql.DB
+	database       *sql.DB
+	default404Page ServerFRPSCustom404PageReader
+}
+
+func (registry *serverNodeRegistry) readDefaultCustom404Page() (string, error) {
+	if registry.default404Page == nil {
+		return "", nil
+	}
+	return registry.default404Page.ReadCustom404Page()
 }
 
 func newServerNodeRegistry(database *sql.DB) (*serverNodeRegistry, error) {
@@ -136,7 +145,8 @@ func (registry *serverNodeRegistry) get(ctx context.Context, nodeID string) (ser
 		ID: item.ID, Kind: string(item.Kind), Name: item.Name, Lifecycle: string(item.Lifecycle),
 		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 		ManagementAddress: remote.ManagementAddress, DesiredRevision: remote.DesiredRevision,
-		FRPBindPort: int64(remote.FrpBindPort), HTTPVhostPort: int64(remote.HTTPVhostPort),
+		DesiredPolicy: remote.DesiredPolicy,
+		FRPBindPort:   int64(remote.FrpBindPort), HTTPVhostPort: int64(remote.HTTPVhostPort),
 		PortStart: int64(remote.PortStart), PortEnd: int64(remote.PortEnd),
 	}
 	if item.AdvertisedFrpHost != nil {

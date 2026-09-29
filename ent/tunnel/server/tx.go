@@ -26,6 +26,8 @@ type Tx struct {
 	NodePortPool *NodePortPoolClient
 	// RemoteNode is the client for interacting with the RemoteNode builders.
 	RemoteNode *RemoteNodeClient
+	// SchemaMigration is the client for interacting with the SchemaMigration builders.
+	SchemaMigration *SchemaMigrationClient
 	// ServerClient is the client for interacting with the ServerClient builders.
 	ServerClient *ServerClientClient
 	// Tunnel is the client for interacting with the Tunnel builders.
@@ -170,6 +172,7 @@ func (tx *Tx) init() {
 	tx.NodeObservation = NewNodeObservationClient(tx.config)
 	tx.NodePortPool = NewNodePortPoolClient(tx.config)
 	tx.RemoteNode = NewRemoteNodeClient(tx.config)
+	tx.SchemaMigration = NewSchemaMigrationClient(tx.config)
 	tx.ServerClient = NewServerClientClient(tx.config)
 	tx.Tunnel = NewTunnelClient(tx.config)
 	tx.TunnelHTTPRoute = NewTunnelHTTPRouteClient(tx.config)

@@ -37,6 +37,8 @@ type RemoteNode struct {
 	DesiredHash *string `json:"desired_hash,omitempty"`
 	// DesiredSnapshot holds the value of the "desired_snapshot" field.
 	DesiredSnapshot *string `json:"desired_snapshot,omitempty"`
+	// DesiredPolicy holds the value of the "desired_policy" field.
+	DesiredPolicy string `json:"desired_policy,omitempty"`
 	// ActiveToken holds the value of the "active_token" field.
 	ActiveToken string `json:"active_token,omitempty"`
 	// StagedToken holds the value of the "staged_token" field.
@@ -76,7 +78,7 @@ func (*RemoteNode) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case remotenode.FieldID, remotenode.FieldFrpBindPort, remotenode.FieldHTTPVhostPort, remotenode.FieldPortStart, remotenode.FieldPortEnd, remotenode.FieldDesiredRevision, remotenode.FieldStagedTokenRevision:
 			values[i] = new(sql.NullInt64)
-		case remotenode.FieldNodeID, remotenode.FieldNodePublicKey, remotenode.FieldManagementAddress, remotenode.FieldDesiredHash, remotenode.FieldDesiredSnapshot, remotenode.FieldActiveToken, remotenode.FieldStagedToken:
+		case remotenode.FieldNodeID, remotenode.FieldNodePublicKey, remotenode.FieldManagementAddress, remotenode.FieldDesiredHash, remotenode.FieldDesiredSnapshot, remotenode.FieldDesiredPolicy, remotenode.FieldActiveToken, remotenode.FieldStagedToken:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -160,6 +162,12 @@ func (_m *RemoteNode) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DesiredSnapshot = new(string)
 				*_m.DesiredSnapshot = value.String
+			}
+		case remotenode.FieldDesiredPolicy:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field desired_policy", values[i])
+			} else if value.Valid {
+				_m.DesiredPolicy = value.String
 			}
 		case remotenode.FieldActiveToken:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -255,6 +263,9 @@ func (_m *RemoteNode) String() string {
 		builder.WriteString("desired_snapshot=")
 		builder.WriteString(*v)
 	}
+	builder.WriteString(", ")
+	builder.WriteString("desired_policy=")
+	builder.WriteString(_m.DesiredPolicy)
 	builder.WriteString(", ")
 	builder.WriteString("active_token=")
 	builder.WriteString(_m.ActiveToken)

@@ -3,8 +3,26 @@ import { KeyRound, Pencil, RotateCw, Save, ShieldAlert, Trash2 } from 'lucide-re
 import { useEffect, useState } from 'react'
 import { apiJson, jsonRequest } from './api'
 import { nodeActionError } from './node-claim'
-import { ConfirmDialog, DialogShell } from './primitives'
+import { ConfirmDialog, DialogShell, SegmentedControl } from './primitives'
 import { ErrorState, RowActionMenu, Spinner, Switch, useFeedback } from './ui'
+
+type Custom404PageMode = 'inherit' | 'custom' | 'default'
+
+export function Node404PageSource({ mode, content, effectiveContent, onModeChange, onContentChange }: { mode: Custom404PageMode, content: string, effectiveContent?: string, onModeChange: (mode: Custom404PageMode) => void, onContentChange: (content: string) => void }): React.JSX.Element {
+  return (
+    <div className="node-404-setting">
+      <span>Custom 404 page</span>
+      <SegmentedControl
+        label="Custom 404 page source"
+        value={mode}
+        onChange={value => onModeChange(value as Custom404PageMode)}
+        options={[{ value: 'inherit', label: 'Inherit Server' }, { value: 'custom', label: 'Custom' }, { value: 'default', label: 'FRP default' }]}
+      />
+      {mode === 'custom' && <textarea aria-label="Custom 404 page HTML" maxLength={524288} value={content} onChange={event => onContentChange(event.target.value)} />}
+      {mode === 'inherit' && <p className="form-hint">{effectiveContent ? 'Using the Server custom 404 page.' : 'The Server has no custom 404 page; FRP default is active.'}</p>}
+    </div>
+  )
+}
 
 export function NodeActions({ node, onSaved, onForgotten }: { node: NodeManagementView, onSaved: () => void, onForgotten: () => void }): React.JSX.Element | null {
   const [activeAction, setActiveAction] = useState<'name' | 'rotate' | 'remove' | 'forget' | null>(null)
@@ -59,6 +77,7 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
   const [poolStart, setPoolStart] = useState('20000')
   const [poolEnd, setPoolEnd] = useState('20100')
   const [custom404Page, setCustom404Page] = useState('')
+  const [custom404PageMode, setCustom404PageMode] = useState<Custom404PageMode>('inherit')
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const { notify } = useFeedback()
@@ -72,6 +91,7 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
     setPoolStart(String(settings.portRangeStart))
     setPoolEnd(String(settings.portRangeEnd))
     setCustom404Page(settings.custom404Page)
+    setCustom404PageMode(settings.custom404PageMode ?? (settings.custom404Page ? 'custom' : 'inherit'))
   }, [node])
   if (node.kind === 'local' || node.lifecycle === 'removing')
     return null
@@ -95,7 +115,8 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
           vhostHTTPPort: httpPort,
           portRangeStart: firstPort,
           portRangeEnd: lastPort,
-          custom404Page,
+          custom404Page: custom404PageMode === 'custom' ? custom404Page : '',
+          custom404PageMode,
         },
       }))
       onClose()
@@ -155,10 +176,7 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
       </div>
       <details className="node-advanced-settings">
         <summary>Advanced settings</summary>
-        <label>
-          Custom 404 page
-          <textarea maxLength={524288} value={custom404Page} onChange={event => setCustom404Page(event.target.value)} />
-        </label>
+        <Node404PageSource mode={custom404PageMode} content={custom404Page} effectiveContent={node.desired.effectiveCustom404Page} onModeChange={setCustom404PageMode} onContentChange={setCustom404Page} />
       </details>
       {error && <ErrorState message={error} />}
       <div className="modal-actions">
