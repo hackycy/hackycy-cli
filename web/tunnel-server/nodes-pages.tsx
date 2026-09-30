@@ -369,16 +369,16 @@ export function NodesPage({ refreshSequence, isAdmin }: { refreshSequence: numbe
                               <tr key={node.id}>
                                 <td data-label="Node">
                                   <button className="entity-link" type="button" onClick={() => navigate(`/nodes/${encodeURIComponent(node.id)}`)}>{node.name}</button>
-                                  <span className="node-kind">{node.kind}</span>
+                                  {node.name.toLowerCase() !== node.kind && <span className="node-kind">{node.kind}</span>}
                                 </td>
                                 <td data-label="Availability"><NodeStatus value={node.selectability.selectable ? 'available' : node.selectability.reason ?? 'unavailable'} /></td>
                                 <td data-label="Management">
                                   <NodeStatus value={node.management.state} stale={node.management.stale} />
-                                  <NodeObservation at={node.management.observedAt} stale={node.management.stale} />
+                                  {node.kind === 'remote' && <NodeObservation at={node.management.observedAt} stale={node.management.stale} />}
                                 </td>
                                 <td data-label="FRPS">
                                   <NodeStatus value={node.frps.state} stale={node.frps.stale} />
-                                  <NodeObservation at={node.frps.observedAt} stale={node.frps.stale} />
+                                  {node.kind === 'remote' && <NodeObservation at={node.frps.observedAt} stale={node.frps.stale} />}
                                   {node.lastKnownFrps && (
                                     <small className="node-observed">
                                       {`Last known ${node.lastKnownFrps.state}: ${observedAt(node.lastKnownFrps.observedAt)}`}

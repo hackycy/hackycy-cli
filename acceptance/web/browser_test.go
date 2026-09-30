@@ -75,6 +75,7 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 			}
 			assertBrowserJourney(t, pageURL, testCase.readyText, testCase.apiPaths, browserSession)
 			if testCase.name == "tunnel" {
+				assertTunnelOverviewWorkflow(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
 				assertTunnelClientAssignmentPage(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 				assertTunnelNodePages(t, pageURL, signInTunnelBrowserSession(t, pageURL))
@@ -84,6 +85,70 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 			}
 			stopped = true
 		})
+	}
+}
+
+func assertTunnelOverviewWorkflow(t *testing.T, pageURL string, browserSession *http.Cookie, clientID string) {
+	t.Helper()
+	allocatorOptions := append([]chromedp.ExecAllocatorOption{}, chromedp.DefaultExecAllocatorOptions[:]...)
+	allocatorOptions = append(allocatorOptions, chromedp.ExecPath(chromeExecutable(t)), chromedp.Flag("disable-gpu", true), chromedp.Flag("headless", true))
+	allocatorContext, closeAllocator := chromedp.NewExecAllocator(context.Background(), allocatorOptions...)
+	defer closeAllocator()
+	browserContext, closeBrowser := chromedp.NewContext(allocatorContext)
+	defer closeBrowser()
+	ctx, cancel := context.WithTimeout(browserContext, 45*time.Second)
+	defer cancel()
+
+	if err := chromedp.Run(ctx,
+		network.Enable(),
+		network.SetCookie(browserSession.Name, browserSession.Value).WithURL(pageURL).WithHTTPOnly(browserSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
+		chromedp.Navigate(pageURL),
+		chromedp.WaitVisible(`.overview-signals`, chromedp.ByQuery),
+		chromedp.WaitVisible(`//button[contains(@class,"attention-row")][.//strong[normalize-space()="Browser dialog client"]]`, chromedp.BySearch),
+		chromedp.Click(`//button[contains(@class,"attention-row")][.//strong[normalize-space()="Browser dialog client"]]`, chromedp.BySearch),
+		chromedp.WaitVisible(`.client-routing`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("open affected Client from overview: %v", err)
+	}
+	var path string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`location.pathname`, &path)); err != nil || path != "/clients/"+clientID {
+		t.Fatalf("overview destination = %q: %v", path, err)
+	}
+
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(pageURL+"/clients"),
+		chromedp.WaitVisible(`.clients-table`, chromedp.ByQuery),
+		chromedp.Click(`//button[normalize-space()="Create client"]`, chromedp.BySearch),
+		chromedp.WaitVisible(`[role="dialog"] textarea`, chromedp.ByQuery),
+		chromedp.SendKeys(`[role="dialog"] textarea`, "New browser client", chromedp.ByQuery),
+		chromedp.Click(`//div[@role="dialog"]//button[normalize-space()="Create"]`, chromedp.BySearch),
+		chromedp.WaitVisible(`.client-routing-identity .token`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("create Client and open its detail: %v", err)
+	}
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`location.pathname`, &path)); err != nil || !strings.HasPrefix(path, "/clients/") || path == "/clients/"+clientID {
+		t.Fatalf("new Client destination = %q: %v", path, err)
+	}
+
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(pageURL+"/server"),
+		chromedp.WaitVisible(`.server-runtime-panel`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("open Server controls: %v", err)
+	}
+	var canStop bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`!![...document.querySelectorAll('.runtime-controls button')].find(button => button.textContent.trim() === 'Stop')`, &canStop)); err != nil {
+		t.Fatalf("inspect Server controls: %v", err)
+	}
+	if canStop {
+		if err := chromedp.Run(ctx,
+			chromedp.Click(`//div[contains(@class,"runtime-controls")]//button[normalize-space()="Stop"]`, chromedp.BySearch),
+			chromedp.WaitVisible(`[role="alertdialog"]`, chromedp.ByQuery),
+			chromedp.Click(`//div[@role="alertdialog"]//button[normalize-space()="Cancel"]`, chromedp.BySearch),
+			chromedp.WaitNotPresent(`[role="alertdialog"]`, chromedp.ByQuery),
+		); err != nil {
+			t.Fatalf("cancel Stop FRPS confirmation: %v", err)
+		}
 	}
 }
 

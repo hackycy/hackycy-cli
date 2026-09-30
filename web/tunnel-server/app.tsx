@@ -1,17 +1,18 @@
 import type { ReactNode } from 'react'
 import type { CurrentAccount } from './api'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { CloudCog, Gauge, KeyRound, LogOut, Network, Play, Power, RefreshCw, RotateCcw, Save, Server, Shield, Square, Users } from 'lucide-react'
+import { CloudCog, Gauge, KeyRound, LogOut, Network, Play, Power, RotateCcw, Save, Server, Shield, Square, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { z } from 'zod'
-import { AdminLoginShell, AdminPage, AdminShell, AdminSummaryStrip, useAdminTheme } from '../shared/admin'
+import { AdminLoginShell, AdminPage, AdminShell, useAdminTheme } from '../shared/admin'
 import { AccountsPage } from './account-pages'
 import { ApiError, apiJson, jsonRequest } from './api'
 import { ClientDetailPage, ClientsPage } from './client-pages'
 import { FormError, FormField } from './form'
 import { NodeDetailPage, NodesPage } from './nodes-pages'
-import { DialogShell } from './primitives'
+import { Overview } from './overview'
+import { ConfirmDialog, DialogShell } from './primitives'
 import { ErrorState, IconButton, navigate, PageHeader, SecretToken, Spinner, Status, useFeedback } from './ui'
 
 interface ServerProjection {
@@ -154,7 +155,7 @@ function Layout({ page, account, children, loggingOut, onLogout, onChangePasswor
     { id: 'overview', label: 'Overview', icon: Gauge, onSelect: () => navigate('/') },
     { id: 'clients', label: 'Clients', icon: Users, onSelect: () => navigate('/clients') },
     { id: 'nodes', label: 'Nodes', icon: Network, onSelect: () => navigate('/nodes') },
-    ...(account.role === 'admin' ? [{ id: 'accounts', label: 'Accounts', icon: Shield, onSelect: () => navigate('/accounts') }, { id: 'server', label: 'Server', icon: Server, onSelect: () => navigate('/server') }] : []),
+    ...(account.role === 'admin' ? [{ id: 'server', label: 'Server', icon: Server, onSelect: () => navigate('/server') }, { id: 'accounts', label: 'Accounts', icon: Shield, onSelect: () => navigate('/accounts') }] : []),
   ]
   const pageLabel = page.name === 'overview' ? 'Overview' : page.name === 'client' ? 'Client details' : page.name === 'node' ? 'Node details' : page.name === 'clients' ? 'Clients' : page.name === 'nodes' ? 'Nodes' : page.name === 'accounts' ? 'Accounts' : 'Server'
   const breadcrumbs = page.name === 'client'
@@ -181,55 +182,6 @@ function Layout({ page, account, children, loggingOut, onLogout, onChangePasswor
     >
       <AdminPage>{children}</AdminPage>
     </AdminShell>
-  )
-}
-
-function Overview({ state, refreshing, reload }: { state: StateView, refreshing: boolean, reload: () => void }): React.JSX.Element {
-  const metrics = [
-    ...(state.server
-      ? [{ label: 'Server runtime', value: state.server.frps.state.replaceAll('_', ' '), detail: state.server.frps.pid ? `PID ${state.server.frps.pid}` : 'No active process', tone: state.server.frps.state === 'running' ? 'success' as const : 'danger' as const }]
-      : []),
-    { label: 'Client health', value: `${state.counts.connected} / ${state.counts.clients}`, detail: state.counts.clients ? `${Math.round((state.counts.connected / state.counts.clients) * 100)}% connected` : 'No trusted clients', tone: state.counts.connected === state.counts.clients ? 'success' as const : 'warning' as const },
-    { label: 'Tunnel definitions', value: state.counts.tunnels },
-    { label: 'Pending', value: state.counts.pending, detail: state.counts.pending ? 'Awaiting client sync' : 'No pending changes', tone: state.counts.pending ? 'warning' as const : 'default' as const },
-    { label: 'Errors', value: state.counts.errors, detail: state.counts.errors ? 'Needs intervention' : 'No reported errors', tone: state.counts.errors ? 'danger' as const : 'success' as const },
-  ]
-  return (
-    <>
-      <PageHeader title="Overview" description="Runtime health and synchronization across the control plane." actions={<IconButton label="Refresh overview" loading={refreshing} onClick={reload}><RefreshCw size={15} /></IconButton>} />
-      <AdminSummaryStrip items={metrics} />
-      {state.server && (
-        <section className="section-band runtime-overview">
-          <div className="section-title">
-            <h2>Runtime</h2>
-            <Status value={state.server.frps.state} />
-          </div>
-          <dl className="detail-grid">
-            <dt>frps process</dt>
-            <dd className="mono">{state.server.frps.pid ? `PID ${state.server.frps.pid}` : 'No active process'}</dd>
-            <dt>Control listener</dt>
-            <dd className="mono">
-              {state.server.settings.address}
-              :
-              {state.server.settings.controlPort}
-            </dd>
-            <dt>FRP bind</dt>
-            <dd className="mono">
-              {state.server.settings.address}
-              :
-              {state.server.settings.frpPort}
-            </dd>
-            <dt>HTTP vhost</dt>
-            <dd className="mono">
-              {state.server.settings.address}
-              :
-              {state.server.settings.httpPort}
-            </dd>
-          </dl>
-          {state.server.frps.error && <p className="runtime-error">{state.server.frps.error.message}</p>}
-        </section>
-      )}
-    </>
   )
 }
 
@@ -315,6 +267,7 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
   const [frpTokenLoading, setFrpTokenLoading] = useState(true)
   const [frpTokenError, setFrpTokenError] = useState('')
   const [pending, setPending] = useState<'start' | 'stop' | 'restart'>()
+  const [confirmStop, setConfirmStop] = useState(false)
   const { notify } = useFeedback()
   const loadFrpToken = useCallback(async () => {
     setFrpTokenLoading(true)
@@ -332,22 +285,26 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
     }
   }, [])
   useEffect(() => void loadFrpToken(), [loadFrpToken])
-  const action = async (value: 'start' | 'stop' | 'restart'): Promise<void> => {
+  const action = async (value: 'start' | 'stop' | 'restart'): Promise<boolean> => {
     setPending(value)
     try {
       await apiJson(`/api/server/frp/${value}`, { method: 'POST' })
       setError('')
       notify(`frps ${value} completed`)
       await reload()
+      return true
     }
     catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
       await reload().catch(() => {})
+      return false
     }
     finally {
       setPending(undefined)
     }
   }
+  const running = server.frps.state === 'running'
+  const stopped = server.frps.state === 'stopped'
   return (
     <>
       <PageHeader
@@ -355,18 +312,35 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
         description="Supervise the FRP runtime and review deployment-level configuration."
         actions={(
           <div className="runtime-controls" role="group" aria-label="FRP server controls">
-            <button type="button" disabled={Boolean(pending)} onClick={() => void action('start')}>
-              {pending === 'start' ? <Spinner /> : <Play size={15} />}
-              Start
-            </button>
-            <button type="button" disabled={Boolean(pending)} onClick={() => void action('stop')}>
-              {pending === 'stop' ? <Spinner /> : <Square size={14} />}
-              Stop
-            </button>
-            <button className="primary" type="button" disabled={Boolean(pending)} onClick={() => void action('restart')}>
-              {pending === 'restart' ? <Spinner /> : <Power size={15} />}
-              Restart
-            </button>
+            {stopped
+              ? (
+                  <button className="primary" type="button" disabled={Boolean(pending)} onClick={() => void action('start')}>
+                    {pending === 'start' ? <Spinner /> : <Play size={15} />}
+                    {' '}
+                    Start
+                  </button>
+                )
+              : (
+                  <button className="primary" type="button" disabled={Boolean(pending)} onClick={() => void action('restart')}>
+                    {pending === 'restart' ? <Spinner /> : <Power size={15} />}
+                    {' '}
+                    Restart
+                  </button>
+                )}
+            {!stopped && (
+              <button
+                type="button"
+                disabled={Boolean(pending)}
+                onClick={() => {
+                  setError('')
+                  setConfirmStop(true)
+                }}
+              >
+                <Square size={14} />
+                {' '}
+                Stop
+              </button>
+            )}
           </div>
         )}
       />
@@ -441,6 +415,16 @@ function ServerView({ server, reload, refreshSequence }: { server: ServerProject
         </dl>
       </section>
       <Custom404PageEditor refreshSequence={refreshSequence} />
+      {confirmStop && (
+        <ConfirmDialog
+          open
+          message={running ? 'Stop FRPS? Active tunnel routes will become unavailable until the server starts again.' : 'Stop FRPS while it is recovering? Tunnel routes will remain unavailable until the server starts again.'}
+          busy={pending === 'stop'}
+          error={error}
+          onClose={() => setConfirmStop(false)}
+          onConfirm={() => void action('stop').then(success => success && setConfirmStop(false))}
+        />
+      )}
     </>
   )
 }
@@ -593,7 +577,7 @@ export function App(): React.JSX.Element {
         </div>
       )}
       {stateError && <ErrorState message={stateError} retrying={stateLoading} onRetry={() => void load()} />}
-      {page.name === 'overview' && <Overview state={state} refreshing={stateLoading} reload={() => void load()} />}
+      {page.name === 'overview' && <Overview state={state} refreshSequence={refreshSequence} refreshing={stateLoading} reload={() => void load()} />}
       {page.name === 'clients' && <ClientsPage refreshSequence={refreshSequence} showOwner={state.account.role === 'admin'} />}
       {page.name === 'client' && <ClientDetailPage id={page.id} refreshSequence={refreshSequence} showOwner={state.account.role === 'admin'} />}
       {page.name === 'nodes' && <NodesPage refreshSequence={refreshSequence} isAdmin={state.account.role === 'admin'} />}

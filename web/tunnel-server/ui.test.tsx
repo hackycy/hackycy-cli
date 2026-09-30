@@ -21,6 +21,7 @@ describe('tunnel server UI', () => {
     expect(markup).toContain('status-label')
     expect(markup).toContain('aria-hidden="true"')
     expect(markup).toContain('sync disconnected')
+    expect(renderToStaticMarkup(<Status value="disconnected" />)).toContain('status-warn')
   })
 
   it('renders a compact empty state with its primary action', () => {

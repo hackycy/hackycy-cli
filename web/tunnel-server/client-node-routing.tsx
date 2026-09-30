@@ -114,26 +114,31 @@ export function ClientRoutingOverview({ client, tunnels, nodes, nodesError, show
             <strong className="mono">{`rev ${client.lastAppliedRevision} / ${client.desiredRevision}`}</strong>
           </div>
           <div>
-            <span>Process</span>
-            <Status value={client.runtime.processState} />
-          </div>
-          <div>
-            <span>Restart</span>
-            <Status value={client.restart.state} />
-          </div>
-          <div>
             <span>FRPC connection</span>
             <Status value={client.frpc.connection} />
           </div>
-          <div>
-            <span>Proxy observation</span>
-            <strong>
-              {client.frpc.proxies.length}
-              {' '}
-              observed
-            </strong>
-          </div>
         </div>
+        <details className="client-runtime-details">
+          <summary>Runtime details</summary>
+          <div>
+            <span>
+              Process
+              <Status value={client.runtime.processState} />
+            </span>
+            <span>
+              Restart
+              <Status value={client.restart.state} />
+            </span>
+            <span>
+              Proxy observation
+              <strong className="tabular">
+                {client.frpc.proxies.length}
+                {' '}
+                observed
+              </strong>
+            </span>
+          </div>
+        </details>
       </div>
 
       {(client.assignment.pendingNodeId || client.assignment.appliedNodeId !== client.assignment.nodeId) && (

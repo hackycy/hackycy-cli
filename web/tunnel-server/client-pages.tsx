@@ -13,7 +13,7 @@ import { ChangeNodeDialog, ClientRoutingOverview } from './client-node-routing'
 import { FormError, FormField, FormMessage } from './form'
 import { DialogShell, FormScrollArea, SegmentedControl, Select, Tabs } from './primitives'
 import { activeTunnelEditorSection, availableTunnelEditorSections, buildTunnelPayload, createTunnelSchema, draftToTunnelForm, firstTunnelError, tunnelEditorSectionErrorCounts } from './tunnel-form'
-import { ConfirmationDialog, EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, RowActionMenu, Spinner, Status, Switch, Token, useFeedback } from './ui'
+import { ConfirmationDialog, EmptyState, ErrorState, IconButton, LoadingState, navigate, PageHeader, RowActionMenu, Spinner, Status, Switch, useFeedback } from './ui'
 
 const clientRemarkSchema = z.object({ remark: z.string().max(100, 'Client remark must be 100 characters or fewer') })
 
@@ -29,16 +29,16 @@ function clientSyncState(client: ClientView): 'Applied' | 'Pending' | 'Error' {
   return client.lastAppliedRevision === client.desiredRevision ? 'Applied' : 'Pending'
 }
 
-function ClientRemarkEditor({ client, onClose, onSaved }: { client?: ClientView, onClose: () => void, onSaved: () => void }): React.JSX.Element {
+function ClientRemarkEditor({ client, onClose, onSaved }: { client?: ClientView, onClose: () => void, onSaved: (createdId?: string) => void }): React.JSX.Element {
   const { notify } = useFeedback()
   const form = useForm<ClientRemarkValues>({ resolver: zodResolver(clientRemarkSchema), defaultValues: { remark: client?.remark ?? '' } })
   const saving = form.formState.isSubmitting
   const submit = form.handleSubmit(async ({ remark }) => {
     form.clearErrors('root.server')
     try {
-      await apiJson(client ? `/api/clients/${encodeURIComponent(client.id)}` : '/api/clients', jsonRequest(client ? 'PATCH' : 'POST', { remark }))
+      const result = await apiJson<{ client: ClientView }>(client ? `/api/clients/${encodeURIComponent(client.id)}` : '/api/clients', jsonRequest(client ? 'PATCH' : 'POST', { remark }))
       notify(client ? 'Client remark saved' : 'Trusted client created')
-      onSaved()
+      onSaved(client ? undefined : result.client.id)
     }
     catch (cause) {
       form.setError('root.server', { message: message(cause) })
@@ -101,9 +101,12 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
     await apiJson(`/api/clients/${encodeURIComponent(id)}`, { method: 'DELETE' })
     await load()
   }
-  const saved = (): void => {
+  const saved = (createdId?: string): void => {
     setEditing(undefined)
-    void load()
+    if (createdId)
+      navigate(`/clients/${encodeURIComponent(createdId)}`)
+    else
+      void load()
   }
   return (
     <>
@@ -133,9 +136,9 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                       <tr>
                         <th>Client</th>
                         {showOwner && <th>Owner</th>}
+                        <th>Node</th>
                         <th>Connection</th>
                         <th>Sync</th>
-                        <th>Restart</th>
                         <th>Tunnels</th>
                         <th aria-label="Actions" />
                       </tr>
@@ -145,9 +148,10 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                         <tr key={client.id}>
                           <td className="client-identity" data-label="Client">
                             <button className="entity-link" type="button" onClick={() => navigate(`/clients/${encodeURIComponent(client.id)}`)}>{client.remark || 'Unlabeled client'}</button>
-                            <Token value={client.token} />
+                            <span className="client-list-id mono">{client.id}</span>
                           </td>
                           {showOwner && <td className="entity-owner" data-label="Owner">{client.owner.username}</td>}
+                          <td data-label="Node">{client.assignment.node?.name ?? 'No node assigned'}</td>
                           <td data-label="Connection"><Status value={client.runtime.connectionState} /></td>
                           <td data-label="Sync">
                             <div className="status-stack">
@@ -159,9 +163,9 @@ export function ClientsPage({ refreshSequence, showOwner }: { refreshSequence: n
                                 {' / '}
                                 {client.desiredRevision}
                               </span>
+                              {client.restart.state !== 'idle' && <Status value={client.restart.state} />}
                             </div>
                           </td>
-                          <td data-label="Restart"><Status value={client.restart.state} /></td>
                           <td className="tabular" data-label="Tunnels">{client.tunnelCounts.total}</td>
                           <td data-label="Actions">
                             <RowActionMenu
@@ -821,14 +825,13 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
         actions={(
           <>
             <IconButton label="Refresh client" loading={refreshing} onClick={() => void load()}><RefreshCw size={15} /></IconButton>
-            <button type="button" disabled={pending.has('restart')} aria-busy={pending.has('restart')} onClick={() => void restart()}>
-              {pending.has('restart') ? <Spinner /> : <Power size={15} />}
-              Restart frpc
-            </button>
-            <button type="button" onClick={() => setImporting(true)}>
-              <Upload size={15} />
-              Import configuration
-            </button>
+            <RowActionMenu
+              label="Client actions"
+              actions={[
+                { label: pending.has('restart') ? 'Restarting frpc...' : 'Restart frpc', icon: Power, disabled: pending.has('restart'), onSelect: () => void restart() },
+                { label: 'Import configuration', icon: Upload, onSelect: () => setImporting(true) },
+              ]}
+            />
             <button className="primary" type="button" onClick={() => setEditing(null)}>
               <Plus size={15} />
               New tunnel
@@ -843,6 +846,8 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
           : (
               <>
                 {error && <ErrorState message={error} retrying={refreshing} onRetry={() => void load()} />}
+                {client?.runtime.lastError && <p className="runtime-error" role="alert">{client.runtime.lastError.message}</p>}
+                {client?.restart.error && <p className="runtime-error" role="alert">{client.restart.error.message}</p>}
                 {client && (
                   <ClientRoutingOverview
                     client={client}
@@ -855,8 +860,6 @@ export function ClientDetailPage({ id, refreshSequence, showOwner }: { id: strin
                     onCancelPending={() => void cancelAssignment()}
                   />
                 )}
-                {client?.runtime.lastError && <p className="runtime-error" role="alert">{client.runtime.lastError.message}</p>}
-                {client?.restart.error && <p className="runtime-error" role="alert">{client.restart.error.message}</p>}
                 <section className="table-wrap data-panel" aria-busy={refreshing}>
                   <table className="tunnel-table">
                     <thead>

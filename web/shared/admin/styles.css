@@ -83,8 +83,8 @@
 
 .admin-icon-button {
   display: inline-grid;
-  width: 40px;
-  min-height: 40px;
+  width: 34px;
+  min-height: 34px;
   place-items: center;
   border: 1px solid var(--admin-border);
   border-radius: 6px;
@@ -113,7 +113,7 @@
 .admin-shell {
   display: grid;
   height: 100dvh;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 208px minmax(0, 1fr);
   overflow: hidden;
   background: var(--admin-page);
 }
@@ -126,9 +126,9 @@
   min-width: 0;
   grid-template-rows: max-content minmax(0, 1fr) max-content;
   align-items: stretch;
-  gap: 24px;
+  gap: 16px;
   border-right: 1px solid var(--admin-border);
-  padding: 16px 12px 12px;
+  padding: 14px 10px 10px;
   background: var(--admin-page);
 }
 
@@ -151,13 +151,13 @@
 .admin-navigation-item {
   display: flex;
   width: 100%;
-  min-height: 40px;
+  min-height: 42px;
   align-items: center;
   justify-content: flex-start;
   gap: 10px;
   border: 0;
   border-radius: 6px;
-  padding: 0 12px;
+  padding: 0 10px;
   background: transparent;
   color: var(--admin-ink-secondary);
   font-size: 13px;
@@ -184,9 +184,9 @@
   min-width: 0;
   grid-template-columns: max-content minmax(0, 1fr) max-content;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   border-top: 1px solid var(--admin-border);
-  padding: 12px 4px 0;
+  padding: 10px 2px 0;
 }
 
 .admin-account-summary {
@@ -234,8 +234,8 @@
 
 .admin-account-actions .admin-icon-button,
 .admin-account-actions .icon-button {
-  min-height: 36px;
-  width: 36px;
+  min-height: 30px;
+  width: 30px;
 }
 
 .admin-main {
@@ -243,17 +243,17 @@
   height: 100dvh;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
 }
 
 .admin-topbar {
   display: flex;
-  min-height: 56px;
+  min-height: 48px;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border-bottom: 1px solid var(--admin-border);
-  padding: 0 clamp(20px, 2.5vw, 36px);
+  padding: 0 clamp(16px, 2vw, 28px);
   background: var(--admin-page);
 }
 
@@ -319,19 +319,19 @@
 
 .admin-page {
   display: grid;
-  width: min(100%, 1440px);
+  width: min(100%, 1560px);
   min-height: min-content;
-  gap: 24px;
+  gap: 18px;
   margin: 0 auto;
-  padding: 32px clamp(20px, 3vw, 48px) 64px;
+  padding: 22px clamp(16px, 2vw, 32px) 48px;
 }
 
 .admin-page-header {
   display: flex;
-  min-height: 48px;
+  min-height: 40px;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
+  gap: 16px;
 }
 
 .admin-eyebrow,
@@ -348,7 +348,7 @@
 .admin-login-heading h1 {
   margin: 0;
   color: var(--admin-ink);
-  font-size: 28px;
+  font-size: 23px;
   font-weight: 650;
   letter-spacing: 0;
   line-height: 1.2;
@@ -358,7 +358,7 @@
 .admin-page-description {
   display: block;
   max-width: 720px;
-  margin-top: 6px;
+  margin-top: 4px;
   color: var(--admin-muted);
   font-size: 13px;
   line-height: 1.45;
@@ -369,7 +369,7 @@
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .admin-summary-strip {
@@ -473,10 +473,10 @@
   width: min(400px, calc(100% - 32px));
   align-self: center;
   justify-self: center;
-  gap: 24px;
+  gap: 18px;
   border: 1px solid var(--admin-border);
   border-radius: 8px;
-  padding: 28px;
+  padding: 24px;
   background: var(--admin-surface);
   box-shadow: 0 0 0 1px var(--admin-border), 0 18px 48px var(--admin-shadow);
 }
@@ -522,8 +522,30 @@
   }
 
   .admin-page {
-    gap: 20px;
-    padding: 24px 16px 48px;
+    gap: 18px;
+    padding: 18px 16px 40px;
+  }
+
+  .admin-icon-button {
+    min-height: 44px;
+  }
+
+  .admin-navigation-item {
+    min-height: 52px;
+  }
+
+  .admin-icon-button {
+    width: 44px;
+  }
+
+  .admin-account-actions .admin-icon-button,
+  .admin-account-actions .icon-button {
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .admin-back-button ~ .admin-breadcrumb svg {
+    display: none;
   }
 
   .admin-mobile-navigation {
@@ -575,7 +597,7 @@
   }
 
   .admin-page-header h1 {
-    font-size: 24px;
+    font-size: 21px;
   }
 
   .admin-page-actions {
@@ -616,6 +638,10 @@
 
 @media (max-width: 420px) {
   .admin-breadcrumb:first-of-type:not(:last-child) {
+    display: none;
+  }
+
+  .admin-breadcrumb svg {
     display: none;
   }
 
