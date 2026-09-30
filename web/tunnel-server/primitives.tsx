@@ -1,7 +1,6 @@
 import type { FormEventHandler, ReactNode, Ref } from 'react'
 import * as AlertDialog from '@radix-ui/react-alert-dialog'
 import * as Dialog from '@radix-ui/react-dialog'
-import * as ScrollArea from '@radix-ui/react-scroll-area'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import * as SwitchPrimitive from '@radix-ui/react-switch'
 import * as Tabs from '@radix-ui/react-tabs'
@@ -10,6 +9,7 @@ import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Check, CheckCircle2, ChevronDown, LoaderCircle, X, XCircle } from 'lucide-react'
 import { createContext, useCallback, useContext, useState } from 'react'
+import { ScrollArea } from '../shared/components/ui/scroll-area'
 
 interface Notification {
   id: number
@@ -153,12 +153,15 @@ export { Tabs }
 
 export function FormScrollArea({ children }: { children: ReactNode }): React.JSX.Element {
   return (
-    <ScrollArea.Root className="form-scroll-area">
-      <ScrollArea.Viewport className="form-scroll-viewport">{children}</ScrollArea.Viewport>
-      <ScrollArea.Scrollbar className="form-scrollbar" orientation="vertical">
-        <ScrollArea.Thumb className="form-scroll-thumb" />
-      </ScrollArea.Scrollbar>
-    </ScrollArea.Root>
+    <ScrollArea className="form-scroll-area" viewportClassName="form-scroll-viewport">{children}</ScrollArea>
+  )
+}
+
+function DialogBody({ children }: { children: ReactNode }): React.JSX.Element {
+  return (
+    <ScrollArea className="modal-body-scroll" viewportClassName="modal-body-viewport">
+      <div className="modal-body">{children}</div>
+    </ScrollArea>
   )
 }
 
@@ -166,6 +169,8 @@ export interface DialogShellProps {
   open: boolean
   title: string
   children: ReactNode
+  footer: ReactNode
+  scrollBody?: boolean
   onOpenChange: (open: boolean) => void
   onSubmit?: FormEventHandler<HTMLFormElement>
   className?: string
@@ -180,6 +185,8 @@ export function DialogShell({
   open,
   title,
   children,
+  footer,
+  scrollBody = true,
   onOpenChange,
   onSubmit,
   className,
@@ -211,7 +218,8 @@ export function DialogShell({
                 <IconButton label={closeLabel} disabled={busy}><X size={16} /></IconButton>
               </Dialog.Close>
             </div>
-            {children}
+            {scrollBody ? <DialogBody>{children}</DialogBody> : <div className="modal-body-static">{children}</div>}
+            <div className="modal-footer">{footer}</div>
           </form>
         </Dialog.Content>
       </Dialog.Portal>
@@ -230,19 +238,23 @@ export function ConfirmDialog({ open, message, busy, error, onClose, onConfirm }
     >
       <AlertDialog.Portal>
         <AlertDialog.Overlay className="modal-backdrop" />
-        <AlertDialog.Content className="modal">
+        <AlertDialog.Content className="modal modal-confirm" onEscapeKeyDown={event => busy && event.preventDefault()}>
           <div className="modal-title">
             <AlertDialog.Title>Confirm action</AlertDialog.Title>
             <AlertDialog.Cancel asChild><IconButton label="Close" disabled={busy}><X size={16} /></IconButton></AlertDialog.Cancel>
           </div>
-          <AlertDialog.Description>{message}</AlertDialog.Description>
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="modal-actions">
-            <AlertDialog.Cancel asChild><button type="button" disabled={busy}>Cancel</button></AlertDialog.Cancel>
-            <button className="danger" type="button" disabled={busy} onClick={onConfirm}>
-              {busy && <Spinner />}
-              {busy ? 'Working...' : 'Confirm'}
-            </button>
+          <DialogBody>
+            <AlertDialog.Description>{message}</AlertDialog.Description>
+            {error && <p className="form-error" role="alert">{error}</p>}
+          </DialogBody>
+          <div className="modal-footer">
+            <div className="modal-actions">
+              <AlertDialog.Cancel asChild><button type="button" disabled={busy}>Cancel</button></AlertDialog.Cancel>
+              <button className="danger" type="button" disabled={busy} onClick={onConfirm}>
+                {busy && <Spinner />}
+                {busy ? 'Working...' : 'Confirm'}
+              </button>
+            </div>
           </div>
         </AlertDialog.Content>
       </AlertDialog.Portal>

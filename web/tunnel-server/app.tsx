@@ -128,7 +128,22 @@ function PasswordEditor({ onClose, onChanged }: { onClose: () => void, onChanged
     }
   })
   return (
-    <DialogShell open title="Change password" busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
+    <DialogShell
+      open
+      title="Change password"
+      busy={saving}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={submit}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving && <Spinner />}
+            {saving ? 'Saving...' : 'Change'}
+          </button>
+        </div>
+      )}
+    >
       <FormField label="Current password" error={form.formState.errors.currentPassword}>
         <input {...form.register('currentPassword')} type="password" autoComplete="current-password" autoFocus aria-invalid={Boolean(form.formState.errors.currentPassword)} />
       </FormField>
@@ -139,13 +154,6 @@ function PasswordEditor({ onClose, onChanged }: { onClose: () => void, onChanged
         <input {...form.register('confirmation')} type="password" minLength={5} maxLength={256} autoComplete="new-password" aria-invalid={Boolean(form.formState.errors.confirmation)} />
       </FormField>
       <FormError error={form.formState.errors.root?.server} />
-      <div className="modal-actions">
-        <button type="button" onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : 'Change'}
-        </button>
-      </div>
     </DialogShell>
   )
 }

@@ -79,6 +79,7 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
 				assertTunnelClientAssignmentPage(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 				assertTunnelNodePages(t, pageURL, signInTunnelBrowserSession(t, pageURL))
+				assertTunnelDialogScrolling(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 			}
 			if err := service.stop(); err != nil {
 				t.Fatalf("clean shutdown: %v", err)
@@ -130,7 +131,9 @@ func assertTunnelOverviewWorkflow(t *testing.T, pageURL string, browserSession *
 		t.Fatalf("new Client destination = %q: %v", path, err)
 	}
 
+	serverSession := signInTunnelBrowserSession(t, pageURL)
 	if err := chromedp.Run(ctx,
+		network.SetCookie(serverSession.Name, serverSession.Value).WithURL(pageURL).WithHTTPOnly(serverSession.HttpOnly).WithSameSite(network.CookieSameSiteStrict),
 		chromedp.Navigate(pageURL+"/server"),
 		chromedp.WaitVisible(`.server-runtime-panel`, chromedp.ByQuery),
 	); err != nil {

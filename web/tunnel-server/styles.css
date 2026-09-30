@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+@theme inline {
+  --color-background: var(--background);
+  --color-border: var(--border);
+  --color-muted-foreground: var(--muted);
+}
+
 :root {
   --background: var(--admin-page, #f6f7f8);
   --surface: var(--admin-surface, #ffffff);
@@ -1115,15 +1121,6 @@ th:last-child {
   flex: 0 0 18px;
 }
 
-.node-modal .modal-actions {
-  position: sticky;
-  z-index: 1;
-  bottom: -20px;
-  margin-bottom: -20px;
-  padding-bottom: 20px;
-  background: var(--surface);
-}
-
 .client-identity {
   display: grid;
   align-content: center;
@@ -1617,11 +1614,15 @@ th:last-child {
   line-height: 1.45;
 }
 
+.change-node-scroll,
+.change-node-viewport {
+  max-height: 340px;
+}
+
 .change-node-list {
   display: grid;
-  max-height: 340px;
   gap: 6px;
-  overflow-y: auto;
+  padding: 2px 6px 2px 2px;
 }
 
 .change-node-option {
@@ -1973,6 +1974,7 @@ th:last-child {
 
 .modal {
   position: fixed;
+  display: grid;
   z-index: 150;
   top: 50%;
   left: 50%;
@@ -2006,15 +2008,38 @@ th:last-child {
 }
 
 .modal-form,
-.modal:not(:has(.modal-form)) {
+.modal-confirm {
   display: grid;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr) max-content;
   gap: 12px;
   padding: 16px;
 }
 
 .modal-form {
   max-height: inherit;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.modal-body-scroll,
+.modal-body-static {
+  min-width: 0;
+  min-height: 0;
+}
+
+.modal-body-viewport {
+  padding: 4px 6px 4px 4px;
+}
+
+.modal-body,
+.modal-footer {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.modal-body-static {
+  display: grid;
 }
 
 .modal-title,
@@ -2051,9 +2076,6 @@ th:last-child {
 
 .tunnel-modal .modal-form {
   height: 100%;
-  min-height: 0;
-  grid-template-rows: max-content minmax(0, 1fr) max-content max-content;
-  overflow: hidden;
 }
 
 .tunnel-form-tabs {
@@ -2119,18 +2141,6 @@ th:last-child {
 .form-scroll-viewport {
   height: 100%;
   padding: 2px 4px 8px 2px;
-}
-
-.form-scrollbar {
-  display: flex;
-  width: 8px;
-  padding: 2px;
-}
-
-.form-scroll-thumb {
-  flex: 1;
-  border-radius: 999px;
-  background: var(--border-strong);
 }
 
 .tunnel-tab-panel {
@@ -2374,19 +2384,27 @@ th:last-child {
 }
 
 .import-preview {
+  overflow: hidden;
+}
+
+.import-preview-viewport {
   max-height: 320px;
-  overflow: auto;
+}
+
+.import-notices-scroll {
+  border-left: 3px solid var(--warning);
+  background: var(--warning-soft);
+}
+
+.import-notices-viewport {
+  max-height: 112px;
 }
 
 .import-notices {
   display: grid;
   gap: 4px;
-  max-height: 112px;
-  overflow: auto;
   margin: 0;
-  border-left: 3px solid var(--warning);
   padding: 10px 12px 10px 28px;
-  background: var(--warning-soft);
   color: var(--warning);
   font-size: 12px;
 }
@@ -2794,12 +2812,6 @@ th:last-child {
     grid-column: 2;
   }
 
-  .node-modal .modal-actions {
-    bottom: -16px;
-    margin-bottom: -16px;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  }
-
   .summary-fact {
     min-height: 76px;
     border-bottom: 1px solid var(--border);
@@ -2947,38 +2959,14 @@ th:last-child {
   }
 
   .modal-form,
-  .modal:not(:has(.modal-form)) {
+  .modal-confirm {
     height: 100%;
-    padding: 16px;
-  }
-
-  .modal-form {
-    align-content: start;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
   }
 
   .tunnel-modal {
     width: 100%;
     height: 100dvh;
-  }
-
-  .tunnel-modal .modal-form {
-    grid-template-rows: max-content minmax(0, 1fr) max-content max-content;
-    align-content: stretch;
-  }
-
-  .change-node-modal .modal-form {
-    display: flex;
-    min-height: 0;
-    flex-direction: column;
-  }
-
-  .change-node-modal .change-node-list {
-    min-height: 0;
-    flex: 0 1 auto;
-  }
-
-  .change-node-modal .modal-actions {
-    margin-top: auto;
   }
 
   .field-row,

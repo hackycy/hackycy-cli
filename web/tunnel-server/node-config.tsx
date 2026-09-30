@@ -141,6 +141,15 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
         event.preventDefault()
         void save()
       }}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving ? <Spinner /> : <Save size={15} />}
+            Save settings
+          </button>
+        </div>
+      )}
     >
       <div className="node-form-section">
         <h3>FRPS listener</h3>
@@ -179,13 +188,6 @@ export function NodeConfigurationEditor({ node, onSaved, onClose }: { node: Node
         <Node404PageSource mode={custom404PageMode} content={custom404Page} effectiveContent={node.desired.effectiveCustom404Page} onModeChange={setCustom404PageMode} onContentChange={setCustom404Page} />
       </details>
       {error && <ErrorState message={error} />}
-      <div className="modal-actions">
-        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving ? <Spinner /> : <Save size={15} />}
-          Save settings
-        </button>
-      </div>
     </DialogShell>
   )
 }
@@ -332,6 +334,15 @@ export function NodeRemovalControls({ node, onSaved, onForgotten, initialAction,
           event.preventDefault()
           void forget()
         }}
+        footer={(
+          <div className="modal-actions">
+            <button type="button" disabled={busy} onClick={close}>Cancel</button>
+            <button className="danger" type="submit" disabled={busy || confirmation.trim() !== node.id}>
+              {busy ? <Spinner /> : <ShieldAlert size={15} />}
+              Force Forget
+            </button>
+          </div>
+        )}
       >
         <p>Only the Server record will be deleted. The remote FRPS may continue running, old credentials may still work, and the Node remains bound to this Controller.</p>
         <label>
@@ -340,13 +351,6 @@ export function NodeRemovalControls({ node, onSaved, onForgotten, initialAction,
           <input required autoComplete="off" spellCheck={false} value={confirmation} onChange={event => setConfirmation(event.target.value)} />
         </label>
         {error && <ErrorState message={error} />}
-        <div className="modal-actions">
-          <button type="button" disabled={busy} onClick={close}>Cancel</button>
-          <button className="danger" type="submit" disabled={busy || confirmation.trim() !== node.id}>
-            {busy ? <Spinner /> : <ShieldAlert size={15} />}
-            Force Forget
-          </button>
-        </div>
       </DialogShell>
     </>
   )
@@ -399,6 +403,15 @@ export function NodeMetadataEditor({ node, mode, onSaved, onClose }: { node: Nod
         event.preventDefault()
         void save()
       }}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving ? <Spinner /> : <Save size={15} />}
+            {mode === 'name' ? 'Save name' : mode === 'management' ? 'Save address' : 'Save endpoints'}
+          </button>
+        </div>
+      )}
     >
       {mode === 'name' && (
         <label>
@@ -459,13 +472,6 @@ export function NodeMetadataEditor({ node, mode, onSaved, onClose }: { node: Nod
         </div>
       )}
       {error && <ErrorState message={error} />}
-      <div className="modal-actions">
-        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving ? <Spinner /> : <Save size={15} />}
-          {mode === 'name' ? 'Save name' : mode === 'management' ? 'Save address' : 'Save endpoints'}
-        </button>
-      </div>
     </DialogShell>
   )
 }

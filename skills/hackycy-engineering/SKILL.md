@@ -24,7 +24,7 @@ description: 维护 hackycy-cli 仓库的 Go CLI 与嵌入式 Web 应用。处�
 
 - 命令边界、Factory、配置或平台分支：阅读[架构](references/architecture.md)。
 - 开发环境、测试、生成文件、命令界面、Git hook 或调试：阅读[验证指南](references/verification.md)。
-- React、Vite、嵌入页面或浏览器流程：阅读[Web](references/web.md)。
+- React、Vite、嵌入页面或浏览器流程：修改前必须阅读[Web](references/web.md)，遵守共享组件与滚动容器约束。
 - 交互式 CLI 或 PTY 行为：阅读[终端](references/terminal.md)。
 - tunnel Server/Node 持久化、SQLite 结构、Ent 或数据升级：遵守上面的必读要求。
 - 版本、跨平台构建、发布产物或 Docker 发布：阅读[发布](references/release.md)。

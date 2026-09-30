@@ -8,6 +8,7 @@ import { ArrowRight, Cable, ChevronDown, ChevronRight, Pencil, Plus, Power, Refr
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { z } from 'zod'
+import { ScrollArea } from '../shared/components/ui/scroll-area'
 import { apiJson, jsonRequest } from './api'
 import { ChangeNodeDialog, ClientRoutingOverview } from './client-node-routing'
 import { FormError, FormField, FormMessage } from './form'
@@ -45,18 +46,26 @@ function ClientRemarkEditor({ client, onClose, onSaved }: { client?: ClientView,
     }
   })
   return (
-    <DialogShell open title={client ? 'Edit Client Remark' : 'Create client'} busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
+    <DialogShell
+      open
+      title={client ? 'Edit Client Remark' : 'Create client'}
+      busy={saving}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={submit}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving && <Spinner />}
+            {saving ? 'Saving...' : client ? 'Save' : 'Create'}
+          </button>
+        </div>
+      )}
+    >
       <FormField label="Client Remark" error={form.formState.errors.remark}>
         <textarea {...form.register('remark')} maxLength={100} autoFocus rows={4} disabled={saving} aria-invalid={Boolean(form.formState.errors.remark)} />
       </FormField>
       <FormError error={form.formState.errors.root?.server} />
-      <div className="modal-actions">
-        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : client ? 'Save' : 'Create'}
-        </button>
-      </div>
     </DialogShell>
   )
 }
@@ -314,7 +323,27 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
   }
 
   return (
-    <DialogShell open title={initial ? 'Edit Tunnel Definition' : 'New Tunnel Definition'} className="tunnel-modal" busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
+    <DialogShell
+      open
+      title={initial ? 'Edit Tunnel Definition' : 'New Tunnel Definition'}
+      className="tunnel-modal"
+      busy={saving}
+      scrollBody={false}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={submit}
+      footer={(
+        <>
+          <FormError error={form.formState.errors.root?.server} />
+          <div className="modal-actions">
+            <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+            <button className="primary" type="submit" disabled={saving}>
+              {saving && <Spinner />}
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </>
+      )}
+    >
       <Tabs.Root className="tunnel-form-tabs" value={activeSection} onValueChange={value => setActiveSection(value as TunnelEditorSection)}>
         <Tabs.List className="tunnel-tab-list" aria-label="Tunnel configuration sections" data-tab-count={availableSections.length}>
           {availableSections.map((section) => {
@@ -510,14 +539,6 @@ function TunnelEditor({ clientId, initial, onClose, onSaved }: { clientId: strin
         </FormScrollArea>
       </Tabs.Root>
 
-      <FormError error={form.formState.errors.root?.server} />
-      <div className="modal-actions">
-        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : 'Save'}
-        </button>
-      </div>
     </DialogShell>
   )
 }
@@ -583,7 +604,23 @@ function ImportConfigurationDialog({ clientId, onClose, onImported }: { clientId
     }
   }
   return (
-    <DialogShell open title="Import tunnel configuration" className="import-modal" busy={loading} onOpenChange={open => !open && onClose()} onSubmit={event => void submit(event)}>
+    <DialogShell
+      open
+      title="Import tunnel configuration"
+      className="import-modal"
+      busy={loading}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={event => void submit(event)}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={loading} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={loading || !selected.size}>
+            {loading && <Spinner />}
+            {loading ? 'Importing...' : 'Import selected'}
+          </button>
+        </div>
+      )}
+    >
       <label
         className={`import-dropzone${dragging ? ' is-dragging' : ''}`}
         onDragEnter={() => setDragging(true)}
@@ -623,59 +660,56 @@ function ImportConfigurationDialog({ clientId, onClose, onImported }: { clientId
             <span>Disabled on import</span>
           </div>
           <section className="table-wrap import-preview">
-            <table className="tunnel-table">
-              <thead>
-                <tr>
-                  <th aria-label="Select" />
-                  <th>Name</th>
-                  <th>Public mapping</th>
-                  <th>Local Endpoint</th>
-                  <th>Authentication</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.candidates.map(candidate => (
-                  <tr className="tunnel-row" key={candidate.id}>
-                    <td data-label="Select"><input className="import-checkbox" type="checkbox" checked={selected.has(candidate.id)} disabled={loading} aria-label={`Select ${candidate.label || candidate.id}`} onChange={() => toggle(candidate.id)} /></td>
-                    <td data-label="Name"><strong>{candidate.label || 'Unlabeled tunnel'}</strong></td>
-                    <td data-label="Public mapping">
-                      <strong>{candidate.protocol.toUpperCase()}</strong>
-                      {' '}
-                      <span className="mono">{candidate.protocol === 'http' ? candidate.customDomains?.join(', ') : candidate.serverPort}</span>
-                      {candidate.protocol === 'http' && <span className="mono mapping-paths">{candidate.location ?? 'All paths'}</span>}
-                    </td>
-                    <td className="mono" data-label="Local endpoint">
-                      {candidate.localHost}
-                      :
-                      {candidate.localPort}
-                    </td>
-                    <td data-label="Authentication">{candidate.basicAuth ? candidate.basicAuth.username : 'None'}</td>
+            <ScrollArea viewportClassName="import-preview-viewport" scrollbars="both">
+              <table className="tunnel-table">
+                <thead>
+                  <tr>
+                    <th aria-label="Select" />
+                    <th>Name</th>
+                    <th>Public mapping</th>
+                    <th>Local Endpoint</th>
+                    <th>Authentication</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {!preview.candidates.length && <div className="empty-row">No tunnel definitions available to import</div>}
+                </thead>
+                <tbody>
+                  {preview.candidates.map(candidate => (
+                    <tr className="tunnel-row" key={candidate.id}>
+                      <td data-label="Select"><input className="import-checkbox" type="checkbox" checked={selected.has(candidate.id)} disabled={loading} aria-label={`Select ${candidate.label || candidate.id}`} onChange={() => toggle(candidate.id)} /></td>
+                      <td data-label="Name"><strong>{candidate.label || 'Unlabeled tunnel'}</strong></td>
+                      <td data-label="Public mapping">
+                        <strong>{candidate.protocol.toUpperCase()}</strong>
+                        {' '}
+                        <span className="mono">{candidate.protocol === 'http' ? candidate.customDomains?.join(', ') : candidate.serverPort}</span>
+                        {candidate.protocol === 'http' && <span className="mono mapping-paths">{candidate.location ?? 'All paths'}</span>}
+                      </td>
+                      <td className="mono" data-label="Local endpoint">
+                        {candidate.localHost}
+                        :
+                        {candidate.localPort}
+                      </td>
+                      <td data-label="Authentication">{candidate.basicAuth ? candidate.basicAuth.username : 'None'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!preview.candidates.length && <div className="empty-row">No tunnel definitions available to import</div>}
+            </ScrollArea>
           </section>
           {!!preview.ignored.length && (
-            <ul className="import-notices">
-              {preview.ignored.map((item, index) => (
-                <li key={`${item.proxy ?? 'configuration'}-${index}`}>
-                  {item.proxy ? `${item.proxy}: ` : ''}
-                  {item.reason}
-                </li>
-              ))}
-            </ul>
+            <ScrollArea className="import-notices-scroll" viewportClassName="import-notices-viewport">
+              <ul className="import-notices">
+                {preview.ignored.map((item, index) => (
+                  <li key={`${item.proxy ?? 'configuration'}-${index}`}>
+                    {item.proxy ? `${item.proxy}: ` : ''}
+                    {item.reason}
+                  </li>
+                ))}
+              </ul>
+            </ScrollArea>
           )}
         </>
       )}
       <FormError error={error ? { message: error } : undefined} />
-      <div className="modal-actions">
-        <button type="button" disabled={loading} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={loading || !selected.size}>
-          {loading && <Spinner />}
-          {loading ? 'Importing...' : 'Import selected'}
-        </button>
-      </div>
     </DialogShell>
   )
 }

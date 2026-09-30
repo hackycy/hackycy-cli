@@ -50,7 +50,22 @@ function AccountEditor({ account, onClose, onSaved }: { account?: AccountView, o
     }
   })
   return (
-    <DialogShell open title={account ? 'Change account role' : 'Create account'} busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
+    <DialogShell
+      open
+      title={account ? 'Change account role' : 'Create account'}
+      busy={saving}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={submit}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving && <Spinner />}
+            {saving ? 'Saving...' : account ? 'Save' : 'Create'}
+          </button>
+        </div>
+      )}
+    >
       {!account && (
         <>
           <FormField label="Username" error={form.formState.errors.username}>
@@ -65,13 +80,6 @@ function AccountEditor({ account, onClose, onSaved }: { account?: AccountView, o
         <Controller name="role" control={form.control} render={({ field }) => <SegmentedControl label="Role" className="roles" value={field.value} onChange={value => field.onChange(value as AccountRole)} options={[{ value: 'admin', label: 'Administrator' }, { value: 'user', label: 'User' }]} />} />
       </FormField>
       <FormError error={form.formState.errors.root?.server} />
-      <div className="modal-actions">
-        <button type="button" onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : account ? 'Save' : 'Create'}
-        </button>
-      </div>
     </DialogShell>
   )
 }
@@ -92,18 +100,26 @@ function PasswordReset({ account, onClose, onSaved }: { account: AccountView, on
     }
   })
   return (
-    <DialogShell open title="Reset password" busy={saving} onOpenChange={open => !open && onClose()} onSubmit={submit}>
+    <DialogShell
+      open
+      title="Reset password"
+      busy={saving}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={submit}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={saving}>
+            {saving && <Spinner />}
+            {saving ? 'Saving...' : 'Reset'}
+          </button>
+        </div>
+      )}
+    >
       <FormField label="New password" error={form.formState.errors.password}>
         <input {...form.register('password')} type="password" minLength={5} maxLength={256} autoComplete="new-password" autoFocus aria-invalid={Boolean(form.formState.errors.password)} />
       </FormField>
       <FormError error={form.formState.errors.root?.server} />
-      <div className="modal-actions">
-        <button type="button" onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : 'Reset'}
-        </button>
-      </div>
     </DialogShell>
   )
 }

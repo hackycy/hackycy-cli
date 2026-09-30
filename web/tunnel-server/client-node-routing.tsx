@@ -3,6 +3,7 @@ import type { ClientView, TunnelView } from './api'
 import type { NodeEndpoint, NodeSummary } from './nodes-pages'
 import { ArrowRight, Network, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { ScrollArea } from '../shared/components/ui/scroll-area'
 import { apiJson, jsonRequest } from './api'
 import { NodeObservation, NodeStatus } from './nodes-pages'
 import { DialogShell } from './primitives'
@@ -267,6 +268,15 @@ export function ChangeNodeDialog({ clientId, onClose, onSaved }: { clientId: str
           event.currentTarget.focus()
       }}
       onSubmit={event => void submit(event)}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
+          <button className="primary" type="submit" disabled={!canConfirm || loading || saving}>
+            {saving && <Spinner />}
+            {saving ? 'Saving...' : online ? 'Confirm switch' : 'Save pending switch'}
+          </button>
+        </div>
+      )}
     >
       {loading && (
         <p className="change-node-loading">
@@ -286,30 +296,32 @@ export function ChangeNodeDialog({ clientId, onClose, onSaved }: { clientId: str
       {!loading && snapshot && (
         <>
           <p className="change-node-intro">Select a destination. No routing changes are made until you confirm.</p>
-          <div className="change-node-list" role="radiogroup" aria-label="Destination Node">
-            {snapshot.nodes.map((node) => {
-              const isCurrent = node.id === snapshot.client.assignment.nodeId
-              const isPending = node.id === snapshot.client.assignment.pendingNodeId
-              const disabled = !canSelectNode(snapshot.client, node)
-              return (
-                <label className="change-node-option" data-selected={selectedId === node.id} data-disabled={disabled} key={node.id}>
-                  <input type="radio" name="destination-node" value={node.id} checked={selectedId === node.id} disabled={disabled || saving} onChange={() => setSelectedId(node.id)} />
-                  <span className="change-node-option-content">
-                    <span className="change-node-option-heading">
-                      <strong>{node.name}</strong>
-                      <small>{isCurrent ? 'Current' : isPending ? 'Pending target' : node.kind === 'local' ? 'Local Node' : 'Remote Node'}</small>
+          <ScrollArea className="change-node-scroll" viewportClassName="change-node-viewport">
+            <div className="change-node-list" role="radiogroup" aria-label="Destination Node">
+              {snapshot.nodes.map((node) => {
+                const isCurrent = node.id === snapshot.client.assignment.nodeId
+                const isPending = node.id === snapshot.client.assignment.pendingNodeId
+                const disabled = !canSelectNode(snapshot.client, node)
+                return (
+                  <label className="change-node-option" data-selected={selectedId === node.id} data-disabled={disabled} key={node.id}>
+                    <input type="radio" name="destination-node" value={node.id} checked={selectedId === node.id} disabled={disabled || saving} onChange={() => setSelectedId(node.id)} />
+                    <span className="change-node-option-content">
+                      <span className="change-node-option-heading">
+                        <strong>{node.name}</strong>
+                        <small>{isCurrent ? 'Current' : isPending ? 'Pending target' : node.kind === 'local' ? 'Local Node' : 'Remote Node'}</small>
+                      </span>
+                      <span className="change-node-option-status">
+                        <NodeStatus value={node.selectability.selectable ? 'available' : node.selectability.reason ?? 'unavailable'} />
+                        <span>{`Management: ${node.management.state}${node.management.stale ? ' (stale)' : ''}`}</span>
+                        <span>{`FRPS: ${node.frps.state}${node.frps.stale ? ' (stale)' : ''}`}</span>
+                      </span>
+                      <span className="change-node-option-address">{`FRP ${endpoint(node.advertisedFrpAddress)}${hasHTTP ? ` / HTTP ${endpoint(node.httpIngressAddress)}` : ''}`}</span>
                     </span>
-                    <span className="change-node-option-status">
-                      <NodeStatus value={node.selectability.selectable ? 'available' : node.selectability.reason ?? 'unavailable'} />
-                      <span>{`Management: ${node.management.state}${node.management.stale ? ' (stale)' : ''}`}</span>
-                      <span>{`FRPS: ${node.frps.state}${node.frps.stale ? ' (stale)' : ''}`}</span>
-                    </span>
-                    <span className="change-node-option-address">{`FRP ${endpoint(node.advertisedFrpAddress)}${hasHTTP ? ` / HTTP ${endpoint(node.httpIngressAddress)}` : ''}`}</span>
-                  </span>
-                </label>
-              )
-            })}
-          </div>
+                  </label>
+                )
+              })}
+            </div>
+          </ScrollArea>
           {selected && (
             <div className="change-node-impact" aria-live="polite">
               <strong>
@@ -347,13 +359,6 @@ export function ChangeNodeDialog({ clientId, onClose, onSaved }: { clientId: str
           {saveError && <p className="form-error" role="alert">{saveError}</p>}
         </>
       )}
-      <div className="modal-actions">
-        <button type="button" disabled={saving} onClick={onClose}>Cancel</button>
-        <button className="primary" type="submit" disabled={!canConfirm || loading || saving}>
-          {saving && <Spinner />}
-          {saving ? 'Saving...' : online ? 'Confirm switch' : 'Save pending switch'}
-        </button>
-      </div>
     </DialogShell>
   )
 }

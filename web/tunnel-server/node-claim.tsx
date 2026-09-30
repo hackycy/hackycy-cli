@@ -80,7 +80,23 @@ export function NodeClaimDialog({ onClose, onCreated }: { onClose: () => void, o
     }
   }
   return (
-    <DialogShell open title="Add Node" className="node-modal" busy={busy} onOpenChange={open => !open && onClose()} onSubmit={event => void submit(event)}>
+    <DialogShell
+      open
+      title="Add Node"
+      className="node-modal"
+      busy={busy}
+      onOpenChange={open => !open && onClose()}
+      onSubmit={event => void submit(event)}
+      footer={(
+        <div className="modal-actions">
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="primary" type="submit" disabled={busy || Boolean(preview && !confirmed)}>
+            {busy ? <Spinner /> : preview ? <Plus size={15} /> : <Search size={15} />}
+            {preview ? mode === 'claim' ? 'Confirm claim' : 'Confirm re-add' : 'Preview fingerprint'}
+          </button>
+        </div>
+      )}
+    >
       <div className="node-form-section">
         <h3>Node identity</h3>
         <label>
@@ -121,13 +137,6 @@ export function NodeClaimDialog({ onClose, onCreated }: { onClose: () => void, o
         </div>
       )}
       {error && <p className="runtime-error" role="alert">{error}</p>}
-      <div className="modal-actions">
-        <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
-        <button className="primary" type="submit" disabled={busy || Boolean(preview && !confirmed)}>
-          {busy ? <Spinner /> : preview ? <Plus size={15} /> : <Search size={15} />}
-          {preview ? mode === 'claim' ? 'Confirm claim' : 'Confirm re-add' : 'Preview fingerprint'}
-        </button>
-      </div>
     </DialogShell>
   )
 }
