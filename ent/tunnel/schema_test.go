@@ -17,8 +17,8 @@ import (
 )
 
 func TestServerV1SQLMatchesEnt(t *testing.T) {
-	db := createSchemaDatabase(t, "../../pkg/cmd/tunnel/server/migrations/001_v1.sql")
-	migration, err := os.ReadFile("../../pkg/cmd/tunnel/server/migrations/002_node_policies.sql")
+	db := createSchemaDatabase(t, "../../pkg/cmd/tunnel/server/migrations/20260926_v1_initial_schema.sql")
+	migration, err := os.ReadFile("../../pkg/cmd/tunnel/server/migrations/20260929_node_policies.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestServerV1SQLMatchesEnt(t *testing.T) {
 }
 
 func TestNodeV1SQLMatchesEnt(t *testing.T) {
-	db := createSchemaDatabase(t, "../../pkg/cmd/tunnel/node/migrations/001_v1.sql")
+	db := createSchemaDatabase(t, "../../pkg/cmd/tunnel/node/migrations/20260926_v1_initial_schema.sql")
 	verifySchema(t, db, nodemigrate.Tables)
 
 	if _, err := db.Exec(`INSERT INTO identity(id,node_id,private_key,public_key) VALUES(1,'node',x'00',x'00')`); err == nil {

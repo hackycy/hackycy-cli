@@ -18,6 +18,8 @@ description: 维护 hackycy-cli 仓库的 Go CLI 与嵌入式 Web 应用。处�
 
 修改 tunnel Server/Node 的持久化、SQL、Ent 模型或数据结构前，先完整阅读 [SQLite 与 Ent 维护约束](references/sqlite-ent.md)。`migrations/*.sql` 是真实数据库结构的唯一事实来源，Ent Schema 与生成代码必须同步；生产启动和升级不得用 Ent Auto Migration 修改结构。当前 v1 只有空状态初始化，没有启动时 migration runner。升级已部署数据库时，需先设计只能前进的迁移生命周期，不能把未来约束当成现有能力。
 
+迁移 SQL 文件统一使用 `YYYYMMDD_<purpose>.sql` 命名，日期取首次引入日，`<purpose>` 使用简短的小写下划线短语；同一目录内同日迁移须使用不同作用名。迁移执行顺序由代码和数据库版本确定，不能仅靠同日文件名排序。数据库中的迁移版本值与文件名解耦；已发布迁移的文件名、SQL 内容和 checksum 不得修改。
+
 ## 按任务读取引用
 
 - 命令边界、Factory、配置或平台分支：阅读[架构](references/architecture.md)。

@@ -17,7 +17,7 @@ import (
 	nodeent "github.com/hackycy/hackycy-cli/ent/tunnel/node"
 )
 
-//go:embed migrations/001_v1.sql
+//go:embed migrations/20260926_v1_initial_schema.sql
 var nodeV1Schema string
 
 // openEmptyNodeV1Database is called under the data directory's process lock.

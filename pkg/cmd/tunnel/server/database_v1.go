@@ -21,10 +21,10 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/windowsacl"
 )
 
-//go:embed migrations/001_v1.sql
+//go:embed migrations/20260926_v1_initial_schema.sql
 var serverV1Schema string
 
-//go:embed migrations/002_node_policies.sql
+//go:embed migrations/20260929_node_policies.sql
 var serverNodePoliciesMigration string
 
 const serverV1SchemaVersion = "2"
