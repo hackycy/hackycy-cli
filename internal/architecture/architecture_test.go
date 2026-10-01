@@ -391,7 +391,11 @@ func assertGoPackageInventory(t *testing.T, root, tags string, want []string) {
 		if !strings.HasPrefix(line, modulePath+"/") {
 			t.Fatalf("go %s returned non-module package %q", strings.Join(args, " "), line)
 		}
-		got = append(got, strings.TrimPrefix(line, modulePath+"/"))
+		relative := strings.TrimPrefix(line, modulePath+"/")
+		if strings.HasPrefix(relative, "node_modules/") || strings.HasPrefix(relative, "web/node_modules/") {
+			continue
+		}
+		got = append(got, relative)
 	}
 	sort.Strings(got)
 	want = append([]string(nil), want...)

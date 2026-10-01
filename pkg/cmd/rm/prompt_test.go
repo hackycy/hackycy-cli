@@ -119,13 +119,15 @@ func TestSelectSmartTargetsKeepsEmptySelectionDistinctFromCancellation(t *testin
 func TestSelectionReturnsInteractionFailuresWithoutChangingThePromptOutcome(t *testing.T) {
 	failure := errors.New("interactive terminal unavailable")
 	prompter := &scriptedPrompter{err: failure}
-	if _, cancelled, err := selectExplicitTargets([]string{"/tmp/one"}, false, prompter); cancelled || !errors.Is(err, failure) {
+	workingDirectory := t.TempDir()
+	targets := []string{filepath.Join(workingDirectory, "one")}
+	if _, cancelled, err := selectExplicitTargets(targets, false, prompter); cancelled || !errors.Is(err, failure) {
 		t.Fatalf("explicit selection = (cancelled=%t, err=%v)", cancelled, err)
 	}
 	if _, cancelled, err := selectSmartAction(prompter); cancelled || !errors.Is(err, failure) {
 		t.Fatalf("smart action = (cancelled=%t, err=%v)", cancelled, err)
 	}
-	if _, cancelled, err := selectSmartTargets(t.TempDir(), []string{"/tmp/one"}, false, prompter); cancelled || !errors.Is(err, failure) {
+	if _, cancelled, err := selectSmartTargets(workingDirectory, targets, false, prompter); cancelled || !errors.Is(err, failure) {
 		t.Fatalf("smart targets = (cancelled=%t, err=%v)", cancelled, err)
 	}
 }

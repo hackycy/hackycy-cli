@@ -207,13 +207,17 @@ func captureSurfaceCompletions() (map[string][]byte, error) {
 }
 
 func normalizeSurfaceText(value string) string {
-	value = strings.ReplaceAll(value, "\r\n", "\n")
-	value = strings.ReplaceAll(value, "\r", "\n")
+	value = normalizeSurfaceLineEndings(value)
 	lines := strings.Split(value, "\n")
 	for index := range lines {
 		lines[index] = strings.TrimRight(lines[index], " \t")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizeSurfaceLineEndings(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	return strings.ReplaceAll(value, "\r", "\n")
 }
 
 func writeCommandSurface(root string, artifacts commandSurfaceArtifacts) error {
@@ -246,7 +250,7 @@ func compareCommandSurface(root string, artifacts commandSurfaceArtifacts) error
 	if err != nil {
 		return fmt.Errorf("read frozen manifest: %w", err)
 	}
-	if !bytes.Equal(manifest, artifacts.Manifest) {
+	if normalizeSurfaceLineEndings(string(manifest)) != normalizeSurfaceLineEndings(string(artifacts.Manifest)) {
 		return errors.New("frozen command manifest differs; use YCY_UPDATE_COMMAND_SURFACE=1 only for an intentional initial capture")
 	}
 	if err := compareSurfaceFiles(filepath.Join(directory, "help"), artifacts.Help, ".txt"); err != nil {
@@ -282,11 +286,47 @@ func compareSurfaceFiles(directory string, expected map[string][]byte, suffix st
 		if err != nil {
 			return err
 		}
-		if !bytes.Equal(actual, content) {
+		if normalizeSurfaceLineEndings(string(actual)) != normalizeSurfaceLineEndings(string(content)) {
 			return fmt.Errorf("%s differs", name+suffix)
 		}
 	}
 	return nil
+}
+
+func TestCompareCommandSurfaceAcceptsCheckoutLineEndings(t *testing.T) {
+	artifacts := commandSurfaceArtifacts{
+		Manifest:    []byte("{\n  \"schemaVersion\": 1\n}\n"),
+		Help:        map[string][]byte{"ycy": []byte("Usage:\n  ycy [command]\n")},
+		Completions: map[string][]byte{"bash": []byte("# completion\nycy\n")},
+	}
+	for _, ending := range []string{"\n", "\r\n", "\r"} {
+		t.Run(fmt.Sprintf("%q", ending), func(t *testing.T) {
+			checkout := commandSurfaceArtifacts{
+				Manifest: bytes.ReplaceAll(artifacts.Manifest, []byte("\n"), []byte(ending)),
+				Help:     make(map[string][]byte), Completions: make(map[string][]byte),
+			}
+			for name, content := range artifacts.Help {
+				checkout.Help[name] = bytes.ReplaceAll(content, []byte("\n"), []byte(ending))
+			}
+			for name, content := range artifacts.Completions {
+				checkout.Completions[name] = bytes.ReplaceAll(content, []byte("\n"), []byte(ending))
+			}
+			root := t.TempDir()
+			if err := writeCommandSurface(root, checkout); err != nil {
+				t.Fatal(err)
+			}
+			if err := compareCommandSurface(root, artifacts); err != nil {
+				t.Fatal(err)
+			}
+			checkout.Help["ycy"] = []byte("Usage:\n  ycy changed\n")
+			if err := writeCommandSurface(root, checkout); err != nil {
+				t.Fatal(err)
+			}
+			if err := compareCommandSurface(root, artifacts); err == nil {
+				t.Fatal("changed command help passed frozen-surface comparison")
+			}
+		})
+	}
 }
 
 func surfaceFileName(path []string) string {

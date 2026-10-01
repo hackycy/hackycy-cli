@@ -19,6 +19,34 @@ import (
 	"golang.org/x/term"
 )
 
+func init() {
+	fixture := os.Getenv("YCY_GIT_HEAT_FIXTURE")
+	if fixture == "" {
+		return
+	}
+	if fixture == "failure" {
+		_, _ = io.WriteString(os.Stderr, "not a repository\n")
+		os.Exit(1)
+	}
+	if fixture == "rich" {
+		time.Sleep(80 * time.Millisecond)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "rev-parse" {
+		repository := "fixture"
+		if fixture == "rich" {
+			repository = os.Getenv("HEAT_REPOSITORY")
+		}
+		_, _ = io.WriteString(os.Stdout, repository+"\n")
+	} else {
+		output := "\x00__HACKYCY_HEAT_COMMIT__abc\x1f1704067200\x1f2024-01-01 00:00:00 +0000\x00M\x00src/main.go\x00"
+		if fixture == "rich" {
+			output += "A\x00README.md\x00"
+		}
+		_, _ = io.WriteString(os.Stdout, output)
+	}
+	os.Exit(0)
+}
+
 func TestRunGitHeatRichPTYUsesFocusConsoleAndRestoresPrimaryScreen(t *testing.T) {
 	const helperEnvironment = "YCY_GIT_HEAT_RICH_HELPER"
 	if os.Getenv(helperEnvironment) == "1" {
@@ -60,22 +88,9 @@ func runGitHeatRichPTYHelper(t *testing.T) {
 	}
 
 	root := t.TempDir()
-	gitScript := filepath.Join(root, "git-fixture.sh")
-	const script = `#!/bin/sh
-sleep 0.08
-if [ "$1" = "rev-parse" ]; then
-  printf '%s\n' "$HEAT_REPOSITORY"
-  exit 0
-fi
-printf '\000__HACKYCY_HEAT_COMMIT__abc\0371704067200\0372024-01-01 00:00:00 +0000\000M\000src/main.go\000A\000README.md\000'
-`
-	if err := os.WriteFile(gitScript, []byte(script), 0o700); err != nil {
-		t.Fatalf("write Git fixture: %v", err)
-	}
-	if err := os.Setenv("HEAT_REPOSITORY", filepath.Join(root, "repo")); err != nil {
-		t.Fatalf("set Git fixture repository: %v", err)
-	}
-	defer os.Unsetenv("HEAT_REPOSITORY")
+	gitScript := os.Args[0]
+	t.Setenv("YCY_GIT_HEAT_FIXTURE", "rich")
+	t.Setenv("HEAT_REPOSITORY", filepath.Join(root, "repo"))
 
 	color := os.Getenv("NO_COLOR") == ""
 	width, _, err := term.GetSize(int(os.Stdout.Fd()))
@@ -228,7 +243,7 @@ func assertGitHeatRichPTYOutput(t *testing.T, output string, color, wide bool) {
 }
 
 func TestRunGitHeatStreamsPreservePlainAutomationAndFailureBoundaries(t *testing.T) {
-	script := writeGitHeatFixtureScript(t, false)
+	script := gitHeatFixtureExecutable(t, false)
 	for _, testCase := range []struct {
 		name       string
 		mode       terminalexperience.InteractionMode
@@ -259,7 +274,7 @@ func TestRunGitHeatStreamsPreservePlainAutomationAndFailureBoundaries(t *testing
 		})
 	}
 
-	failingScript := writeGitHeatFixtureScript(t, true)
+	failingScript := gitHeatFixtureExecutable(t, true)
 	var output, diagnostics bytes.Buffer
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{Capabilities: terminalexperience.Capabilities{Interaction: terminalexperience.Automation}, Output: &output, Diagnostics: &diagnostics})
 	if err := runHeat(&Options{Context: context.Background(), Target: TargetFiles, Sort: SortPath, Terminal: experience, Git: &gitprocess.Runner{Executable: failingScript}, Now: time.Now}); err == nil || err.Error() != "not a repository" {
@@ -270,26 +285,14 @@ func TestRunGitHeatStreamsPreservePlainAutomationAndFailureBoundaries(t *testing
 	}
 }
 
-func writeGitHeatFixtureScript(t *testing.T, fail bool) string {
+func gitHeatFixtureExecutable(t *testing.T, fail bool) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "git-fixture.sh")
-	body := `#!/bin/sh
-if [ "$1" = "rev-parse" ]; then
-  printf 'fixture\n'
-  exit 0
-fi
-printf '\000__HACKYCY_HEAT_COMMIT__abc\0371704067200\0372024-01-01 00:00:00 +0000\000M\000src/main.go\000'
-`
+	fixture := "success"
 	if fail {
-		body = `#!/bin/sh
-printf 'not a repository\n' >&2
-exit 1
-`
+		fixture = "failure"
 	}
-	if err := os.WriteFile(path, []byte(body), 0o700); err != nil {
-		t.Fatalf("write Git fixture: %v", err)
-	}
-	return path
+	t.Setenv("YCY_GIT_HEAT_FIXTURE", fixture)
+	return os.Args[0]
 }
 
 func gitHeatPTYText(value string) string {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"path"
 	"sort"
 	"strings"
 	"unicode"
@@ -28,9 +28,9 @@ func terminalPulseRichDocumentForWidth(root string, report Report, width int) te
 		if repositoryIndex > 0 {
 			blocks = append(blocks, terminalexperience.PresentationBlock{Role: terminalexperience.VisualRolePlain, Text: "\n"})
 		}
-		relative := pulseSafeRelativePath(root, repository.Path)
-		name := safePulseValue(filepath.Base(relative))
-		parent := safePulseValue(filepath.Dir(relative))
+		relative := strings.ReplaceAll(pulseRelativePath(root, repository.Path), "\\", "/")
+		name := safePulseValue(path.Base(relative))
+		parent := safePulseValue(path.Dir(relative))
 		count := fmt.Sprintf(" (%d %s)", len(repository.Commits), pulsePlural(len(repository.Commits), "commit", "commits"))
 		blocks = append(blocks,
 			terminalexperience.PresentationBlock{
@@ -41,7 +41,7 @@ func terminalPulseRichDocumentForWidth(root string, report Report, width int) te
 					Text: count,
 				}},
 			},
-			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "   " + parent + string(filepath.Separator)},
+			terminalexperience.PresentationBlock{Role: terminalexperience.VisualRoleMuted, Text: "   " + parent + "/"},
 		)
 		for index, commit := range repository.Commits {
 			connector := "|-"
@@ -95,10 +95,6 @@ func pulseAppendWrappedSpans(spans []terminalexperience.PresentationSpan, role t
 		spans = append(spans, terminalexperience.PresentationSpan{Role: role, Text: line})
 	}
 	return spans
-}
-
-func pulseSafeRelativePath(root, path string) string {
-	return safePulseValue(pulseRelativePath(root, path))
 }
 
 func pulseWarningPaths(root string, paths []string) string {

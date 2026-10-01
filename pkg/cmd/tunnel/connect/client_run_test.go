@@ -696,6 +696,14 @@ func clientRunControlServerWithProbe(t *testing.T, desired ClientDesiredConfigur
 			return
 		}
 		onConnection(index, socket)
+		// Drain pending client frames until it closes, avoiding a Windows TCP
+		// reset that can discard the revoke sent by the test server.
+		_ = socket.SetReadDeadline(time.Now().Add(3 * time.Second))
+		for {
+			if _, _, err := socket.ReadMessage(); err != nil {
+				return
+			}
+		}
 	}))
 	return server, func() []tunnelruntime.AgentHello {
 		mu.Lock()

@@ -4026,9 +4026,19 @@ func TestServerHTTPHandlerAcknowledgesReplacementTokenOnAgentUpgrade(t *testing.
 		t.Fatalf("WebSocket upgrade: %v", err)
 	}
 	t.Cleanup(func() { _ = socket.Close() })
-	current, err := plane.GetClient(ctx, client.ID)
-	if err != nil || current.RevocationPending {
-		t.Fatalf("client after WebSocket upgrade = (%#v, %v)", current, err)
+	deadline := time.Now().Add(time.Second)
+	for {
+		current, err := plane.GetClient(ctx, client.ID)
+		if err != nil {
+			t.Fatalf("client after WebSocket upgrade: %v", err)
+		}
+		if !current.RevocationPending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("client after WebSocket upgrade = %#v, want replacement acknowledged", current)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 

@@ -25,7 +25,10 @@ const goToGoHTTPHostname = "forwarding.example.test"
 func TestGoClientToGoServerForwardsHTTPAndTCPAndUDPWithPinnedFRP(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	t.Setenv("HOME", t.TempDir())
+	stateRoot := t.TempDir()
+	t.Setenv("HOME", stateRoot)
+	t.Setenv("XDG_STATE_HOME", stateRoot)
+	t.Setenv("LOCALAPPDATA", stateRoot)
 
 	artifact, err := tunnelruntime.CurrentFRPArtifact()
 	if err != nil {

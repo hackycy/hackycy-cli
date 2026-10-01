@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"unicode"
@@ -821,14 +820,7 @@ func safeForkRepositoryDetail(repository Repository) string {
 }
 
 func safeForkDestinationDetail(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "project"
-	}
-	if filepath.IsAbs(value) {
-		value = filepath.Base(filepath.Clean(value))
-	}
-	return safeForkText(filepath.ToSlash(value), "project")
+	return safeForkText(terminalexperience.PathLabel(value, "project"), "project")
 }
 
 func safeForkRefDetail(value string) string {

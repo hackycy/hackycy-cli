@@ -10,7 +10,7 @@ pre-commit:
       run: git diff --cached --check
     gofmt:
       glob: "**/*.go"
-      run: test -z "$(gofmt -l {staged_files})"
+      run: sh tools/hookctl/check-gofmt.sh {staged_files}
       fail_text: "Run make fmt and stage the formatted Go files."
     web-eslint:
       root: web

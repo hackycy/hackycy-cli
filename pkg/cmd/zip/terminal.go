@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 	"unicode"
@@ -159,18 +159,7 @@ func terminalZipFormCatalog() []terminalexperience.ConsoleFormStep {
 }
 
 func zipDescriptorDirectory(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "workspace"
-	}
-	if filepath.IsAbs(value) {
-		base := filepath.Base(filepath.Clean(value))
-		if base == "" || base == "." || base == string(filepath.Separator) {
-			return "workspace"
-		}
-		return safeZipText(base, "workspace")
-	}
-	return safeZipText(filepath.ToSlash(filepath.Clean(value)), "workspace")
+	return safeZipText(path.Clean(terminalexperience.PathLabel(value, "workspace")), "workspace")
 }
 
 func terminalZipPlanningNoteDocument(note PlanningNote) terminalexperience.PresentationDocument {

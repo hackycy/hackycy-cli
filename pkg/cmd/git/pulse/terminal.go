@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -120,18 +121,7 @@ func terminalPulseConsoleDescriptor(options *Options) terminalexperience.Console
 }
 
 func pulseDescriptorDirectory(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "workspace"
-	}
-	if filepath.IsAbs(value) {
-		base := filepath.Base(filepath.Clean(value))
-		if base == string(filepath.Separator) || base == "." || base == "" {
-			return "workspace"
-		}
-		return safePulseField(base, 120)
-	}
-	return safePulseField(filepath.Clean(value), 120)
+	return safePulseField(path.Clean(terminalexperience.PathLabel(value, "workspace")), 120)
 }
 
 type osPathStater struct{}
@@ -650,11 +640,19 @@ func terminalPulsePhaseState(state PhaseState) terminalexperience.PhaseState {
 }
 
 func pulseRelativePath(root, repository string) string {
-	relative, err := filepath.Rel(root, repository)
-	if err != nil || relative == "" {
+	root = path.Clean(strings.ReplaceAll(root, "\\", "/"))
+	repository = path.Clean(strings.ReplaceAll(repository, "\\", "/"))
+	if root == "." {
+		return strings.TrimPrefix(repository, "./")
+	}
+	if repository == root {
 		return "."
 	}
-	return relative
+	prefix := strings.TrimSuffix(root, "/") + "/"
+	if strings.HasPrefix(repository, prefix) {
+		return strings.TrimPrefix(repository, prefix)
+	}
+	return repository
 }
 
 func pulsePlural(count int, singular, plural string) string {
