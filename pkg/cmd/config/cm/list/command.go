@@ -132,7 +132,7 @@ func runList(options *Options) error {
 		return finishCMList(run, outcome, nil, err)
 	}
 	document := terminalCMListDocument(result)
-	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMListRichDocument(result)
 	}
 	return run.Finish(terminalCMListFinishRequest(terminal.Succeeded, &result), &document)

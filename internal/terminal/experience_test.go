@@ -204,7 +204,7 @@ func TestRichPreflightSizeFailureFallsBackToPlainWithoutChangingCapabilities(t *
 	capabilities := terminal.Capabilities{
 		Interaction: terminal.RichInteractive,
 		Stdin:       terminal.StreamCapability{Terminal: true},
-		Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+		Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 	}
 	experience := terminal.NewExperience(terminal.ExperienceOptions{
 		Capabilities: capabilities,
@@ -447,14 +447,14 @@ func TestExperienceMilestoneRoutesByInteractionCapability(t *testing.T) {
 	})
 }
 
-func TestExperienceNonRichResultsAreAlwaysControlFree(t *testing.T) {
+func TestExperienceTextColorIsIndependentOfInteraction(t *testing.T) {
 	for _, mode := range []terminal.InteractionMode{terminal.PlainInteractive, terminal.Automation} {
 		t.Run(fmt.Sprintf("mode-%d", mode), func(t *testing.T) {
 			var output bytes.Buffer
 			experience := terminal.NewExperience(terminal.ExperienceOptions{
 				Capabilities: terminal.Capabilities{
 					Interaction: mode,
-					Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
+					Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 				},
 				Output: &output,
 			})
@@ -462,11 +462,11 @@ func TestExperienceNonRichResultsAreAlwaysControlFree(t *testing.T) {
 			if err := run.Finish(terminal.FinishRequest{Outcome: terminal.Succeeded}, &terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleTitle, Text: "done"}}}); err != nil {
 				t.Fatalf("Finish() error = %v", err)
 			}
-			if got, want := output.String(), "done\n"; got != want {
-				t.Fatalf("stdout = %q, want %q", got, want)
+			if got := terminaltest.StripANSI(output.String()); got != "done\n" {
+				t.Fatalf("visible stdout = %q", got)
 			}
-			if terminaltest.ContainsTerminalControl(output.Bytes()) {
-				t.Fatalf("stdout contains terminal controls: %q", output.String())
+			if !terminaltest.ContainsTerminalControl(output.Bytes()) {
+				t.Fatalf("stdout omitted requested styling: %q", output.String())
 			}
 		})
 	}

@@ -86,8 +86,8 @@ printf '\000__HACKYCY_HEAT_COMMIT__abc\0371704067200\0372024-01-01 00:00:00 +000
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
 			Stdin:       terminalexperience.StreamCapability{Terminal: true},
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: color},
-			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: color},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
 		},
 		Input:       os.Stdin,
 		Output:      os.Stdout,

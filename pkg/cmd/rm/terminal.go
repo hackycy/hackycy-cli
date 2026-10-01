@@ -90,7 +90,7 @@ func runRMExplicitTerminal(
 	}
 	if len(plan.existing) == 0 {
 		document := terminalRMNoValidPathsDocument(caps, workingDirectory, plan.missing)
-		if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+		if caps.Stdout.Terminal {
 			document = terminalRMRichResult("Paths removed", "No valid paths to delete.", terminalexperience.VisualRoleWarning)
 		}
 		return finishRM(run, sink, terminalexperience.Succeeded, &document, nil)
@@ -128,7 +128,7 @@ func runRMExplicitTerminal(
 	document := terminalRMDocument("Done!", terminalexperience.VisualRoleSuccess)
 	if caps.Interaction == terminalexperience.Automation {
 		document = terminalRMAutomationDeletionDocument(workingDirectory, plan.missing, result)
-	} else if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	} else if caps.Stdout.Terminal {
 		document = terminalRMRichResult("Paths removed", "Done!", terminalexperience.VisualRoleSuccess)
 	}
 	return finishRM(run, sink, terminalexperience.Succeeded, &document, nil)
@@ -172,7 +172,7 @@ func runRMSmartTerminal(
 			return finishRMAt(run, sink, terminalexperience.Failed, rmScanPhaseName, nil, err)
 		}
 		document := terminalRMDocument("Nothing to clean.", terminalexperience.VisualRoleSuccess)
-		if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+		if caps.Stdout.Terminal {
 			document = terminalRMRichResult("Cleanup complete", "Nothing to clean.", terminalexperience.VisualRoleSuccess)
 		}
 		return finishRM(run, sink, terminalexperience.Succeeded, &document, nil)
@@ -214,7 +214,7 @@ func runRMSmartTerminal(
 		return finishRMAt(run, sink, terminalexperience.Failed, rmDeletePhaseName, nil, err)
 	}
 	document := terminalRMDocument("Done!", terminalexperience.VisualRoleSuccess)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalRMRichResult("Cleanup complete", "Done!", terminalexperience.VisualRoleSuccess)
 	}
 	return finishRM(run, sink, terminalexperience.Succeeded, &document, nil)

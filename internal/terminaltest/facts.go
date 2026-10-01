@@ -1,6 +1,16 @@
 // Package terminaltest provides deterministic terminal fixtures for tests.
 package terminaltest
 
+import "github.com/hackycy/hackycy-cli/internal/terminal"
+
+// Profile selects an explicit full-fidelity or monochrome fixture profile.
+func Profile(color bool) terminal.ColorProfile {
+	if color {
+		return terminal.TrueColor
+	}
+	return terminal.NoColor
+}
+
 // Stream identifies one inherited standard stream.
 type Stream string
 

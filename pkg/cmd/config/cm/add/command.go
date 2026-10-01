@@ -109,7 +109,7 @@ func runAdd(options *Options) error {
 		return finishCMAdd(run, phases, terminal.Failed, cmAddSavePhaseName, nil, err)
 	}
 	document := terminalCMAddDocument(fmt.Sprintf("Profile %s added", safeCMAddName(input.Name)), false)
-	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMAddSuccessDocument(input)
 	}
 	return finishCMAdd(run, phases, terminal.Succeeded, "", &document, nil)

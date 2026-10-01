@@ -445,8 +445,8 @@ func richTestCapabilities(color bool) terminal.Capabilities {
 	return terminal.Capabilities{
 		Interaction: terminal.RichInteractive,
 		Stdin:       terminal.StreamCapability{Terminal: true},
-		Stdout:      terminal.StreamCapability{Terminal: true, Color: color},
-		Stderr:      terminal.StreamCapability{Terminal: true, Color: color},
+		Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
+		Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
 	}
 }
 

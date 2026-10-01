@@ -135,7 +135,7 @@ func runList(options *Options) error {
 	}
 
 	document := terminalForkListDocument(result)
-	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalForkListRichDocument(result)
 	}
 	return run.Finish(terminalForkListFinishRequest(terminal.Succeeded, &result), &document)

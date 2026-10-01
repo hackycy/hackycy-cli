@@ -25,9 +25,8 @@ func NewRedirectedStreams(input string) *RedirectedStreams {
 	}
 }
 
-// ContainsTerminalControl reports escape or C1 CSI bytes that are forbidden
-// in Automation and Plain Interactive output. Ordinary line separators remain
-// allowed.
+// ContainsTerminalControl reports escape or C1 CSI bytes, including text styles.
+// Machine output and unstyled records must not contain these bytes.
 func ContainsTerminalControl(output []byte) bool {
 	for _, value := range output {
 		if value == '\x1b' || value == '\x9b' {

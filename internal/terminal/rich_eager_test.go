@@ -56,8 +56,8 @@ func runEagerConsoleHelper(t *testing.T) {
 		Capabilities: terminal.Capabilities{
 			Interaction: terminal.RichInteractive,
 			Stdin:       terminal.StreamCapability{Terminal: true},
-			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
-			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
+			Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 		},
 		Input:       os.Stdin,
 		Output:      os.Stdout,

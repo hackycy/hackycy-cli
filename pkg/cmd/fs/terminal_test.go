@@ -114,7 +114,7 @@ func TestTerminalFSRichServiceCheckpointsRemainOutsideAltScreen(t *testing.T) {
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminalexperience.TrueColor},
 		},
 		Output: &output,
 	})
@@ -152,16 +152,16 @@ func TestRunFSRichServiceBoundaryKeepsLifecycleLogOutsideConsole(t *testing.T) {
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: true},
-			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminalexperience.TrueColor},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Profile: terminalexperience.TrueColor},
 		},
 		Output:      output,
 		Diagnostics: &diagnostics,
 	})
 	logRuntime := logging.NewRuntime(logging.Options{
-		Writer: experience.DiagnosticWriter(),
-		Format: logging.JSONFormat,
-		Color:  true,
+		Writer:  experience.DiagnosticWriter(),
+		Format:  logging.JSONFormat,
+		Profile: terminalexperience.TrueColor,
 	})
 
 	err := runFS(&Options{

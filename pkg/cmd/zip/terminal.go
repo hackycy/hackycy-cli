@@ -478,7 +478,7 @@ func zipFinishOutputName(plan *ZipPlan) string {
 
 func terminalZipResultDocument(result Result, caps terminalexperience.Capabilities) terminalexperience.PresentationDocument {
 	if result.Kind == ResultCompleted {
-		if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+		if caps.Stdout.Terminal {
 			blocks := []terminalexperience.PresentationBlock{
 				{Role: terminalexperience.VisualRoleMuted, Text: "YCY / zip"},
 				{Role: terminalexperience.VisualRoleTitle, Text: "Archive ready"},

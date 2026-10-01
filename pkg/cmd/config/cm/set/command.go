@@ -95,7 +95,7 @@ func runSet(options *Options) error {
 		return finish(terminalexperience.Failed, nil, workErr)
 	}
 	document := terminalCMSetDocument(result)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMSetRichDocument(result)
 	}
 	return finish(terminalexperience.Succeeded, &document, nil)

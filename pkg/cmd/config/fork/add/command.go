@@ -118,7 +118,7 @@ func runAdd(options *Options) error {
 		return finishForkAdd(run, phases, terminal.Failed, forkAddSavePhaseName, nil, err)
 	}
 	document := terminalForkAddDocument(fmt.Sprintf("Instance %s (%s) added successfully", safeForkAddField(input.Alias, "Instance configured"), safeForkAddHost(input.Host)), false)
-	if caps.Interaction == terminal.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalForkAddSuccessDocument(input)
 	}
 	return finishForkAdd(run, phases, terminal.Succeeded, "", &document, nil)

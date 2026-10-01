@@ -86,7 +86,7 @@ func TestTerminalDiffRichServiceResultRemainsOutsideAltScreen(t *testing.T) {
 	experience := terminalexperience.NewExperience(terminalexperience.ExperienceOptions{
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminalexperience.TrueColor},
 		},
 		Output: &output,
 	})

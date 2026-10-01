@@ -33,18 +33,16 @@ func TestNewProcessFactsPreservesInheritedStreamsAndSession(t *testing.T) {
 	}
 	defer diagnostics.Close()
 
-	facts := NewProcessFacts(input, output, diagnostics, func(key string) (string, bool) {
-		return map[string]string{"TERM": "xterm-256color"}[key], key == "TERM"
-	}, func(*os.File) bool { return true })
-
-	if facts.IOStreams.In != input || facts.IOStreams.Out != output || facts.IOStreams.ErrOut != diagnostics {
-		t.Fatal("process facts did not preserve the inherited stream identities")
-	}
 	wantCapabilities := terminalexperience.Capabilities{
 		Interaction: terminalexperience.RichInteractive,
 		Stdin:       terminalexperience.StreamCapability{Terminal: true},
-		Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: true},
-		Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: true},
+		Stdout:      terminalexperience.StreamCapability{Terminal: true, Controls: true, Profile: terminalexperience.ANSI256},
+		Stderr:      terminalexperience.StreamCapability{Terminal: true, Controls: true, Profile: terminalexperience.ANSI256},
+	}
+	facts := NewProcessFacts(input, output, diagnostics, wantCapabilities)
+
+	if facts.IOStreams.In != input || facts.IOStreams.Out != output || facts.IOStreams.ErrOut != diagnostics {
+		t.Fatal("process facts did not preserve the inherited stream identities")
 	}
 	if got := facts.Capabilities; got != wantCapabilities {
 		t.Fatalf("process capabilities = %#v, want %#v", got, wantCapabilities)
@@ -57,7 +55,7 @@ func TestIsTerminalRejectsCharacterDevicesWithoutTTYSemantics(t *testing.T) {
 		t.Fatalf("open null device: %v", err)
 	}
 	defer device.Close()
-	if isTerminal(device) {
+	if terminalexperience.IsTerminal(device) {
 		t.Fatal("null device was classified as a TTY")
 	}
 }
@@ -91,10 +89,14 @@ func TestRootTunnelServerDiagnosticsPreserveSessionStreamContracts(t *testing.T)
 			}
 			defer diagnostics.Close()
 
-			facts := NewProcessFacts(input, output, diagnostics, func(key string) (string, bool) {
+			lookup := func(key string) (string, bool) {
 				value, ok := testCase.environment[key]
 				return value, ok
-			}, func(*os.File) bool { return testCase.terminal })
+			}
+			stream := terminalexperience.StreamFacts{Terminal: testCase.terminal, Controls: testCase.terminal, Profile: terminalexperience.ANSI256}
+			facts := NewProcessFacts(input, output, diagnostics, terminalexperience.Classify(terminalexperience.Facts{
+				Stdin: stream, Stdout: stream, Stderr: stream, LookupEnv: lookup,
+			}))
 			factory := newCommandFactoryForProcessFacts(facts)
 			runtime := factory.Logging
 			runtime.SetFormat(testCase.format)
@@ -149,9 +151,7 @@ func TestRootTunnelServerPlainDiagnosticsWriteImmediately(t *testing.T) {
 	}
 	defer diagnostics.Close()
 
-	facts := NewProcessFacts(input, output, diagnostics, func(key string) (string, bool) {
-		return map[string]string{"TERM": "dumb"}[key], key == "TERM"
-	}, func(*os.File) bool { return true })
+	facts := NewProcessFacts(input, output, diagnostics, terminalexperience.Capabilities{Interaction: terminalexperience.PlainInteractive})
 	factory := newCommandFactoryForProcessFacts(facts)
 	runtime := factory.Logging
 	run := factory.Terminal.Open(context.Background())

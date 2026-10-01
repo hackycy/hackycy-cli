@@ -126,7 +126,7 @@ func runHeat(options *Options) error {
 		return errors.Join(workErr, run.Finish(terminalGitHeatFinishRequest(outcome, Result{}), nil))
 	}
 	document := terminalGitHeatDocument(result)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalGitHeatRichDocumentForWidth(result, options.Width)
 	}
 	return run.Finish(terminalGitHeatFinishRequest(terminalexperience.Succeeded, result), &document)

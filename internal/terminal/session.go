@@ -7,9 +7,9 @@ import "strings"
 type InteractionMode uint8
 
 const (
-	// Automation never reads stdin and never emits terminal control sequences.
+	// Automation never reads stdin or controls the screen. Text may still be colored.
 	Automation InteractionMode = iota
-	// PlainInteractive supports line-oriented interaction without terminal control.
+	// PlainInteractive supports line-oriented interaction without screen control.
 	PlainInteractive
 	// RichInteractive supports a full-screen terminal controller on stderr.
 	RichInteractive
@@ -18,7 +18,8 @@ const (
 // StreamCapability records independent behavior for one inherited stream.
 type StreamCapability struct {
 	Terminal bool
-	Color    bool
+	Controls bool
+	Profile  ColorProfile
 }
 
 // Capabilities are the immutable terminal capabilities selected for an invocation.
@@ -34,6 +35,8 @@ type Capabilities struct {
 // StreamFacts are the observable capability facts for one inherited stream.
 type StreamFacts struct {
 	Terminal bool
+	Controls bool
+	Profile  ColorProfile
 }
 
 // LookupEnv looks up one environment variable while preserving whether it is set.
@@ -49,38 +52,37 @@ type Facts struct {
 
 // Classify selects terminal behavior from injected stream and environment facts.
 func Classify(facts Facts) Capabilities {
-	color := colorEnabled(facts)
+	term, _ := facts.lookup("TERM")
+	dumb := strings.EqualFold(strings.TrimSpace(term), "dumb")
+	noColor, _ := facts.lookup("NO_COLOR")
+	forceColor, _ := facts.lookup("FORCE_COLOR")
+	output := func(stream StreamFacts) StreamCapability {
+		capability := StreamCapability{Terminal: stream.Terminal, Controls: stream.Terminal && stream.Controls && !dumb}
+		if noColor == "" && (capability.Controls || (forceColor != "" && (!stream.Terminal || stream.Controls))) {
+			capability.Profile = stream.Profile
+			if capability.Profile == NoColor {
+				capability.Profile = ANSI16
+			}
+		}
+		return capability
+	}
 	capabilities := Capabilities{
 		Stdin:  StreamCapability{Terminal: facts.Stdin.Terminal},
-		Stdout: StreamCapability{Terminal: facts.Stdout.Terminal, Color: facts.Stdout.Terminal && color},
-		Stderr: StreamCapability{Terminal: facts.Stderr.Terminal, Color: facts.Stderr.Terminal && color},
+		Stdout: output(facts.Stdout),
+		Stderr: output(facts.Stderr),
 	}
-	if !facts.Stdin.Terminal || !facts.Stderr.Terminal || facts.isSet("CI") {
+	ci, _ := facts.lookup("CI")
+	ci = strings.ToLower(strings.TrimSpace(ci))
+	if !facts.Stdin.Terminal || !facts.Stderr.Terminal || (ci != "" && ci != "0" && ci != "false") {
 		capabilities.Interaction = Automation
-		capabilities.Stdout.Color = false
-		capabilities.Stderr.Color = false
 		return capabilities
 	}
-
-	term, _ := facts.lookup("TERM")
-	if supportsRichControls(term) {
+	if capabilities.Stderr.Controls {
 		capabilities.Interaction = RichInteractive
 		return capabilities
 	}
 	capabilities.Interaction = PlainInteractive
-	capabilities.Stdout.Color = false
-	capabilities.Stderr.Color = false
 	return capabilities
-}
-
-func colorEnabled(facts Facts) bool {
-	noColor, set := facts.lookup("NO_COLOR")
-	return !set || noColor == ""
-}
-
-func (facts Facts) isSet(key string) bool {
-	_, set := facts.lookup(key)
-	return set
 }
 
 func (facts Facts) lookup(key string) (string, bool) {
@@ -88,27 +90,4 @@ func (facts Facts) lookup(key string) (string, bool) {
 		return "", false
 	}
 	return facts.LookupEnv(key)
-}
-
-func supportsRichControls(term string) bool {
-	term = strings.ToLower(strings.TrimSpace(term))
-	for _, family := range []string{
-		"alacritty",
-		"foot",
-		"iterm",
-		"kitty",
-		"konsole",
-		"rxvt",
-		"screen",
-		"st",
-		"tmux",
-		"vte",
-		"wezterm",
-		"xterm",
-	} {
-		if term == family || strings.HasPrefix(term, family+"-") {
-			return true
-		}
-	}
-	return false
 }

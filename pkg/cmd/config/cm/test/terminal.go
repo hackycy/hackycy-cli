@@ -124,7 +124,7 @@ func runTest(options *Options) error {
 		category := cmTestProviderFailureKind(runErr)
 		failureSummary := "Provider request failed (" + string(category) + ")"
 		presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseFailed, failureSummary))
-		if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+		if caps.Stdout.Terminal {
 			document := terminalCMTestRichFailureDocument(result, string(category))
 			return finish(terminalexperience.Failed, terminalCMTestFailureSummary(failureSummary), &document, runErr)
 		}
@@ -133,7 +133,7 @@ func runTest(options *Options) error {
 	}
 	presentationErr = errors.Join(presentationErr, phases.end(terminalexperience.PhaseCompleted, "Response received"))
 	var document terminalexperience.PresentationDocument
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMTestRichDocument(result)
 	} else {
 		document = terminalCMTestDocument(result)

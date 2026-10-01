@@ -15,6 +15,7 @@ import (
 
 	charmlog "charm.land/log/v2"
 	"github.com/charmbracelet/colorprofile"
+	"github.com/hackycy/hackycy-cli/internal/terminal"
 )
 
 // Level controls which structured messages a Runtime writes.
@@ -60,20 +61,20 @@ func (level Level) String() string {
 
 // Options makes logging dependencies explicit at the composition root.
 type Options struct {
-	Writer io.Writer
-	Now    func() time.Time
-	Color  bool
-	Format RecordFormat
+	Writer  io.Writer
+	Now     func() time.Time
+	Profile terminal.ColorProfile
+	Format  RecordFormat
 }
 
 // Runtime owns filtering, formatting, redaction, and output for scoped loggers.
 type Runtime struct {
-	mu     sync.RWMutex
-	level  Level
-	writer io.Writer
-	now    func() time.Time
-	color  bool
-	format RecordFormat
+	mu      sync.RWMutex
+	level   Level
+	writer  io.Writer
+	now     func() time.Time
+	profile terminal.ColorProfile
+	format  RecordFormat
 }
 
 // NewRuntime creates a runtime at the conventional info level.
@@ -85,11 +86,11 @@ func NewRuntime(options Options) *Runtime {
 		options.Now = time.Now
 	}
 	return &Runtime{
-		level:  Info,
-		writer: options.Writer,
-		now:    options.Now,
-		color:  options.Color,
-		format: normalizeRecordFormat(options.Format),
+		level:   Info,
+		writer:  options.Writer,
+		now:     options.Now,
+		profile: options.Profile,
+		format:  normalizeRecordFormat(options.Format),
 	}
 }
 
@@ -195,7 +196,7 @@ func (logger Logger) Log(level Level, message string, fields map[string]any) {
 		message:   Redact(message),
 		context:   redactContext(context),
 	}
-	_, _ = io.WriteString(logger.runtime.writer, renderRecord(record, logger.runtime.format, logger.runtime.color))
+	_, _ = io.WriteString(logger.runtime.writer, renderRecord(record, logger.runtime.format, logger.runtime.profile))
 }
 
 type diagnosticRecord struct {
@@ -211,17 +212,17 @@ func diagnosticTimestamp(value time.Time) string {
 	return value.UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
-func renderRecord(record diagnosticRecord, format RecordFormat, color bool) string {
+func renderRecord(record diagnosticRecord, format RecordFormat, profile terminal.ColorProfile) string {
 	if format == JSONFormat {
 		return renderJSONRecord(record)
 	}
-	return textAdapter{color: color}.render(record)
+	return textAdapter{profile: profile}.render(record)
 }
 
 // textAdapter is the private Log v2 boundary. Runtime passes it only complete,
 // normalized records, and performs the single write after this buffer is ready.
 type textAdapter struct {
-	color bool
+	profile terminal.ColorProfile
 }
 
 func (adapter textAdapter) render(record diagnosticRecord) string {
@@ -243,9 +244,14 @@ func (adapter textAdapter) render(record diagnosticRecord) string {
 		styles.Levels[level] = styles.Levels[level].SetString(label).MaxWidth(len(label))
 	}
 	logger.SetStyles(styles)
-	if adapter.color {
+	switch adapter.profile {
+	case terminal.ANSI16:
+		logger.SetColorProfile(colorprofile.ANSI)
+	case terminal.ANSI256:
+		logger.SetColorProfile(colorprofile.ANSI256)
+	case terminal.TrueColor:
 		logger.SetColorProfile(colorprofile.TrueColor)
-	} else {
+	default:
 		logger.SetColorProfile(colorprofile.NoTTY)
 	}
 	entry := slog.NewRecord(record.at, charmLogLevel(record.level), textMessage(record), 0)

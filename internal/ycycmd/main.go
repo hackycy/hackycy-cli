@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/hackycy/hackycy-cli/internal/terminal"
 	commandfactory "github.com/hackycy/hackycy-cli/pkg/cmd/factory"
 	rootcommand "github.com/hackycy/hackycy-cli/pkg/cmd/root"
 	"github.com/hackycy/hackycy-cli/web"
@@ -16,7 +17,7 @@ func Main(version string) int {
 	return run(version, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 }
 
-func run(version string, arguments []string, input, output, diagnostics *os.File) int {
+func run(version string, arguments []string, input, output, diagnostics *os.File) (code int) {
 	if handled, err := RunHiddenUpgrade(arguments); handled {
 		if err != nil {
 			// The hidden child has no parent presentation surface. Keep its one
@@ -36,13 +37,27 @@ func run(version string, arguments []string, input, output, diagnostics *os.File
 		return 0
 	}
 
-	processFacts := NewProcessFacts(input, output, diagnostics, os.LookupEnv, isTerminal)
+	invocation, err := terminal.PrepareInvocation(input, output, diagnostics, os.Environ())
+	if err != nil {
+		_, _ = fmt.Fprintf(diagnostics, "error: %s\n", err)
+		return 1
+	}
+	defer func() {
+		if err := invocation.Close(); err != nil {
+			_, _ = fmt.Fprintf(diagnostics, "error: restore terminal: %s\n", err)
+			if code == 0 {
+				code = 1
+			}
+		}
+	}()
+	processFacts := NewProcessFacts(input, output, diagnostics, invocation.Capabilities)
 	commandFactory := commandfactory.New(commandfactory.Options{
-		Version:           version,
-		IOStreams:         processFacts.IOStreams,
-		Capabilities:      processFacts.Capabilities,
-		Environment:       os.Getenv,
-		EnvironmentLookup: os.LookupEnv,
+		Version:             version,
+		IOStreams:           processFacts.IOStreams,
+		Capabilities:        processFacts.Capabilities,
+		TerminalEnvironment: invocation.Environment,
+		Environment:         os.Getenv,
+		EnvironmentLookup:   os.LookupEnv,
 	})
 	normalDiagnostics := commandFactory.Terminal.DiagnosticWriter()
 	if err := ConsumeUpgradeStartup(arguments, commandFactory.Terminal); err != nil {

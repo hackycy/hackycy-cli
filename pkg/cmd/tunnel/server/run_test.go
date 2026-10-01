@@ -311,16 +311,16 @@ func TestRunServerRichServiceBoundaryKeepsLifecycleLogOutsideConsole(t *testing.
 	experience := terminal.NewExperience(terminal.ExperienceOptions{
 		Capabilities: terminal.Capabilities{
 			Interaction: terminal.RichInteractive,
-			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
-			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
+			Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 		},
 		Output:      &stdout,
 		Diagnostics: &stderr,
 	})
 	logRuntime := logging.NewRuntime(logging.Options{
-		Writer: experience.DiagnosticWriter(),
-		Format: logging.JSONFormat,
-		Color:  true,
+		Writer:  experience.DiagnosticWriter(),
+		Format:  logging.JSONFormat,
+		Profile: terminal.TrueColor,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

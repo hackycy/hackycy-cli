@@ -21,12 +21,14 @@ var errRichUnavailable = errors.New("rich terminal is unavailable")
 const outcomeDwell = 800 * time.Millisecond
 
 type richController struct {
-	runtime *Runtime
-	console ConsoleDescriptor
-	model   *richRootModel
-	program *tea.Program
-	lease   *RendererLease
-	output  *rendererTerminalWriter
+	runtime     *Runtime
+	console     ConsoleDescriptor
+	model       *richRootModel
+	program     *tea.Program
+	lease       *RendererLease
+	output      *rendererTerminalWriter
+	inputState  *term.State
+	outputState *term.State
 
 	done chan struct{}
 	mu   sync.Mutex
@@ -43,15 +45,26 @@ func (controller *richController) start() error {
 		return errRichUnavailable
 	}
 	width, height, err := term.GetSize(int(controller.runtime.diagnosticTerminal.Fd()))
-	if err != nil || width <= 0 || height <= 0 {
+	if err != nil {
+		return terminalStartupError(err)
+	}
+	if width <= 0 || height <= 0 {
 		return errRichUnavailable
+	}
+	controller.inputState, err = term.GetState(int(controller.runtime.inputTerminal.Fd()))
+	if err != nil {
+		return terminalStartupError(err)
+	}
+	controller.outputState, err = term.GetState(int(controller.runtime.diagnosticTerminal.Fd()))
+	if err != nil {
+		return terminalStartupError(err)
 	}
 
 	controller.lease = controller.runtime.diagnostics.AcquireRendererLease()
 	controller.model = newRichRootModelWithConsole(
 		width,
 		height,
-		controller.runtime.capabilities.Stderr.Color,
+		controller.runtime.capabilities.Stderr.Profile != NoColor,
 		controller.console,
 	)
 	controller.output = &rendererTerminalWriter{
@@ -64,10 +77,21 @@ func (controller *richController) start() error {
 		// Keep the root's writes inside the renderer lease.  This makes the
 		// renderer and the semantic replay share one serialized terminal owner.
 		tea.WithOutput(controller.output),
+		tea.WithEnvironment(controller.runtime.environment),
+		tea.WithColorProfile(controller.runtime.capabilities.Stderr.Profile.libraryProfile(true)),
 		tea.WithoutSignalHandler(),
 	)
 	go func() {
 		_, runErr := controller.program.Run()
+		// Bubble Tea can return during partial initialization before its normal
+		// teardown. Restore our snapshots on every exit, including those paths.
+		restoreErr := errors.Join(
+			term.Restore(int(controller.runtime.inputTerminal.Fd()), controller.inputState),
+			term.Restore(int(controller.runtime.diagnosticTerminal.Fd()), controller.outputState))
+		if restoreErr == nil {
+			runErr = terminalStartupError(runErr)
+		}
+		runErr = errors.Join(runErr, restoreErr)
 		controller.mu.Lock()
 		controller.err = runErr
 		controller.mu.Unlock()
@@ -81,6 +105,13 @@ func (controller *richController) start() error {
 		return errors.Join(err, controller.programErrorOrNil(), controller.releaseLease())
 	}
 	return nil
+}
+
+func terminalStartupError(err error) error {
+	if unsupportedTerminalError(err) {
+		return errors.Join(errRichUnavailable, err)
+	}
+	return err
 }
 
 // rendererTerminalWriter preserves Bubble Tea's terminal capability detection
@@ -317,8 +348,9 @@ func (controller *richController) closeWith(ledger *TranscriptLedger, includePro
 	// frames and command results are deliberately not copied here.
 	var replayErr error
 	if ledger != nil {
-		if transcript := renderRichTranscript(ledger, controller.runtime.capabilities.Stderr.Color); transcript != "" && controller.lease != nil {
-			_, replayErr = io.WriteString(controller.lease.Writer(), transcript)
+		profile := controller.runtime.capabilities.Stderr.Profile
+		if transcript := renderRichTranscript(ledger, profile != NoColor); transcript != "" && controller.lease != nil {
+			replayErr = writeComplete(controller.lease.Writer(), profile.ConvertText(transcript))
 		}
 	}
 	var programErr error
@@ -870,8 +902,8 @@ func (model *richRootModel) consoleOutcomeView(width int) string {
 	}
 	if len(model.outcome.Summary.Blocks) > 0 {
 		rendered := strings.TrimSuffix(renderRich(model.outcome.Summary, RichOptions{
-			Width: width,
-			Color: model.color,
+			Width:   width,
+			Profile: profileForColor(model.color),
 		}), "\n")
 		if rendered != "" {
 			parts = append(parts, rendered)

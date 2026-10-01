@@ -59,16 +59,16 @@ func TestRunDiffRichServiceBoundaryKeepsLifecycleLogOutsideConsole(t *testing.T)
 	experience := terminal.NewExperience(terminal.ExperienceOptions{
 		Capabilities: terminal.Capabilities{
 			Interaction: terminal.RichInteractive,
-			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
-			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
+			Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 		},
 		Output:      &cancelAfterWrite{Writer: &stdout, Cancel: cancel},
 		Diagnostics: &stderr,
 	})
 	logRuntime := logging.NewRuntime(logging.Options{
-		Writer: experience.DiagnosticWriter(),
-		Format: logging.JSONFormat,
-		Color:  true,
+		Writer:  experience.DiagnosticWriter(),
+		Format:  logging.JSONFormat,
+		Profile: terminal.TrueColor,
 	})
 
 	err = runDiff(&Options{

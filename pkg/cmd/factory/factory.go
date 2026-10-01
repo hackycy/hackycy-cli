@@ -15,14 +15,15 @@ import (
 
 // Options supplies explicit process facts for Factory construction.
 type Options struct {
-	Version           string
-	IOStreams         cmdutil.IOStreams
-	Capabilities      terminal.Capabilities
-	Environment       func(string) string
-	EnvironmentLookup func(string) (string, bool)
-	WorkingDirectory  func() (string, error)
-	HTTPClient        *http.Client
-	Now               func() time.Time
+	Version             string
+	IOStreams           cmdutil.IOStreams
+	Capabilities        terminal.Capabilities
+	TerminalEnvironment []string
+	Environment         func(string) string
+	EnvironmentLookup   func(string) (string, bool)
+	WorkingDirectory    func() (string, error)
+	HTTPClient          *http.Client
+	Now                 func() time.Time
 
 	newConfigStore func() (*appconfig.Store, error)
 	newGitRunner   func() *gitprocess.Runner
@@ -34,14 +35,15 @@ func New(options Options) *cmdutil.Factory {
 	options = normalizeOptions(options)
 	terminalRuntime := terminal.NewExperience(terminal.ExperienceOptions{
 		Capabilities: options.Capabilities,
+		Environment:  options.TerminalEnvironment,
 		Input:        options.IOStreams.In,
 		Output:       options.IOStreams.Out,
 		Diagnostics:  options.IOStreams.ErrOut,
 	})
 	loggingRuntime := logging.NewRuntime(logging.Options{
-		Writer: terminalRuntime.DiagnosticWriter(),
-		Now:    options.Now,
-		Color:  options.Capabilities.Stderr.Color,
+		Writer:  terminalRuntime.DiagnosticWriter(),
+		Now:     options.Now,
+		Profile: options.Capabilities.Stderr.Profile,
 	})
 
 	return &cmdutil.Factory{

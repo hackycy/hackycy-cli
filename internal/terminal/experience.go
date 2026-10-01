@@ -46,6 +46,7 @@ var (
 // ExperienceOptions supplies terminal-owned dependencies for one invocation.
 type ExperienceOptions struct {
 	Capabilities Capabilities
+	Environment  []string
 	Input        io.Reader
 	Output       io.Writer
 	Diagnostics  io.Writer
@@ -57,6 +58,7 @@ type ExperienceOptions struct {
 // Runtime is the concrete terminal Experience for one invocation.
 type Runtime struct {
 	capabilities       Capabilities
+	environment        []string
 	input              io.Reader
 	output             io.Writer
 	diagnostics        *LeaseAwareDiagnosticWriter
@@ -70,6 +72,9 @@ type Runtime struct {
 
 // NewExperience constructs a terminal Experience from explicit inherited streams.
 func NewExperience(options ExperienceOptions) *Runtime {
+	if options.Environment == nil {
+		options.Environment = os.Environ()
+	}
 	if options.Input == nil {
 		options.Input = emptyInput{}
 	}
@@ -78,6 +83,7 @@ func NewExperience(options ExperienceOptions) *Runtime {
 	}
 	runtime := &Runtime{
 		capabilities:      options.Capabilities,
+		environment:       append([]string{}, options.Environment...),
 		input:             options.Input,
 		output:            options.Output,
 		diagnostics:       NewLeaseAwareDiagnosticWriter(options.Diagnostics),
@@ -108,7 +114,11 @@ func (runtime *Runtime) OpenConsole(ctx context.Context, descriptor ConsoleDescr
 	if err != nil {
 		return nil, err
 	}
-	return runtime.open(ctx, descriptor, true), nil
+	run := runtime.open(ctx, descriptor, true)
+	if run.richFailure != nil {
+		return nil, run.richFailure
+	}
+	return run, nil
 }
 
 func (runtime *Runtime) open(ctx context.Context, descriptor ConsoleDescriptor, eagerRich bool) *runtimeRun {
@@ -131,7 +141,11 @@ func (runtime *Runtime) open(ctx context.Context, descriptor ConsoleDescriptor, 
 		// OpenConsole has not committed semantic state yet. A renderer that
 		// cannot start at this point can therefore safely degrade to Plain.
 		if _, err := run.ensureRich(); err != nil {
-			run.disableRich()
+			if errors.Is(err, errRichUnavailable) {
+				run.disableRich()
+			} else {
+				run.richFailure = err
+			}
 		}
 	}
 	return run
@@ -260,7 +274,7 @@ func (run *runtimeRun) Notice(document PresentationDocument) error {
 		}
 		run.disableRich()
 	}
-	return WritePlain(run.runtime.diagnostics, document)
+	return run.writeDiagnostic(document)
 }
 
 // Milestone publishes one explicit durable checkpoint in the active view.
@@ -293,7 +307,7 @@ func (run *runtimeRun) Milestone(document PresentationDocument) error {
 		}
 		run.disableRich()
 	}
-	err := WritePlain(run.runtime.diagnostics, document)
+	err := run.writeDiagnostic(document)
 	if err == nil {
 		run.recordTranscript(TranscriptEvent{Kind: TranscriptMilestone, Text: document.transcriptText()})
 	}
@@ -518,9 +532,7 @@ func (run *runtimeRun) recoverRichFailure(rendererErr error) error {
 }
 
 func (run *runtimeRun) writeResult(document PresentationDocument) error {
-	// Only an active Rich run may style a durable result. Plain and Automation
-	// capabilities (including a preflight Rich fallback) must remain control-free.
-	if run.runtime.capabilities.Interaction != RichInteractive || run.richDisabled || !run.runtime.capabilities.Stdout.Terminal {
+	if !run.runtime.capabilities.Stdout.Terminal && run.runtime.capabilities.Stdout.Profile == NoColor {
 		return WritePlain(run.runtime.output, document)
 	}
 	width := run.runtime.width
@@ -530,9 +542,13 @@ func (run *runtimeRun) writeResult(document PresentationDocument) error {
 		}
 	}
 	return WriteRich(run.runtime.output, document, RichOptions{
-		Width: width,
-		Color: run.runtime.capabilities.Stdout.Color,
+		Width:   width,
+		Profile: run.runtime.capabilities.Stdout.Profile,
 	})
+}
+
+func (run *runtimeRun) writeDiagnostic(document PresentationDocument) error {
+	return WriteRich(run.runtime.diagnostics, document, RichOptions{Profile: run.runtime.capabilities.Stderr.Profile})
 }
 
 func (run *runtimeRun) presentPhase(output io.Writer, phase OperationPhase) error {
@@ -543,7 +559,7 @@ func (run *runtimeRun) presentPhase(output io.Writer, phase OperationPhase) erro
 	if phase.Detail != "" {
 		document.Blocks = append(document.Blocks, PresentationBlock{Role: VisualRoleMuted, Text: phase.Detail})
 	}
-	return WritePlain(output, document)
+	return WriteRich(output, document, RichOptions{Profile: run.runtime.capabilities.Stderr.Profile})
 }
 
 func phaseRole(state PhaseState) VisualRole {

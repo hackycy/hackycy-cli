@@ -30,10 +30,10 @@ func newRichForm(handler *InteractionHandler, request InteractionRequest, id uin
 	// the first Enter commits filtering and the next Enter submits the answer.
 	keyMap.Select.SetFilter.SetKeys("enter", "esc")
 	form.WithKeyMap(keyMap)
-	form.WithTheme(focusHuhTheme(handler.capabilities.Stderr.Color))
+	form.WithTheme(focusHuhTheme(handler.capabilities.Stderr.Profile != NoColor))
 	form.SubmitCmd = func() tea.Msg { return richFormSubmittedMsg{id: id} }
 	form.CancelCmd = func() tea.Msg { return richFormCancelledMsg{id: id} }
-	return &richHuhForm{form: form, selectionOrder: selectionOrder, request: request, color: handler.capabilities.Stderr.Color}, func() InteractionAnswer {
+	return &richHuhForm{form: form, selectionOrder: selectionOrder, request: request, color: handler.capabilities.Stderr.Profile != NoColor}, func() InteractionAnswer {
 		if selectionOrder != nil {
 			return selectionOrder.answer()
 		}

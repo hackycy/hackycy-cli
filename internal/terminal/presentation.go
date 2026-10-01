@@ -10,7 +10,7 @@ import (
 )
 
 // RenderPlain renders a durable document without styles or terminal control.
-// Plain Interactive and Automation modes intentionally share this renderer.
+// Machine destinations and unstyled text share this renderer.
 func RenderPlain(document PresentationDocument) string {
 	var output strings.Builder
 	for index, block := range document.Blocks {
@@ -30,15 +30,15 @@ func WritePlain(output io.Writer, document PresentationDocument) error {
 	return writeComplete(output, RenderPlain(document))
 }
 
-// RichOptions controls terminal-owned Rich Interactive presentation behavior.
+// RichOptions controls human-readable text presentation independently of UI mode.
 type RichOptions struct {
-	Width int
-	Color bool
+	Width   int
+	Profile ColorProfile
 }
 
 // WriteRich writes a durable Rich Interactive Command Result to stdout.
 func WriteRich(output io.Writer, document PresentationDocument, options RichOptions) error {
-	return writeComplete(output, renderRich(document, options))
+	return writeComplete(output, options.Profile.ConvertText(renderRich(document, options)))
 }
 
 // TextWidth returns the number of terminal cells occupied by safe visible text.
@@ -70,7 +70,7 @@ func writeComplete(output io.Writer, value string) error {
 
 func renderRich(document PresentationDocument, options RichOptions) string {
 	var output strings.Builder
-	styles := durableRichStyles(options.Color)
+	styles := durableRichStyles(options.Profile != NoColor)
 	grouped := make([]struct {
 		role   VisualRole
 		text   string

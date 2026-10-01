@@ -70,7 +70,7 @@ func TestTerminalDiscoveryDocumentUsesFocusDurableHierarchyWithoutChangingConten
 	}
 
 	var colored bytes.Buffer
-	if err := terminalexperience.WriteRich(&colored, document, terminalexperience.RichOptions{Width: 120, Color: true}); err != nil {
+	if err := terminalexperience.WriteRich(&colored, document, terminalexperience.RichOptions{Width: 120, Profile: terminalexperience.TrueColor}); err != nil {
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	if !strings.Contains(colored.String(), "\x1b[") {
@@ -83,7 +83,7 @@ func TestTerminalDiscoveryDocumentUsesFocusDurableHierarchyWithoutChangingConten
 	}
 
 	var noColor bytes.Buffer
-	if err := terminalexperience.WriteRich(&noColor, document, terminalexperience.RichOptions{Width: 40, Color: false}); err != nil {
+	if err := terminalexperience.WriteRich(&noColor, document, terminalexperience.RichOptions{Width: 40, Profile: terminalexperience.NoColor}); err != nil {
 		t.Fatalf("WriteRich() no-color error = %v", err)
 	}
 	if terminaltest.ContainsTerminalControl(noColor.Bytes()) {

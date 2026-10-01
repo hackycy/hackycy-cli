@@ -14,7 +14,7 @@ import (
 
 func TestClientFRPRuntimeObserverMapsEventsToDiagnostics(t *testing.T) {
 	var stdout, diagnostics bytes.Buffer
-	logRuntime := logging.NewRuntime(logging.Options{Writer: &diagnostics, Format: logging.JSONFormat, Color: false})
+	logRuntime := logging.NewRuntime(logging.Options{Writer: &diagnostics, Format: logging.JSONFormat})
 	logRuntime.SetLevel(logging.Debug)
 	observer := clientFRPRuntimeObserver(logRuntime.Logger("tunnel.client"))
 	totalBytes, percent := int64(100), 25

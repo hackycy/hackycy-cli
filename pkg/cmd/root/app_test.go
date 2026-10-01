@@ -167,8 +167,8 @@ func TestRichTerminalDiscoveryPreservesVersionAndRawCompletion(t *testing.T) {
 		Err: errors,
 		Capabilities: terminal.Capabilities{
 			Interaction: terminal.RichInteractive,
-			Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
-			Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
+			Stdout:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
+			Stderr:      terminal.StreamCapability{Terminal: true, Profile: terminal.TrueColor},
 		},
 		Logging: logging.NewRuntime(logging.Options{Writer: errors}),
 	})

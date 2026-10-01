@@ -86,7 +86,7 @@ func TestResultCheckpointDoesNotEnterTranscriptOrRichRenderer(t *testing.T) {
 	runtime := NewExperience(ExperienceOptions{
 		Capabilities: Capabilities{
 			Interaction: RichInteractive,
-			Stdout:      StreamCapability{Terminal: true, Color: true},
+			Stdout:      StreamCapability{Terminal: true, Profile: TrueColor},
 		},
 		Output: &bytes.Buffer{},
 	})

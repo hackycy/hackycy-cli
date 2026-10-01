@@ -380,7 +380,7 @@ func (adapter *terminalPulseAdapter) automation() bool {
 }
 
 func (adapter *terminalPulseAdapter) richOutput() bool {
-	return adapter.capabilities.Interaction == terminalexperience.RichInteractive && adapter.capabilities.Stdout.Terminal
+	return adapter.capabilities.Stdout.Terminal
 }
 
 func (adapter *terminalPulseAdapter) setFinish(outcome terminalexperience.FinishOutcome, document terminalexperience.PresentationDocument, summary string) {

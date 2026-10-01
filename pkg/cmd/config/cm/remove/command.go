@@ -164,7 +164,7 @@ func executeRemove(options *Options) (RemoveResult, error) {
 		return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Failed, cmRemovePhaseName, nil, err)
 	}
 	document := terminalCMRemoveDocument(fmt.Sprintf("Profile %s removed", safeCMRemoveName(options.Profile)), false)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMRemoveSuccessDocument(options.Profile)
 	}
 	return RemoveResult{}, finishCMRemove(run, phases, terminalexperience.Succeeded, "", &document, nil)

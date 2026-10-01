@@ -118,7 +118,7 @@ func executeUse(options *Options) error {
 	}
 
 	document := terminalCMUseDocument(result)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalCMUseRichDocument(result)
 	}
 	return run.Finish(terminalCMUseFinishRequest(terminalexperience.Succeeded), &document)

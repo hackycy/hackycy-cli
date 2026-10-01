@@ -201,7 +201,7 @@ func executeRemove(options *Options) (RemoveResult, error) {
 		return RemoveResult{}, finishForkRemove(run, phases, terminalexperience.Failed, forkRemovePhaseName, false, nil, err)
 	}
 	document := terminalForkRemoveDocument(forkRemoveSuccessMessage(selected), terminalexperience.VisualRoleSuccess)
-	if caps.Interaction == terminalexperience.RichInteractive && caps.Stdout.Terminal {
+	if caps.Stdout.Terminal {
 		document = terminalForkRemoveSuccessDocument(selected)
 	}
 	return RemoveResult{}, finishForkRemove(run, phases, terminalexperience.Succeeded, "", false, &document, nil)

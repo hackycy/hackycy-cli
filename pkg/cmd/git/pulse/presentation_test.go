@@ -77,7 +77,7 @@ func TestTerminalPulseRichDocumentUsesSemanticFieldHierarchyAndRepositorySpacing
 		t.Fatalf("repository groups are not separated by one blank line: %q", plain)
 	}
 	var colored bytes.Buffer
-	if err := terminalexperience.WriteRich(&colored, document, terminalexperience.RichOptions{Width: 120, Color: true}); err != nil {
+	if err := terminalexperience.WriteRich(&colored, document, terminalexperience.RichOptions{Width: 120, Profile: terminalexperience.TrueColor}); err != nil {
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	if !strings.Contains(colored.String(), "\x1b[") {

@@ -113,7 +113,7 @@ func TestRuntimeBuffersRedactedRecordsForLeaseAwareFIFO(t *testing.T) {
 
 func TestRuntimeReconfiguresExistingLoggerAndColor(t *testing.T) {
 	var output bytes.Buffer
-	runtime := NewRuntime(Options{Writer: &output, Color: true})
+	runtime := NewRuntime(Options{Writer: &output, Profile: terminal.TrueColor})
 	logger := runtime.Logger("scope")
 	runtime.SetLevel(Error)
 	logger.Warn("not written", nil)
@@ -127,9 +127,9 @@ func TestRuntimeReconfiguresExistingLoggerAndColor(t *testing.T) {
 func TestRuntimeUsesLogV2TextStyles(t *testing.T) {
 	var output bytes.Buffer
 	runtime := NewRuntime(Options{
-		Writer: &output,
-		Now:    func() time.Time { return time.Date(2026, 8, 26, 12, 34, 56, 789000000, time.UTC) },
-		Color:  true,
+		Writer:  &output,
+		Now:     func() time.Time { return time.Date(2026, 8, 26, 12, 34, 56, 789000000, time.UTC) },
+		Profile: terminal.TrueColor,
 	})
 	runtime.SetLevel(Debug)
 	logger := runtime.Logger("scope")
@@ -154,6 +154,33 @@ func TestRuntimeUsesLogV2TextStyles(t *testing.T) {
 	}
 }
 
+func TestTextLogsRespectEffectiveColorDepth(t *testing.T) {
+	for _, profile := range []terminal.ColorProfile{terminal.NoColor, terminal.ANSI16, terminal.ANSI256, terminal.TrueColor} {
+		var output bytes.Buffer
+		runtime := NewRuntime(Options{Writer: &output, Profile: profile})
+		runtime.Logger("depth").Warn("message", nil)
+		styles := terminaltest.StyleSequences(output.String())
+		if profile == terminal.NoColor && styles != "" {
+			t.Fatalf("monochrome log styles: %q", styles)
+		}
+		if profile != terminal.NoColor && styles == "" {
+			t.Fatalf("profile %d has no styles", profile)
+		}
+		if profile == terminal.ANSI16 && (strings.Contains(styles, "38;2") || strings.Contains(styles, "38;5")) {
+			t.Fatalf("ANSI16 log styles: %q", styles)
+		}
+		if profile == terminal.ANSI256 && strings.Contains(styles, "38;2") {
+			t.Fatalf("ANSI256 log styles: %q", styles)
+		}
+		output.Reset()
+		runtime.SetFormat(JSONFormat)
+		runtime.Logger("depth").Warn("message", nil)
+		if !json.Valid(bytes.TrimSpace(output.Bytes())) || terminaltest.ContainsTerminalControl(output.Bytes()) {
+			t.Fatalf("JSON styled under profile %d: %q", profile, output.String())
+		}
+	}
+}
+
 func TestRuntimeFormatsTextAndNDJSONRecords(t *testing.T) {
 	timestamp := func() time.Time { return time.Date(2026, 8, 26, 12, 34, 56, 789000000, time.UTC) }
 
@@ -165,7 +192,7 @@ func TestRuntimeFormatsTextAndNDJSONRecords(t *testing.T) {
 	}
 
 	var jsonOutput bytes.Buffer
-	jsonRuntime := NewRuntime(Options{Writer: &jsonOutput, Now: timestamp, Color: true, Format: JSONFormat})
+	jsonRuntime := NewRuntime(Options{Writer: &jsonOutput, Now: timestamp, Profile: terminal.TrueColor, Format: JSONFormat})
 	jsonRuntime.Logger("tunnel.server").Info("Tunnel started", map[string]any{"port": 7000})
 	if got, want := jsonOutput.String(), "{\"timestamp\":\"2026-08-26T12:34:56.789Z\",\"level\":\"info\",\"scope\":\"tunnel.server\",\"message\":\"Tunnel started\",\"context\":{\"port\":7000}}\n"; got != want {
 		t.Fatalf("NDJSON record = %q, want %q", got, want)
@@ -189,7 +216,6 @@ func TestRuntimePlainAndNoColorRecordsStayUnstyled(t *testing.T) {
 			runtime := NewRuntime(Options{
 				Writer: &output,
 				Now:    func() time.Time { return time.Date(2026, 8, 26, 0, 0, 0, 0, time.UTC) },
-				Color:  false,
 				Format: format,
 			})
 			runtime.Logger("scope").Warn("Review this", nil)

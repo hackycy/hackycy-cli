@@ -88,7 +88,7 @@ func TestWriteRichStylesInlineSpansWithoutChangingVisibleContent(t *testing.T) {
 	}}}
 
 	var colored bytes.Buffer
-	if err := terminal.WriteRich(&colored, document, terminal.RichOptions{Width: 120, Color: true}); err != nil {
+	if err := terminal.WriteRich(&colored, document, terminal.RichOptions{Width: 120, Profile: terminal.TrueColor}); err != nil {
 		t.Fatalf("WriteRich(color) error = %v", err)
 	}
 	if got, want := ansi.Strip(colored.String()), terminal.RenderPlain(document); got != want {
@@ -101,7 +101,7 @@ func TestWriteRichStylesInlineSpansWithoutChangingVisibleContent(t *testing.T) {
 	}
 
 	var noColor bytes.Buffer
-	if err := terminal.WriteRich(&noColor, document, terminal.RichOptions{Width: 120, Color: false}); err != nil {
+	if err := terminal.WriteRich(&noColor, document, terminal.RichOptions{Width: 120, Profile: terminal.NoColor}); err != nil {
 		t.Fatalf("WriteRich(NO_COLOR) error = %v", err)
 	}
 	if got, want := noColor.String(), terminal.RenderPlain(document); got != want {
@@ -120,7 +120,7 @@ func TestWriteRichWrapsStyledUnicodeSpansByTerminalCells(t *testing.T) {
 	}}}
 
 	var output bytes.Buffer
-	if err := terminal.WriteRich(&output, document, terminal.RichOptions{Width: 10, Color: true}); err != nil {
+	if err := terminal.WriteRich(&output, document, terminal.RichOptions{Width: 10, Profile: terminal.TrueColor}); err != nil {
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	for _, line := range strings.Split(strings.TrimSuffix(ansi.Strip(output.String()), "\n"), "\n") {
@@ -151,7 +151,7 @@ func TestWriteRichNoColorContainsNoStyleBytes(t *testing.T) {
 	var stdout bytes.Buffer
 	document := terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleTitle, Text: "HACKYCY CLI"}}}
 
-	if err := terminal.WriteRich(&stdout, document, terminal.RichOptions{Color: false}); err != nil {
+	if err := terminal.WriteRich(&stdout, document, terminal.RichOptions{Profile: terminal.NoColor}); err != nil {
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	if got, want := stdout.String(), "HACKYCY CLI\n"; got != want {
@@ -169,7 +169,7 @@ func TestWriteRichUsesFocusDurableHierarchyWithoutChangingDocumentOrTerminalMode
 	}}
 	var stdout bytes.Buffer
 
-	if err := terminal.WriteRich(&stdout, document, terminal.RichOptions{Width: 120, Color: true}); err != nil {
+	if err := terminal.WriteRich(&stdout, document, terminal.RichOptions{Width: 120, Profile: terminal.TrueColor}); err != nil {
 		t.Fatalf("WriteRich() error = %v", err)
 	}
 	output := stdout.String()
@@ -197,7 +197,7 @@ func TestWriteRichUsesSemanticStylesOnPTY(t *testing.T) {
 				{Role: terminal.VisualRoleError, Text: "Failed"},
 			},
 		}
-		if err := terminal.WriteRich(os.Stdout, document, terminal.RichOptions{Color: true}); err != nil {
+		if err := terminal.WriteRich(os.Stdout, document, terminal.RichOptions{Profile: terminal.TrueColor}); err != nil {
 			t.Fatalf("WriteRich() error = %v", err)
 		}
 		return

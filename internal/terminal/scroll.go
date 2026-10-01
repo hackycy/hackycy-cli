@@ -198,7 +198,7 @@ func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
 		blocks = append(blocks, scrollBlock{"metadata", metadata})
 	}
 	for i, document := range model.notices {
-		if text := strings.TrimSuffix(renderRich(document, RichOptions{Color: model.color}), "\n"); text != "" {
+		if text := strings.TrimSuffix(renderRich(document, RichOptions{Profile: profileForColor(model.color)}), "\n"); text != "" {
 			if len(blocks) > 0 {
 				blocks = append(blocks, scrollBlock{fmt.Sprintf("before-notice-%d", i), ""})
 			}

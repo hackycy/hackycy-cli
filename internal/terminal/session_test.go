@@ -1,110 +1,58 @@
 package terminal_test
 
 import (
-	"testing"
-
 	"github.com/hackycy/hackycy-cli/internal/terminal"
-	"github.com/hackycy/hackycy-cli/internal/terminaltest"
+	"testing"
 )
 
 func TestClassify(t *testing.T) {
-	tests := []struct {
-		name  string
-		facts terminaltest.Facts
-		want  terminal.Capabilities
+	for _, test := range []struct {
+		name                     string
+		environment              map[string]string
+		change                   func(*terminal.Facts)
+		mode                     terminal.InteractionMode
+		stdout, stderr           terminal.ColorProfile
+		outControls, errControls bool
 	}{
-		{
-			name:  "recognized terminal is rich",
-			facts: allTerminalFacts(map[string]string{"TERM": "xterm-256color"}),
-			want: terminal.Capabilities{
-				Interaction: terminal.RichInteractive,
-				Stdin:       terminal.StreamCapability{Terminal: true},
-				Stdout:      terminal.StreamCapability{Terminal: true, Color: true},
-				Stderr:      terminal.StreamCapability{Terminal: true, Color: true},
-			},
-		},
-		{
-			name:  "no color keeps rich session",
-			facts: allTerminalFacts(map[string]string{"TERM": "screen-256color", "NO_COLOR": "1"}),
-			want:  terminal.Capabilities{Interaction: terminal.RichInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name:  "empty no color keeps color enabled",
-			facts: allTerminalFacts(map[string]string{"TERM": "tmux-256color", "NO_COLOR": ""}),
-			want:  terminal.Capabilities{Interaction: terminal.RichInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true, Color: true}, Stderr: terminal.StreamCapability{Terminal: true, Color: true}},
-		},
-		{
-			name:  "dumb terminal is plain",
-			facts: allTerminalFacts(map[string]string{"TERM": "dumb"}),
-			want:  terminal.Capabilities{Interaction: terminal.PlainInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name:  "unknown terminal is plain",
-			facts: allTerminalFacts(map[string]string{"TERM": "unrecognized-terminal"}),
-			want:  terminal.Capabilities{Interaction: terminal.PlainInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name:  "missing terminal is plain",
-			facts: allTerminalFacts(nil),
-			want:  terminal.Capabilities{Interaction: terminal.PlainInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name: "redirected stdin is automation",
-			facts: terminaltest.Facts{
-				Stdout:      terminaltest.StreamFacts{Terminal: true},
-				Stderr:      terminaltest.StreamFacts{Terminal: true},
-				Environment: map[string]string{"TERM": "xterm-256color"},
-			},
-			want: terminal.Capabilities{Interaction: terminal.Automation, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name: "redirected stdout keeps rich interaction",
-			facts: terminaltest.Facts{
-				Stdin:       terminaltest.StreamFacts{Terminal: true},
-				Stderr:      terminaltest.StreamFacts{Terminal: true},
-				Environment: map[string]string{"TERM": "xterm-256color"},
-			},
-			want: terminal.Capabilities{Interaction: terminal.RichInteractive, Stdin: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true, Color: true}},
-		},
-		{
-			name: "redirected stderr is automation",
-			facts: terminaltest.Facts{
-				Stdin:       terminaltest.StreamFacts{Terminal: true},
-				Stdout:      terminaltest.StreamFacts{Terminal: true},
-				Environment: map[string]string{"TERM": "xterm-256color"},
-			},
-			want: terminal.Capabilities{Interaction: terminal.Automation, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}},
-		},
-		{
-			name:  "set empty CI is automation",
-			facts: allTerminalFacts(map[string]string{"TERM": "xterm-256color", "CI": ""}),
-			want:  terminal.Capabilities{Interaction: terminal.Automation, Stdin: terminal.StreamCapability{Terminal: true}, Stdout: terminal.StreamCapability{Terminal: true}, Stderr: terminal.StreamCapability{Terminal: true}},
-		},
-	}
-
-	for _, test := range tests {
+		{name: "ordinary terminal", mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "unknown TERM", environment: map[string]string{"TERM": "custom-terminal"}, mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "NO_COLOR", environment: map[string]string{"NO_COLOR": "1"}, mode: terminal.RichInteractive, outControls: true, errControls: true},
+		{name: "NO_COLOR zero", environment: map[string]string{"NO_COLOR": "0"}, mode: terminal.RichInteractive, outControls: true, errControls: true},
+		{name: "NO_COLOR arbitrary", environment: map[string]string{"NO_COLOR": "anything"}, mode: terminal.RichInteractive, outControls: true, errControls: true},
+		{name: "NO_COLOR empty", environment: map[string]string{"NO_COLOR": ""}, mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "NO_COLOR wins force", environment: map[string]string{"NO_COLOR": "0", "FORCE_COLOR": "1"}, mode: terminal.RichInteractive, outControls: true, errControls: true},
+		{name: "dumb", environment: map[string]string{"TERM": "dumb"}, mode: terminal.PlainInteractive},
+		{name: "force on dumb", environment: map[string]string{"TERM": "dumb", "FORCE_COLOR": "1"}, mode: terminal.PlainInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256},
+		{name: "stdin redirected", change: func(f *terminal.Facts) { f.Stdin.Terminal = false }, mode: terminal.Automation, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "stdout redirected", change: func(f *terminal.Facts) { f.Stdout.Terminal = false }, mode: terminal.RichInteractive, stderr: terminal.ANSI256, errControls: true},
+		{name: "stderr redirected", change: func(f *terminal.Facts) { f.Stderr.Terminal = false }, mode: terminal.Automation, stdout: terminal.ANSI256, outControls: true},
+		{name: "all redirected", change: func(f *terminal.Facts) { f.Stdin.Terminal, f.Stdout.Terminal, f.Stderr.Terminal = false, false, false }, mode: terminal.Automation},
+		{name: "forced pipes", environment: map[string]string{"FORCE_COLOR": "1"}, change: func(f *terminal.Facts) { f.Stdin.Terminal, f.Stdout.Terminal, f.Stderr.Terminal = false, false, false }, mode: terminal.Automation, stdout: terminal.ANSI256, stderr: terminal.ANSI256},
+		{name: "empty force on pipes", environment: map[string]string{"FORCE_COLOR": ""}, change: func(f *terminal.Facts) { f.Stdin.Terminal, f.Stdout.Terminal, f.Stderr.Terminal = false, false, false }, mode: terminal.Automation},
+		{name: "CI active", environment: map[string]string{"CI": "1"}, mode: terminal.Automation, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "CI empty", environment: map[string]string{"CI": ""}, mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "CI zero", environment: map[string]string{"CI": " 0 "}, mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "CI false", environment: map[string]string{"CI": " False "}, mode: terminal.RichInteractive, stdout: terminal.ANSI256, stderr: terminal.ANSI256, outControls: true, errControls: true},
+		{name: "unsupported output backend", change: func(f *terminal.Facts) { f.Stdout.Controls, f.Stderr.Controls = false, false }, mode: terminal.PlainInteractive},
+		{name: "force cannot enable unsupported console", environment: map[string]string{"FORCE_COLOR": "1"}, change: func(f *terminal.Facts) { f.Stdout.Controls, f.Stderr.Controls = false, false }, mode: terminal.PlainInteractive},
+		{name: "independent profiles", change: func(f *terminal.Facts) { f.Stdout.Profile, f.Stderr.Profile = terminal.ANSI16, terminal.TrueColor }, mode: terminal.RichInteractive, stdout: terminal.ANSI16, stderr: terminal.TrueColor, outControls: true, errControls: true},
+		{name: "unknown depth fallback", change: func(f *terminal.Facts) { f.Stdout.Profile, f.Stderr.Profile = terminal.NoColor, terminal.NoColor }, mode: terminal.RichInteractive, stdout: terminal.ANSI16, stderr: terminal.ANSI16, outControls: true, errControls: true},
+	} {
 		t.Run(test.name, func(t *testing.T) {
-			if got := terminal.Classify(factsFrom(test.facts)); got != test.want {
-				t.Fatalf("terminal.Classify() = %#v, want %#v", got, test.want)
+			stream := terminal.StreamFacts{Terminal: true, Controls: true, Profile: terminal.ANSI256}
+			facts := terminal.Facts{Stdin: stream, Stdout: stream, Stderr: stream, LookupEnv: func(key string) (string, bool) { value, ok := test.environment[key]; return value, ok }}
+			if test.change != nil {
+				test.change(&facts)
+			}
+			want := terminal.Capabilities{
+				Interaction: test.mode,
+				Stdin:       terminal.StreamCapability{Terminal: facts.Stdin.Terminal},
+				Stdout:      terminal.StreamCapability{Terminal: facts.Stdout.Terminal, Controls: test.outControls, Profile: test.stdout},
+				Stderr:      terminal.StreamCapability{Terminal: facts.Stderr.Terminal, Controls: test.errControls, Profile: test.stderr},
+			}
+			if got := terminal.Classify(facts); got != want {
+				t.Fatalf("Classify() = %#v, want %#v", got, want)
 			}
 		})
-	}
-}
-
-func allTerminalFacts(environment map[string]string) terminaltest.Facts {
-	return terminaltest.Facts{
-		Stdin:       terminaltest.StreamFacts{Terminal: true},
-		Stdout:      terminaltest.StreamFacts{Terminal: true},
-		Stderr:      terminaltest.StreamFacts{Terminal: true},
-		Environment: environment,
-	}
-}
-
-func factsFrom(facts terminaltest.Facts) terminal.Facts {
-	return terminal.Facts{
-		Stdin:     terminal.StreamFacts{Terminal: facts.Stdin.Terminal},
-		Stdout:    terminal.StreamFacts{Terminal: facts.Stdout.Terminal},
-		Stderr:    terminal.StreamFacts{Terminal: facts.Stderr.Terminal},
-		LookupEnv: facts.LookupEnv,
 	}
 }

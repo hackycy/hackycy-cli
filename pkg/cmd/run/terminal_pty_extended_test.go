@@ -75,8 +75,8 @@ func runSelectionPTYHelper(t *testing.T) {
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
 			Stdin:       terminalexperience.StreamCapability{Terminal: true},
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: color},
-			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: color},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
 		},
 		Input: os.Stdin, Output: os.Stdout, Diagnostics: os.Stderr,
 	})
@@ -283,8 +283,8 @@ func runHandoffPTYHelper(t *testing.T) {
 		Capabilities: terminalexperience.Capabilities{
 			Interaction: terminalexperience.RichInteractive,
 			Stdin:       terminalexperience.StreamCapability{Terminal: true},
-			Stdout:      terminalexperience.StreamCapability{Terminal: true, Color: color},
-			Stderr:      terminalexperience.StreamCapability{Terminal: true, Color: color},
+			Stdout:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
+			Stderr:      terminalexperience.StreamCapability{Terminal: true, Profile: terminaltest.Profile(color)},
 		},
 		Input: os.Stdin, Output: os.Stdout, Diagnostics: os.Stderr,
 	})
