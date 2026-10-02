@@ -134,7 +134,7 @@ func (manager *ChunkedUploadManager) Create(owner string, directory WorkspacePat
 	return manager.describe(upload), nil
 }
 
-// Close removes process-local incomplete staging entries and refuses future
+// Close removes process-local staging entries and refuses future
 // upload creation. Completed publications remain in the workspace.
 func (manager *ChunkedUploadManager) Close() error {
 	_, err := manager.closeWithStats()
@@ -153,16 +153,14 @@ func (manager *ChunkedUploadManager) closeWithStats() (removed int, result error
 	for _, upload := range manager.uploads {
 		if upload.complete == nil {
 			removed++
-			temporary = append(temporary, upload.temporary)
 		}
+		temporary = append(temporary, upload.temporary)
 	}
 	manager.uploads = make(map[string]*chunkedUpload)
 	manager.mu.Unlock()
 
 	for _, path := range temporary {
-		if err := manager.workspace.root.Remove(path.rootName()); err != nil && !os.IsNotExist(err) {
-			result = errors.Join(result, workspaceUnavailable("remove chunked upload staging file", err))
-		}
+		result = errors.Join(result, manager.workspace.cleanupStagingFile(path))
 	}
 	return removed, result
 }
@@ -236,33 +234,21 @@ func (manager *ChunkedUploadManager) Complete(owner, id string) (ChunkedUpload, 
 		return ChunkedUpload{}, err
 	}
 	if upload.complete != nil {
+		_ = manager.workspace.cleanupStagingFile(upload.temporary)
 		return manager.describe(upload), nil
 	}
 	if upload.uploaded != upload.size {
 		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_INCOMPLETE", Message: "Chunked upload has not received every byte"}
 	}
-	for index := 0; index <= 9999; index++ {
-		name := upload.filename
-		if index > 0 {
-			name = copyFilename(upload.filename, index)
-		}
-		destination := upload.directory.child(name)
-		if err := manager.workspace.root.Link(upload.temporary.rootName(), destination.rootName()); err != nil {
-			if os.IsExist(err) {
-				continue
-			}
-			return ChunkedUpload{}, workspaceUnavailable("publish chunked upload", err)
-		}
-		if err := manager.workspace.root.Remove(upload.temporary.rootName()); err != nil {
-			return ChunkedUpload{}, workspaceUnavailable("remove chunked upload staging file", err)
-		}
-		result := UploadResult{Filename: name, Path: destination.String(), Size: upload.size}
-		upload.complete = &result
-		upload.updated = manager.now()
-		manager.emitChunkedUploadCompletedLocked(upload)
-		return manager.describe(upload), nil
+	result, err := manager.workspace.publishStagedFile(upload.directory, upload.filename, upload.temporary, upload.size)
+	if err != nil {
+		return ChunkedUpload{}, err
 	}
-	return ChunkedUpload{}, &ServiceError{Code: "NAME_EXHAUSTED", Message: "Too many files have the same name"}
+	upload.complete = &result
+	upload.updated = manager.now()
+	manager.emitChunkedUploadCompletedLocked(upload)
+	_ = manager.workspace.cleanupStagingFile(upload.temporary)
+	return manager.describe(upload), nil
 }
 
 func (manager *ChunkedUploadManager) Cancel(owner, id string) error {
@@ -311,9 +297,7 @@ func (manager *ChunkedUploadManager) pruneLocked(now time.Time) {
 		if upload.complete == nil {
 			manager.emitChunkedUploadExpiredLocked(upload)
 		}
-		if upload.complete == nil {
-			_ = manager.workspace.root.Remove(upload.temporary.rootName())
-		}
+		_ = manager.workspace.cleanupStagingFile(upload.temporary)
 		delete(manager.uploads, id)
 	}
 }

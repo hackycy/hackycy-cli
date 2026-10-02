@@ -8,10 +8,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 var errNoValidArchiveFiles = errors.New("No valid files matched after filtering.")
@@ -133,27 +134,6 @@ func archiveGlobMatches(pattern, relative string) bool {
 	if pattern == "" {
 		return false
 	}
-	return matchArchiveGlobSegments(strings.Split(pattern, "/"), strings.Split(relative, "/"))
-}
-
-func matchArchiveGlobSegments(pattern, target []string) bool {
-	if len(pattern) == 0 {
-		return len(target) == 0
-	}
-	if pattern[0] == "**" {
-		if len(pattern) == 1 {
-			return true
-		}
-		for index := 0; index <= len(target); index++ {
-			if matchArchiveGlobSegments(pattern[1:], target[index:]) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(target) == 0 {
-		return false
-	}
-	matched, err := path.Match(pattern[0], target[0])
-	return err == nil && matched && matchArchiveGlobSegments(pattern[1:], target[1:])
+	matched, err := doublestar.Match(pattern, relative)
+	return err == nil && matched
 }

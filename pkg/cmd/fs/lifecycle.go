@@ -550,6 +550,16 @@ func safeExtractionFailure(err error) (string, string) {
 	return sanitizeFSField(code), sanitizeFSField(message)
 }
 
+func (lifecycle *fsLifecycle) stagingCleanupFailed(temporary WorkspacePath) {
+	lifecycle.schedule(func() {
+		fields := map[string]any{"code": "STAGING_CLEANUP_FAILED"}
+		if path, ok := safeFSWorkspacePath(temporary.String()); ok {
+			fields["stagingPath"] = path
+		}
+		lifecycle.logger.Warn("Staging file cleanup failed", fields)
+	})
+}
+
 func (lifecycle *fsLifecycle) chunkedUploadStarted(task chunkedUploadLifecycleTask) {
 	if lifecycle == nil {
 		return

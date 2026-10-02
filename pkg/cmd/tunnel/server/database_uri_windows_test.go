@@ -23,15 +23,15 @@ func TestDatabaseFileURIUsesWindowsDriverCompatibleDrivePath(t *testing.T) {
 	}
 }
 
-func TestOpenDatabaseSupportsSpacedUnicodeWindowsPath(t *testing.T) {
+func TestOpenServerV1SQLDatabaseSupportsSpacedUnicodeWindowsPath(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "Tunnel Data 数据")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatalf("create test directory: %v", err)
 	}
 	path := filepath.Join(root, "tunnel.sqlite")
-	database, err := openDatabase(path, "test-controller-public-key")
+	database, err := openServerV1SQLDatabase(t.Context(), path)
 	if err != nil {
-		t.Fatalf("openDatabase(%q): %v", path, err)
+		t.Fatalf("openServerV1SQLDatabase(%q): %v", path, err)
 	}
 	if err := database.Close(); err != nil {
 		t.Fatalf("close database: %v", err)

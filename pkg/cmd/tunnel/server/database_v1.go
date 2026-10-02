@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -19,6 +20,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	serverent "github.com/hackycy/hackycy-cli/ent/tunnel/server"
 	"github.com/hackycy/hackycy-cli/internal/windowsacl"
+	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 //go:embed migrations/20260926_v1_initial_schema.sql
@@ -230,6 +232,33 @@ func initializeServerV1Identity(ctx context.Context, client *serverent.Client, p
 		return err
 	}
 	return tx.Commit()
+}
+
+func copyDatabaseFile(sourcePath, targetPath string, required bool) error {
+	info, err := os.Lstat(sourcePath)
+	if errors.Is(err, os.ErrNotExist) && !required {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect Tunnel database file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("Tunnel database file %s must be regular", filepath.Base(sourcePath))
+	}
+	source, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read Tunnel database inspection source: %w", err)
+	}
+	defer source.Close()
+	target, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("create Tunnel database inspection copy: %w", err)
+	}
+	if _, err := io.Copy(target, source); err != nil {
+		_ = target.Close()
+		return fmt.Errorf("copy Tunnel database for inspection: %w", err)
+	}
+	return target.Close()
 }
 
 func inspectServerV1Database(ctx context.Context, path string) (string, error) {

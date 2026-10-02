@@ -543,6 +543,23 @@ func TestFSLifecycleChunkedUploadProjectsSafeStartAndCompletion(t *testing.T) {
 	}
 }
 
+func TestFSLifecycleStagingCleanupWarningUsesStartupGate(t *testing.T) {
+	var output bytes.Buffer
+	logger := logging.NewRuntime(logging.Options{Writer: &output, Format: logging.JSONFormat})
+	lifecycle := newFSLifecycle(logger.Logger("fs"), time.Now)
+	lifecycle.stagingCleanupFailed(mustWorkspacePath(t, ".upload-pending.tmp"))
+	if output.Len() != 0 {
+		t.Fatalf("warning bypassed the startup gate: %s", output.String())
+	}
+	lifecycle.begin(Startup{BindingAddress: "127.0.0.1"})
+	lifecycle.commitStartup()
+	records := decodeFSLifecycleRecords(t, output.String())
+	warning := records[len(records)-1]
+	if warning.Message != "Staging file cleanup failed" || warning.Level != "warn" || warning.Context["code"] != "STAGING_CLEANUP_FAILED" || warning.Context["stagingPath"] != ".upload-pending.tmp" {
+		t.Fatalf("cleanup warning = %#v", warning)
+	}
+}
+
 func TestFSLifecycleChunkedUploadGateCancellationAndExpiry(t *testing.T) {
 	var output bytes.Buffer
 	base := time.Date(2026, 9, 3, 15, 0, 0, 0, time.UTC)

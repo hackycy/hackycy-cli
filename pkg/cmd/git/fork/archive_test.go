@@ -1,117 +1,227 @@
 package fork
 
 import (
+	"archive/tar"
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strconv"
+	"runtime"
+	"strings"
 	"testing"
 )
 
-func TestParseArchiveMatchesTheCurrentTarShapes(t *testing.T) {
-	longName := "root/very/long/path/to/file.txt"
-	archive := gzipArchive(t, appendTarRecords(
-		tarRecord("root/normal.txt", '0', []byte("normal")),
-		tarRecord("././@LongLink", 'L', append([]byte(longName), 0)),
-		tarRecord("ignored", '0', []byte("long-name")),
-		tarRecord("pax-header", 'x', []byte("path=root/from-pax.txt\n")),
-		tarRecord("root/not-from-pax.txt", '0', []byte("pax-ignored")),
-		tarRecord("root/dir/", '5', nil),
-		tarRecord("root/link", '2', []byte("ignored-link")),
-	))
-
-	entries, err := ParseArchive(archive)
-	if err != nil {
-		t.Fatalf("ParseArchive() error = %v", err)
-	}
-	if got, want := entryNames(entries), []string{
-		"root/normal.txt",
-		longName,
-		"pax-header",
-		"root/not-from-pax.txt",
-		"root/dir/",
-		"root/link",
-	}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("entry names = %#v, want %#v", got, want)
-	}
-	if entries[2].Type != archiveOther || entries[3].Name != "root/not-from-pax.txt" {
-		t.Fatalf("PAX handling = %#v, want an ignored PAX entry and unchanged following name", entries[2:4])
-	}
-	if entries[4].Type != archiveDirectory || entries[5].Type != archiveOther {
-		t.Fatalf("entry types = %#v", entries[4:])
-	}
-}
-
-func TestParseArchivePreservesTheCurrentTruncatedTarOutcome(t *testing.T) {
-	entries, err := ParseArchive(gzipArchive(t, []byte("not a complete tar block")))
-	if err != nil {
-		t.Fatalf("ParseArchive() error = %v", err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("ParseArchive() entries = %#v, want none", entries)
-	}
-
-	if _, err := ParseArchive([]byte("not gzip")); err == nil {
-		t.Fatal("ParseArchive() error = nil, want gzip error")
-	}
-}
-
-func TestExtractArchiveUsesStripOneAndRetainsObservedUnsafePathAndModeBehavior(t *testing.T) {
+func TestExtractArchiveStripsOneAndPreservesFilesAndModes(t *testing.T) {
 	root := t.TempDir()
 	destination := filepath.Join(root, "destination")
-	archive := gzipArchive(t, appendTarRecords(
-		tarRecord("root/bin/", '5', nil),
-		tarRecord("root/bin/run", '0', []byte("run")),
-		tarRecord("root/../outside.txt", '0', []byte("escaped")),
-		tarRecord("root/link", '2', []byte("ignored")),
-		tarRecord("top-level-only", '0', []byte("ignored")),
-	))
-
-	if err := ExtractArchive(destination, archive); err != nil {
+	archive := tarFixture(t,
+		tar.Header{Name: "root/bin/", Typeflag: tar.TypeDir, Mode: 0o755},
+		tar.Header{Name: "root/bin/run", Mode: 0o6755},
+		tar.Header{Name: "root/link", Typeflag: tar.TypeSymlink, Linkname: "bin/run"},
+		tar.Header{Name: "root/hard-link", Typeflag: tar.TypeLink, Linkname: "root/bin/run"},
+		tar.Header{Name: "top-level-only"},
+	)
+	if err := ExtractArchive(destination, gzipArchive(t, archive)); err != nil {
 		t.Fatalf("ExtractArchive() error = %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(destination, "bin", "run")); err != nil || string(got) != "run" {
+	if got, err := os.ReadFile(filepath.Join(destination, "bin", "run")); err != nil || string(got) != "contents" {
 		t.Fatalf("extracted run = %q, %v", got, err)
 	}
-	info, err := os.Stat(filepath.Join(destination, "bin", "run"))
-	if err != nil {
-		t.Fatalf("stat extracted run: %v", err)
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(destination, "bin", "run"))
+		if err != nil || info.Mode().Perm() != 0o755 || info.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
+			t.Fatalf("executable permissions were not preserved safely: %v, %v", info, err)
+		}
 	}
-	if info.Mode()&0o100 != 0 {
-		t.Fatalf("extracted mode = %o, want no executable mode preservation", info.Mode())
+	for _, name := range []string{"link", "hard-link", "top-level-only"} {
+		if _, err := os.Lstat(filepath.Join(destination, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("ignored entry %s was extracted: %v", name, err)
+		}
 	}
-	if got, err := os.ReadFile(filepath.Join(root, "outside.txt")); err != nil || string(got) != "escaped" {
-		t.Fatalf("escaped file = %q, %v", got, err)
+}
+
+func TestExtractArchiveSupportsPAXAndGNULongPaths(t *testing.T) {
+	for _, format := range []tar.Format{tar.FormatPAX, tar.FormatGNU} {
+		t.Run(format.String(), func(t *testing.T) {
+			root := t.TempDir()
+			name := strings.Repeat("long/", 30) + "file.txt"
+			archive := gzipArchive(t, tarFixture(t, tar.Header{Name: "root/" + name, Format: format}))
+			if err := ExtractArchive(root, archive); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(name))); err != nil || string(got) != "contents" {
+				t.Fatalf("long path contents = %q, %v", got, err)
+			}
+		})
 	}
-	if _, err := os.Lstat(filepath.Join(destination, "link")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("link entry was extracted: %v", err)
+}
+
+func TestExtractArchiveRejectsUnsafePaths(t *testing.T) {
+	for _, name := range []string{
+		"root/../outside.txt", "../root/file", "/root/file", "root//outside.txt",
+		"C:/root/file", "root/C:/file", `root/..\outside.txt`, `\\server\share\file`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			outside := filepath.Join(root, "outside.txt")
+			if err := os.WriteFile(outside, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			archive := gzipArchive(t, tarFixture(t, tar.Header{Name: name}))
+			if err := ExtractArchive(filepath.Join(root, "destination"), archive); err == nil {
+				t.Fatal("unsafe archive path was accepted")
+			}
+			if got, err := os.ReadFile(outside); err != nil || string(got) != "unchanged" {
+				t.Fatalf("outside file changed: %q, %v", got, err)
+			}
+		})
 	}
-	if _, err := os.Lstat(filepath.Join(destination, "top-level-only")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("top-level-only entry was extracted: %v", err)
+}
+
+func TestExtractArchiveRejectsExistingSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	destination := filepath.Join(root, "destination")
+	outside := filepath.Join(root, "outside")
+	for _, directory := range []string{destination, outside} {
+		if err := os.Mkdir(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(outside, filepath.Join(destination, "link")); err != nil {
+		t.Fatal(err)
+	}
+	archive := gzipArchive(t, tarFixture(t, tar.Header{Name: "root/link/file.txt"}))
+	if err := ExtractArchive(destination, archive); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "file.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("outside file was created: %v", err)
+	}
+}
+
+func TestExtractArchiveDoesNotOverwriteExistingFileOrHardLink(t *testing.T) {
+	for _, hardLink := range []bool{false, true} {
+		t.Run(map[bool]string{false: "file", true: "hard link"}[hardLink], func(t *testing.T) {
+			root := t.TempDir()
+			destination := filepath.Join(root, "destination")
+			if err := os.Mkdir(destination, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			outside := filepath.Join(root, "outside.txt")
+			if err := os.WriteFile(outside, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			target := filepath.Join(destination, "file.txt")
+			if hardLink {
+				if err := os.Link(outside, target); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(target, []byte("unchanged"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := ExtractArchive(destination, gzipArchive(t, tarFixture(t, tar.Header{Name: "root/file.txt"}))); err == nil {
+				t.Fatal("existing file was overwritten")
+			}
+			for _, path := range []string{outside, target} {
+				if got, err := os.ReadFile(path); err != nil || string(got) != "unchanged" {
+					t.Fatalf("existing file changed: %q, %v", got, err)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractArchiveRejectsMalformedAndUnsupportedInput(t *testing.T) {
+	valid := tarFixture(t, tar.Header{Name: "root/file.txt"})
+	badHeader := bytes.Clone(valid)
+	badHeader[0] ^= 1
+	badChecksum := gzipArchive(t, valid)
+	badChecksum[len(badChecksum)-8] ^= 1
+	for _, test := range []struct {
+		name string
+		data []byte
+	}{
+		{"not gzip", []byte("not gzip")},
+		{"short header", gzipArchive(t, []byte("not a complete tar block"))},
+		{"header checksum", gzipArchive(t, badHeader)},
+		{"short body", gzipArchive(t, valid[:512+2])},
+		{"gzip checksum", badChecksum},
+		{"device", gzipArchive(t, tarFixture(t, tar.Header{Name: "root/device", Typeflag: tar.TypeChar}))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ExtractArchive(t.TempDir(), test.data); err == nil {
+				t.Fatal("invalid archive was accepted")
+			}
+		})
+	}
+}
+
+func TestExtractArchiveBoundsEntriesAndAllDecompressedBytes(t *testing.T) {
+	archive := tarFixture(t, tar.Header{Name: "root/file.txt"})
+	for _, test := range []struct {
+		name    string
+		data    []byte
+		bytes   int64
+		entries int
+		want    string
+	}{
+		{"exact limits", archive, int64(len(archive)), 1, ""},
+		{"entry limit", archive, int64(len(archive)), 0, "entry limit"},
+		{"body limit", archive, 513, 1, "uncompressed limit"},
+		{"padding limit", archive, 520, 1, "uncompressed limit"},
+		{"end marker limit", archive, int64(len(archive) - 1), 1, "uncompressed limit"},
+		{"trailing data limit", append(bytes.Clone(archive), make([]byte, 1024)...), int64(len(archive)), 1, "uncompressed limit"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := extractArchive(t.TempDir(), gzipArchive(t, test.data), test.bytes, test.entries)
+			if test.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want %s", err, test.want)
+			}
+		})
 	}
 }
 
 func TestExtractArchiveReportsDestinationWriteFailures(t *testing.T) {
-	root := t.TempDir()
-	destination := filepath.Join(root, "destination")
+	destination := filepath.Join(t.TempDir(), "destination")
 	if err := os.WriteFile(destination, []byte("file"), 0o600); err != nil {
-		t.Fatalf("create destination file: %v", err)
+		t.Fatal(err)
 	}
-	archive := gzipArchive(t, tarRecord("root/file.txt", '0', []byte("contents")))
+	archive := gzipArchive(t, tarFixture(t, tar.Header{Name: "root/file.txt"}))
 	if err := ExtractArchive(destination, archive); err == nil {
-		t.Fatal("ExtractArchive() error = nil, want destination write failure")
+		t.Fatal("destination write failure was accepted")
 	}
 }
 
-func entryNames(entries []ArchiveEntry) []string {
-	names := make([]string, len(entries))
-	for index, entry := range entries {
-		names[index] = entry.Name
+func tarFixture(t *testing.T, headers ...tar.Header) []byte {
+	t.Helper()
+	var buffer bytes.Buffer
+	writer := tar.NewWriter(&buffer)
+	for _, header := range headers {
+		if header.Mode == 0 {
+			header.Mode = 0o644
+		}
+		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
+			header.Size = int64(len("contents"))
+		}
+		if err := writer.WriteHeader(&header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Size > 0 {
+			if _, err := io.WriteString(writer, "contents"); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	return names
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buffer.Bytes()
 }
 
 func gzipArchive(t *testing.T, contents []byte) []byte {
@@ -119,32 +229,10 @@ func gzipArchive(t *testing.T, contents []byte) []byte {
 	var compressed bytes.Buffer
 	writer := gzip.NewWriter(&compressed)
 	if _, err := writer.Write(contents); err != nil {
-		t.Fatalf("write gzip: %v", err)
+		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
-		t.Fatalf("close gzip: %v", err)
+		t.Fatal(err)
 	}
 	return compressed.Bytes()
-}
-
-func appendTarRecords(records ...[]byte) []byte {
-	result := make([]byte, 0)
-	for _, record := range records {
-		result = append(result, record...)
-	}
-	return append(result, make([]byte, 2*tarBlockSize)...)
-}
-
-func tarRecord(name string, typeFlag byte, data []byte) []byte {
-	header := make([]byte, tarBlockSize)
-	copy(header[0:100], []byte(name))
-	copy(header[124:136], []byte(octalField(len(data))))
-	header[156] = typeFlag
-	result := append(header, data...)
-	padded := tarPaddedSize(len(data))
-	return append(result, make([]byte, padded-len(data))...)
-}
-
-func octalField(value int) string {
-	return "00000000000"[:11-len(strconv.FormatInt(int64(value), 8))] + strconv.FormatInt(int64(value), 8) + "\x00"
 }

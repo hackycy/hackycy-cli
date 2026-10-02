@@ -33,6 +33,34 @@ func TestCollectArchiveFilesMatchesRootGlobsExcludesDotsAndDeduplicates(t *testi
 	}
 }
 
+func TestZIPGlobsPreserveNormalizationAndUseDoublestarSyntax(t *testing.T) {
+	for _, test := range []struct {
+		pattern, relative  string
+		archive, workspace bool
+	}{
+		{pattern: "**/*.html", relative: "index.html", archive: true, workspace: true},
+		{pattern: "assets/**/*", relative: "assets/nested/app.js", archive: true, workspace: true},
+		{pattern: "./assets\\**\\*.{js,css}", relative: "assets/app.css", archive: true, workspace: true},
+		{pattern: "[!a]*.js", relative: "bundle.js", archive: true, workspace: true},
+		{pattern: "[!a]*.js", relative: "app.js"},
+		{pattern: "assets/", relative: "assets", workspace: true},
+		{pattern: "", relative: ".", workspace: true},
+		{pattern: "./", relative: ".", workspace: true},
+		{pattern: ".", relative: ".", archive: true, workspace: true},
+		{pattern: "**", relative: ".", archive: true},
+		{pattern: "[", relative: "file.js"},
+	} {
+		t.Run(test.pattern+":"+test.relative, func(t *testing.T) {
+			if got := archiveGlobMatches(test.pattern, test.relative); got != test.archive {
+				t.Fatalf("archiveGlobMatches() = %t, want %t", got, test.archive)
+			}
+			if got := workspacePatternMatches(test.pattern, test.relative); got != test.workspace {
+				t.Fatalf("workspacePatternMatches() = %t, want %t", got, test.workspace)
+			}
+		})
+	}
+}
+
 func TestBuildZipDataPreservesPathsBytesAndSelectedMetadataLoss(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "index.html")

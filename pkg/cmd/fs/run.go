@@ -79,6 +79,7 @@ func (module *Module) Start(ctx context.Context, input Input) (*BrowserOperation
 	if err != nil {
 		return nil, err
 	}
+	runtime.workspace.stagingCleanupWarning = lifecycle.stagingCleanupFailed
 	if runtime.downloads != nil {
 		runtime.downloads.setLifecycle(lifecycle, module.now)
 	}

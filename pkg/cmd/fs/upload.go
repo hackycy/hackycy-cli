@@ -35,12 +35,7 @@ func (workspace *Workspace) Download(directory WorkspacePath, filename string, b
 	if err != nil {
 		return UploadResult{}, workspaceUnavailable("create download staging file", err)
 	}
-	published := false
-	defer func() {
-		if !published {
-			_ = workspace.root.Remove(temporary.rootName())
-		}
-	}()
+	defer workspace.cleanupStagingFile(temporary)
 	written, err := io.Copy(file, &progressUploadReader{reader: body, progress: progress})
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
@@ -48,25 +43,7 @@ func (workspace *Workspace) Download(directory WorkspacePath, filename string, b
 	if err != nil {
 		return UploadResult{}, workspaceUnavailable("write download staging file", err)
 	}
-	for index := 0; index <= 9999; index++ {
-		name := filename
-		if index > 0 {
-			name = copyFilename(filename, index)
-		}
-		destination := directory.child(name)
-		if err := workspace.root.Link(temporary.rootName(), destination.rootName()); err != nil {
-			if os.IsExist(err) {
-				continue
-			}
-			return UploadResult{}, workspaceUnavailable("publish downloaded file", err)
-		}
-		if err := workspace.root.Remove(temporary.rootName()); err != nil {
-			return UploadResult{}, workspaceUnavailable("remove download staging file", err)
-		}
-		published = true
-		return UploadResult{Filename: name, Path: destination.String(), Size: written}, nil
-	}
-	return UploadResult{}, &ServiceError{Code: "NAME_EXHAUSTED", Message: "Too many files have the same name"}
+	return workspace.publishStagedFile(directory, filename, temporary, written)
 }
 
 func (workspace *Workspace) UploadWithProgress(directory WorkspacePath, filename string, body io.Reader, progress func(int64)) (UploadResult, error) {
@@ -84,12 +61,7 @@ func (workspace *Workspace) UploadWithProgress(directory WorkspacePath, filename
 	if err != nil {
 		return UploadResult{}, workspaceUnavailable("create upload staging file", err)
 	}
-	published := false
-	defer func() {
-		if !published {
-			_ = workspace.root.Remove(temporary.rootName())
-		}
-	}()
+	defer workspace.cleanupStagingFile(temporary)
 	written, err := io.Copy(file, io.LimitReader(&progressUploadReader{reader: body, progress: progress}, MaxUploadBytes+1))
 	if closeErr := file.Close(); err == nil {
 		err = closeErr
@@ -100,6 +72,12 @@ func (workspace *Workspace) UploadWithProgress(directory WorkspacePath, filename
 	if written > MaxUploadBytes {
 		return UploadResult{}, &ServiceError{Code: "TOO_LARGE", Message: "Upload exceeds the 1 GiB file limit"}
 	}
+	return workspace.publishStagedFile(directory, filename, temporary, written)
+}
+
+// The caller holds writes and owns staging cleanup. A successful Link commits
+// the publication independently of whether its staging name can be removed.
+func (workspace *Workspace) publishStagedFile(directory WorkspacePath, filename string, temporary WorkspacePath, size int64) (UploadResult, error) {
 	for index := 0; index <= 9999; index++ {
 		name := filename
 		if index > 0 {
@@ -110,15 +88,23 @@ func (workspace *Workspace) UploadWithProgress(directory WorkspacePath, filename
 			if os.IsExist(err) {
 				continue
 			}
-			return UploadResult{}, workspaceUnavailable("publish uploaded file", err)
+			return UploadResult{}, workspaceUnavailable("publish staged file", err)
 		}
-		if err := workspace.root.Remove(temporary.rootName()); err != nil {
-			return UploadResult{}, workspaceUnavailable("remove upload staging file", err)
-		}
-		published = true
-		return UploadResult{Filename: name, Path: destination.String(), Size: written}, nil
+		return UploadResult{Filename: name, Path: destination.String(), Size: size}, nil
 	}
 	return UploadResult{}, &ServiceError{Code: "NAME_EXHAUSTED", Message: "Too many files have the same name"}
+}
+
+func (workspace *Workspace) cleanupStagingFile(temporary WorkspacePath) error {
+	err := workspace.root.Remove(temporary.rootName())
+	if err == nil || os.IsNotExist(err) {
+		return nil
+	}
+	err = workspaceUnavailable("remove staging file", err)
+	if workspace.stagingCleanupWarning != nil {
+		workspace.stagingCleanupWarning(temporary)
+	}
+	return err
 }
 
 type progressUploadReader struct {

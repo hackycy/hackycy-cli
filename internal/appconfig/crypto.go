@@ -3,10 +3,9 @@ package appconfig
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"crypto/hmac"
+	"crypto/pbkdf2"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +23,11 @@ func deriveKey(saltBase64, machineID, username string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode configuration salt: %w", err)
 	}
-	return pbkdf2SHA256([]byte(machineID+":"+username), salt, pbkdf2Iterations, keyLength), nil
+	key, err := pbkdf2.Key(sha256.New, machineID+":"+username, salt, pbkdf2Iterations, keyLength)
+	if err != nil {
+		return nil, fmt.Errorf("derive configuration key: %w", err)
+	}
+	return key, nil
 }
 
 func encryptValue(plaintext string, key []byte, random io.Reader) (string, error) {
@@ -98,28 +101,4 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 		return nil, fmt.Errorf("create configuration GCM: %w", err)
 	}
 	return gcm, nil
-}
-
-func pbkdf2SHA256(password, salt []byte, iterations, length int) []byte {
-	blocks := (length + sha256.Size - 1) / sha256.Size
-	key := make([]byte, 0, blocks*sha256.Size)
-	for block := 1; block <= blocks; block++ {
-		mac := hmac.New(sha256.New, password)
-		_, _ = mac.Write(salt)
-		var counter [4]byte
-		binary.BigEndian.PutUint32(counter[:], uint32(block))
-		_, _ = mac.Write(counter[:])
-		value := mac.Sum(nil)
-		result := append([]byte(nil), value...)
-		for round := 1; round < iterations; round++ {
-			mac.Reset()
-			_, _ = mac.Write(value)
-			value = mac.Sum(nil)
-			for index := range result {
-				result[index] ^= value[index]
-			}
-		}
-		key = append(key, result...)
-	}
-	return key[:length]
 }

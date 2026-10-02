@@ -6,12 +6,13 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 var (
@@ -402,29 +403,8 @@ func workspacePatternMatches(pattern, relative string) bool {
 	if relative == "." {
 		return false
 	}
-	return matchWorkspaceSegments(strings.Split(pattern, "/"), strings.Split(relative, "/"))
-}
-
-func matchWorkspaceSegments(pattern, candidate []string) bool {
-	if len(pattern) == 0 {
-		return len(candidate) == 0
-	}
-	if pattern[0] == "**" {
-		if len(pattern) == 1 {
-			return true
-		}
-		for index := 0; index <= len(candidate); index++ {
-			if matchWorkspaceSegments(pattern[1:], candidate[index:]) {
-				return true
-			}
-		}
-		return false
-	}
-	if len(candidate) == 0 {
-		return false
-	}
-	matched, err := path.Match(pattern[0], candidate[0])
-	return err == nil && matched && matchWorkspaceSegments(pattern[1:], candidate[1:])
+	matched, err := doublestar.Match(pattern, relative)
+	return err == nil && matched
 }
 
 func resolvePackage(root string) PackageSelection {

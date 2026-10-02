@@ -2,6 +2,7 @@ package fs
 
 import (
 	"bytes"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,80 @@ func TestWorkspaceUploadStagesAndPublishesWithoutOverwrite(t *testing.T) {
 			t.Fatalf("staging file remained: %q", entry.Name())
 		}
 	}
+}
+
+func TestWorkspacePublicationKeepsSuccessWhenStagingCleanupFails(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		publish func(*Workspace) (UploadResult, error)
+	}{
+		{"upload", func(workspace *Workspace) (UploadResult, error) {
+			return workspace.Upload(mustWorkspacePath(t, ""), "notes.txt", strings.NewReader("published"))
+		}},
+		{"download", func(workspace *Workspace) (UploadResult, error) {
+			return workspace.Download(mustWorkspacePath(t, ""), "notes.txt", strings.NewReader("published"), nil)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			workspace := openReadOnlyWorkspace(t, root)
+			if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("original"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			failure := &publicationFailureRoot{workspaceRoot: workspace.root, removeErr: errors.New("cleanup failed")}
+			workspace.root = failure
+			warnings := 0
+			workspace.stagingCleanupWarning = func(WorkspacePath) { warnings++ }
+			result, err := test.publish(workspace)
+			if err != nil || result.Path != "notes (1).txt" || result.Size != 9 || warnings != 1 {
+				t.Fatalf("publication = %#v, %v, warnings = %d", result, err, warnings)
+			}
+			for name, want := range map[string]string{"notes.txt": "original", result.Path: "published"} {
+				if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(got) != want {
+					t.Fatalf("%s = %q, %v", name, got, err)
+				}
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 3 {
+				t.Fatalf("expected two final files and a retained staging file: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
+func TestWorkspacePublicationReportsLinkFailureAndRemovesStaging(t *testing.T) {
+	root := t.TempDir()
+	workspace := openReadOnlyWorkspace(t, root)
+	workspace.root = &publicationFailureRoot{workspaceRoot: workspace.root, linkErr: errors.New("link failed")}
+	result, err := workspace.Upload(mustWorkspacePath(t, ""), "notes.txt", strings.NewReader("unpublished"))
+	if !errors.Is(err, ErrWorkspaceUnavailable) || result != (UploadResult{}) {
+		t.Fatalf("Upload() = %#v, %v", result, err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("failed publication left files: %v, %v", entries, err)
+	}
+}
+
+type publicationFailureRoot struct {
+	workspaceRoot
+	removeErr error
+	linkErr   error
+	linkCalls int
+}
+
+func (root *publicationFailureRoot) Remove(name string) error {
+	if root.removeErr != nil {
+		return root.removeErr
+	}
+	return root.workspaceRoot.Remove(name)
+}
+
+func (root *publicationFailureRoot) Link(source, destination string) error {
+	root.linkCalls++
+	if root.linkErr != nil {
+		return root.linkErr
+	}
+	return root.workspaceRoot.Link(source, destination)
 }
 
 func TestReadOnlyHandlerUploadsMultipartFileWhenManaged(t *testing.T) {

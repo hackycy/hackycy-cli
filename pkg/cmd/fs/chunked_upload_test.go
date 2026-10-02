@@ -2,12 +2,16 @@ package fs
 
 import (
 	"bytes"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/hackycy/hackycy-cli/internal/logging"
 )
 
 func TestChunkedUploadManagerOwnsOrderedOwnerBoundPublication(t *testing.T) {
@@ -47,6 +51,79 @@ func TestChunkedUploadManagerOwnsOrderedOwnerBoundPublication(t *testing.T) {
 	}
 	if _, err := workspace.OpenFile(mustWorkspacePath(t, "large.bin")); err != nil {
 		t.Fatalf("published file = %v", err)
+	}
+}
+
+func TestChunkedPublicationReplaysSuccessAndRetriesStagingCleanup(t *testing.T) {
+	for _, retry := range []string{"replay", "expiry", "close"} {
+		t.Run(retry, func(t *testing.T) {
+			root := t.TempDir()
+			workspace := openReadOnlyWorkspace(t, root)
+			failure := &publicationFailureRoot{workspaceRoot: workspace.root, removeErr: errors.New("cleanup failed")}
+			workspace.root = failure
+			var output bytes.Buffer
+			logger := logging.NewRuntime(logging.Options{Writer: &output, Format: logging.JSONFormat})
+			now := time.Now()
+			lifecycle := newFSLifecycle(logger.Logger("fs"), func() time.Time { return now })
+			workspace.stagingCleanupWarning = lifecycle.stagingCleanupFailed
+			lifecycle.begin(Startup{BindingAddress: "127.0.0.1"})
+			lifecycle.commitStartup()
+			manager := newChunkedUploadManager(workspace, 32*1024*1024, func() time.Time { return now }, lifecycle)
+			t.Cleanup(func() { _ = manager.Close() })
+			size := chunkedUploadThreshold + 1
+			created, err := manager.Create("owner", mustWorkspacePath(t, ""), "large.bin", size)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := manager.Append("owner", created.ID, 0, size-1, size, bytes.NewReader(bytes.Repeat([]byte("x"), int(size)))); err != nil {
+				t.Fatal(err)
+			}
+			completed, err := manager.Complete("owner", created.ID)
+			if err != nil || completed.Status != "complete" || completed.Result == nil || completed.Result.Path != "large.bin" {
+				t.Fatalf("Complete() = %#v, %v", completed, err)
+			}
+			current, err := manager.Get("owner", created.ID)
+			if err != nil || current.Status != "complete" {
+				t.Fatalf("Get() = %#v, %v", current, err)
+			}
+			replayed, err := manager.Complete("owner", created.ID)
+			if err != nil || replayed.Result == nil || *replayed.Result != *completed.Result || failure.linkCalls != 1 {
+				t.Fatalf("replayed Complete() = %#v, %v, links = %d", replayed, err, failure.linkCalls)
+			}
+			if strings.Count(output.String(), "Chunked upload completed") != 1 || strings.Count(output.String(), "Staging file cleanup failed") != 2 {
+				t.Fatalf("completion or cleanup warning events = %s", output.String())
+			}
+			staging := filepath.Join(root, ".upload-"+created.ID+".tmp")
+			if _, err := os.Stat(staging); err != nil {
+				t.Fatal(err)
+			}
+			failure.removeErr = nil
+			switch retry {
+			case "replay":
+				if _, err := manager.Complete("owner", created.ID); err != nil {
+					t.Fatal(err)
+				}
+			case "expiry":
+				now = now.Add(6 * time.Minute)
+				if _, err := manager.Get("owner", created.ID); !serviceErrorIs(err, "CHUNKED_UPLOAD_NOT_FOUND") {
+					t.Fatalf("expired Get() = %v", err)
+				}
+			case "close":
+				if removed, err := manager.closeWithStats(); err != nil || removed != 0 {
+					t.Fatalf("closeWithStats() = %d, %v", removed, err)
+				}
+			}
+			if _, err := os.Stat(staging); !os.IsNotExist(err) {
+				t.Fatalf("staging file remained after retry: %v", err)
+			}
+			contents, err := os.ReadFile(filepath.Join(root, "large.bin"))
+			if err != nil || int64(len(contents)) != size || bytes.Count(contents, []byte("x")) != int(size) {
+				t.Fatalf("final file changed: size = %d, err = %v", len(contents), err)
+			}
+			if entries, err := os.ReadDir(root); err != nil || len(entries) != 1 || failure.linkCalls != 1 {
+				t.Fatalf("publication was repeated: %v, %v, links = %d", entries, err, failure.linkCalls)
+			}
+		})
 	}
 }
 

@@ -98,10 +98,11 @@ func (file *OpenedFile) Identity() FileIdentity {
 // Workspace owns a Browse Root handle. All child access uses WorkspacePath,
 // so operating-system paths cannot cross this boundary after construction.
 type Workspace struct {
-	root          workspaceRoot
-	rootDirectory string
-	rootName      string
-	writes        sync.Mutex
+	root                  workspaceRoot
+	rootDirectory         string
+	rootName              string
+	writes                sync.Mutex
+	stagingCleanupWarning func(WorkspacePath)
 }
 
 func OpenWorkspace(directory string) (*Workspace, error) {

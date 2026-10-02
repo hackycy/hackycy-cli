@@ -6,8 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	_ "github.com/ncruces/go-sqlite3/driver"
 )
 
 func TestOpenEmptyServerV1Database(t *testing.T) {
