@@ -30,16 +30,44 @@ const statusOptions: Array<{ status: ComparisonStatus, letter: string, label: st
 const toolbarButtonClass = 'size-8 text-muted-foreground hover:bg-muted/70 hover:text-foreground'
 const toolbarActiveClass = 'bg-muted text-foreground'
 
-function useStoredValue<T>(key: string, fallback: T): [T, (value: T) => void] {
+function useStoredValue<T>(key: string, fallback: T, allowedValues: readonly T[]): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(() => {
-    const stored = localStorage.getItem(key)
-    return stored ? JSON.parse(stored) as T : fallback
+    try {
+      const stored = localStorage.getItem(key)
+      const parsed: unknown = stored === null ? undefined : JSON.parse(stored)
+      return allowedValues.find(allowed => allowed === parsed) ?? fallback
+    }
+    catch {
+      return fallback
+    }
   })
   const update = (next: T): void => {
     setValue(next)
-    localStorage.setItem(key, JSON.stringify(next))
+    try {
+      localStorage.setItem(key, JSON.stringify(next))
+    }
+    catch {}
   }
   return [value, update]
+}
+
+const layoutStorage = {
+  getItem(key: string): string | null {
+    try {
+      const stored = localStorage.getItem(key)
+      const parsed: unknown = stored === null ? undefined : JSON.parse(stored)
+      return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? stored : null
+    }
+    catch {
+      return null
+    }
+  },
+  setItem(key: string, value: string): void {
+    try {
+      localStorage.setItem(key, value)
+    }
+    catch {}
+  },
 }
 
 export function App(): React.JSX.Element {
@@ -49,15 +77,16 @@ export function App(): React.JSX.Element {
   const [openTabs, setOpenTabs] = useState<Entry[]>([])
   const [activeEntryId, setActiveEntryId] = useState<number>()
   const [mobileSidebar, setMobileSidebar] = useState(false)
-  const [diffStyle, setDiffStyle] = useStoredValue<'split' | 'unified'>('ycy-diff-style', 'split')
-  const [wrap, setWrap] = useStoredValue('ycy-diff-wrap', false)
-  const [ignoreWhitespace, setIgnoreWhitespace] = useStoredValue('ycy-diff-whitespace', false)
-  const [theme, setTheme] = useStoredValue<'light' | 'dark'>('ycy-diff-theme', 'light')
+  const [diffStyle, setDiffStyle] = useStoredValue<'split' | 'unified'>('ycy-diff-style', 'split', ['split', 'unified'])
+  const [wrap, setWrap] = useStoredValue('ycy-diff-wrap', false, [false, true])
+  const [ignoreWhitespace, setIgnoreWhitespace] = useStoredValue('ycy-diff-whitespace', false, [false, true])
+  const [theme, setTheme] = useStoredValue<'light' | 'dark'>('ycy-diff-theme', 'light', ['light', 'dark'])
   const [mobile, setMobile] = useState(matchMedia('(max-width: 899px)').matches)
   const savedDesktopLayout = useDefaultLayout({
     id: 'ycy-diff-layout',
     panelIds: ['sidebar', 'feed'],
     onlySaveAfterUserInteractions: true,
+    storage: layoutStorage,
   })
   const snapshotId = state?.snapshot?.id
   const activeEntry = openTabs.find(entry => entry.id === activeEntryId)
