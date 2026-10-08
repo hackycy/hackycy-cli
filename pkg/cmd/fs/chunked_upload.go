@@ -11,6 +11,7 @@ import (
 )
 
 const chunkedUploadThreshold int64 = 20 * 1024 * 1024
+const maxChunkedUploadInt64 = int64(^uint64(0) >> 1)
 
 type ChunkedUploadManager struct {
 	workspace *Workspace
@@ -200,23 +201,39 @@ func (manager *ChunkedUploadManager) Append(owner, id string, start, end, total 
 	if upload.complete != nil {
 		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_OFFSET_MISMATCH", Message: "Chunked upload is already complete"}
 	}
-	if total != upload.size || start != upload.uploaded || end < start || end-start+1 > manager.chunkSize {
+	if total != upload.size || start != upload.uploaded || start < 0 || end < start || end >= total {
+		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_OFFSET_MISMATCH", Message: "Chunk range does not match the confirmed upload offset"}
+	}
+	expected := end - start + 1
+	if expected <= 0 || expected == maxChunkedUploadInt64 || expected > manager.chunkSize {
 		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_OFFSET_MISMATCH", Message: "Chunk range does not match the confirmed upload offset"}
 	}
 	file, err := manager.workspace.root.OpenFile(upload.temporary.rootName(), os.O_WRONLY, 0)
 	if err != nil {
 		return ChunkedUpload{}, workspaceUnavailable("open chunked upload staging file", err)
 	}
-	defer file.Close()
+	rollback := func(base error) (ChunkedUpload, error) {
+		truncateErr := file.Truncate(start)
+		closeErr := file.Close()
+		if truncateErr != nil || closeErr != nil {
+			manager.abortLocked(upload)
+			return ChunkedUpload{}, workspaceUnavailable("rollback chunked upload staging file", errors.Join(truncateErr, closeErr))
+		}
+		return ChunkedUpload{}, base
+	}
 	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return ChunkedUpload{}, workspaceUnavailable("seek chunked upload staging file", err)
+		return rollback(workspaceUnavailable("seek chunked upload staging file", err))
 	}
-	written, err := io.Copy(file, io.LimitReader(body, manager.chunkSize+1))
+	written, err := io.Copy(file, io.LimitReader(body, expected+1))
 	if err != nil {
-		return ChunkedUpload{}, workspaceUnavailable("write upload chunk", err)
+		return rollback(workspaceUnavailable("write upload chunk", err))
 	}
-	if written != end-start+1 || written > manager.chunkSize {
-		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_OFFSET_MISMATCH", Message: "Chunk body length does not match Content-Range"}
+	if written != expected {
+		return rollback(&ServiceError{Code: "CHUNKED_UPLOAD_OFFSET_MISMATCH", Message: "Chunk body length does not match Content-Range"})
+	}
+	if err := file.Close(); err != nil {
+		manager.abortLocked(upload)
+		return ChunkedUpload{}, workspaceUnavailable("close chunked upload staging file", err)
 	}
 	upload.uploaded += written
 	upload.updated = manager.now()
@@ -239,6 +256,27 @@ func (manager *ChunkedUploadManager) Complete(owner, id string) (ChunkedUpload, 
 	}
 	if upload.uploaded != upload.size {
 		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_INCOMPLETE", Message: "Chunked upload has not received every byte"}
+	}
+	file, err := manager.workspace.root.OpenFile(upload.temporary.rootName(), os.O_WRONLY, 0)
+	if err != nil {
+		return ChunkedUpload{}, workspaceUnavailable("open chunked upload staging file", err)
+	}
+	info, statErr := file.Stat()
+	if statErr != nil {
+		closeErr := file.Close()
+		return ChunkedUpload{}, workspaceUnavailable("inspect chunked upload staging file", errors.Join(statErr, closeErr))
+	}
+	if info.Size() != upload.size {
+		closeErr := file.Close()
+		if closeErr != nil {
+			return ChunkedUpload{}, workspaceUnavailable("close chunked upload staging file", closeErr)
+		}
+		return ChunkedUpload{}, &ServiceError{Code: "CHUNKED_UPLOAD_INCOMPLETE", Message: "Chunked upload staging file size does not match the declared upload size"}
+	}
+	syncErr := file.Sync()
+	closeErr := file.Close()
+	if syncErr != nil || closeErr != nil {
+		return ChunkedUpload{}, workspaceUnavailable("flush chunked upload staging file", errors.Join(syncErr, closeErr))
 	}
 	result, err := manager.workspace.publishStagedFile(upload.directory, upload.filename, upload.temporary, upload.size)
 	if err != nil {
@@ -267,6 +305,12 @@ func (manager *ChunkedUploadManager) Cancel(owner, id string) error {
 	manager.emitChunkedUploadCancelledLocked(upload)
 	delete(manager.uploads, id)
 	return nil
+}
+
+func (manager *ChunkedUploadManager) abortLocked(upload *chunkedUpload) {
+	manager.emitChunkedUploadCancelledLocked(upload)
+	delete(manager.uploads, upload.id)
+	_ = manager.workspace.cleanupStagingFile(upload.temporary)
 }
 
 func (manager *ChunkedUploadManager) describe(upload *chunkedUpload) ChunkedUpload {
