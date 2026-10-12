@@ -7,7 +7,7 @@ type FileWriter interface {
 	WriteFile(path string, content []byte) error
 }
 
-// WriteOutput resolves an output target from the working directory and overwrites it.
+// WriteOutput resolves an output target from the working directory and publishes it atomically.
 func WriteOutput(workingDirectory, target, content string, writer FileWriter) error {
 	return writer.WriteFile(resolveOutputPath(workingDirectory, target), []byte(content))
 }

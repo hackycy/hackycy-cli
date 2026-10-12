@@ -67,7 +67,7 @@ type ArchiveBuilder interface {
 	BuildZipData([]ArchiveEntry, string, string) ([]byte, int, error)
 }
 
-// ArchiveWriter owns the final direct output publication.
+// ArchiveWriter owns atomic publication of the completed archive.
 type ArchiveWriter interface {
 	WriteZipFile(string, []byte) error
 }

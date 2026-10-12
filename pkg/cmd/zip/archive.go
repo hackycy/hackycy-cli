@@ -100,9 +100,9 @@ func BuildZipData(entries []ArchiveEntry, outputPath, withDir string) ([]byte, i
 	return buffer.Bytes(), includedCount, nil
 }
 
-// WriteZipFile publishes a complete archive buffer directly at its destination.
+// WriteZipFile atomically publishes a complete archive buffer at its destination.
 func WriteZipFile(outputPath string, data []byte) error {
-	return os.WriteFile(outputPath, data, 0o666)
+	return publishZipFile(outputPath, data, defaultZipPublishOps())
 }
 
 func archiveFilesUnder(root string) ([]ArchiveEntry, error) {

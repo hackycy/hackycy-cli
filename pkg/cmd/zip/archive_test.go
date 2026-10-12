@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -138,6 +139,18 @@ func TestBuildZipDataRejectsOnlyTheExistingOutput(t *testing.T) {
 func TestWriteZipFileOverwritesTheExistingDestination(t *testing.T) {
 	output := filepath.Join(t.TempDir(), "archive.zip")
 	writeZipFile(t, output, "old archive")
+	var oldReader *os.File
+	if runtime.GOOS != "windows" {
+		var err error
+		oldReader, err = os.Open(output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer oldReader.Close()
+		if err := os.Chmod(output, 0o660); err != nil {
+			t.Fatalf("Chmod(): %v", err)
+		}
+	}
 	want := []byte("new archive")
 	if err := WriteZipFile(output, want); err != nil {
 		t.Fatalf("WriteZipFile() error = %v", err)
@@ -148,6 +161,19 @@ func TestWriteZipFileOverwritesTheExistingDestination(t *testing.T) {
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("written bytes = %q, want %q", got, want)
+	}
+	if runtime.GOOS != "windows" {
+		oldContents, err := io.ReadAll(oldReader)
+		if err != nil || string(oldContents) != "old archive" {
+			t.Fatalf("publication changed an open reader's original archive: %q, %v", oldContents, err)
+		}
+		info, err := os.Stat(output)
+		if err != nil {
+			t.Fatalf("Stat() = %v", err)
+		}
+		if got, want := info.Mode().Perm(), os.FileMode(0o660); got != want {
+			t.Fatalf("published mode = %04o, want %04o", got, want)
+		}
 	}
 }
 

@@ -280,7 +280,7 @@ func (osReader) ReadFile(path string) ([]byte, error) {
 type osWriter struct{}
 
 func (osWriter) WriteFile(path string, content []byte) error {
-	return os.WriteFile(path, content, 0o666)
+	return (osExportEnvWriter{}).WriteFile(path, content)
 }
 
 type countingFailureReader struct {

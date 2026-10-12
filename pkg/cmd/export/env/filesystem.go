@@ -11,5 +11,5 @@ func (osExportEnvReader) ReadFile(path string) ([]byte, error) {
 type osExportEnvWriter struct{}
 
 func (osExportEnvWriter) WriteFile(path string, content []byte) error {
-	return os.WriteFile(path, content, 0o666)
+	return publishExportEnvFile(path, content, defaultExportEnvPublishOps())
 }
