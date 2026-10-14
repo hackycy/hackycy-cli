@@ -12,7 +12,6 @@ import (
 
 	"github.com/hackycy/hackycy-cli/internal/gitprocess"
 	"github.com/hackycy/hackycy-cli/internal/terminal"
-	"golang.org/x/term"
 )
 
 const versionFile = "cmd/ycy/VERSION"
@@ -114,23 +113,11 @@ func (prompter *lazyPrompter) ensure() (releasePrompter, error) {
 	return inner, nil
 }
 
-func newTerminalPrompter(input io.Reader, output, diagnostics *os.File) (*terminalPrompter, error) {
-	inputFile, inputOK := input.(*os.File)
-	caps := terminal.Classify(terminal.Facts{
-		Stdin:     terminal.StreamFacts{Terminal: inputOK && term.IsTerminal(int(inputFile.Fd()))},
-		Stdout:    terminal.StreamFacts{Terminal: output != nil && term.IsTerminal(int(output.Fd()))},
-		Stderr:    terminal.StreamFacts{Terminal: diagnostics != nil && term.IsTerminal(int(diagnostics.Fd()))},
-		LookupEnv: os.LookupEnv,
-	})
-	if caps.Interaction == terminal.Automation {
+func newTerminalPrompter(options terminal.ExperienceOptions) (*terminalPrompter, error) {
+	if options.Capabilities.Interaction == terminal.Automation {
 		return nil, errors.New("release requires an interactive terminal; version selection is not available in automation")
 	}
-	experience := terminal.NewExperience(terminal.ExperienceOptions{
-		Capabilities: caps,
-		Input:        input,
-		Output:       output,
-		Diagnostics:  diagnostics,
-	})
+	experience := terminal.NewExperience(options)
 	run, err := experience.OpenConsole(context.Background(), releaseConsoleDescriptor())
 	if err != nil {
 		return nil, err
@@ -228,7 +215,7 @@ func main() {
 	os.Exit(runCLI(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
 
-func runCLI(ctx context.Context, args []string, input *os.File, output, diagnostics io.Writer) int {
+func runCLI(ctx context.Context, args []string, input, output, diagnostics *os.File) (code int) {
 	if len(args) > 0 {
 		if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
 			fmt.Fprintln(diagnostics, "Usage: make release")
@@ -243,6 +230,19 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 		fmt.Fprintln(diagnostics, "release: DRY_RUN must be 0 or 1")
 		return 1
 	}
+	invocation, err := terminal.PrepareInvocation(input, output, diagnostics, os.Environ())
+	if err != nil {
+		writeReleaseError(diagnostics, err)
+		return 1
+	}
+	defer func() {
+		if err := invocation.Close(); err != nil {
+			writeReleaseError(diagnostics, fmt.Errorf("restore terminal: %w", err))
+			if code == 0 {
+				code = 1
+			}
+		}
+	}()
 	options := releaseOptions{
 		Git:         &gitprocess.Runner{},
 		Commands:    osCommandRunner{},
@@ -251,7 +251,13 @@ func runCLI(ctx context.Context, args []string, input *os.File, output, diagnost
 		DryRun:      dryRun == "1",
 	}
 	prompter := &lazyPrompter{new: func() (releasePrompter, error) {
-		return newTerminalPrompter(input, os.Stdout, os.Stderr)
+		return newTerminalPrompter(terminal.ExperienceOptions{
+			Capabilities: invocation.Capabilities,
+			Environment:  invocation.Environment,
+			Input:        input,
+			Output:       output,
+			Diagnostics:  diagnostics,
+		})
 	}}
 	options.Prompt = prompter
 	if err := runRelease(ctx, options); err != nil {

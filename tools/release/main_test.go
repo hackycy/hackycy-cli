@@ -205,7 +205,9 @@ func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
 		return
 	}
 
-	command := exec.Command(os.Args[0], "-test.run=^TestReleaseRestoresRichTerminalBeforeRunningChecks$")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestReleaseRestoresRichTerminalBeforeRunningChecks$")
 	command.Env = append(releasePTYEnvironment(), helperEnvironment+"=1", "TERM=xterm-256color")
 	process, err := terminaltest.StartPTY(command)
 	if errors.Is(err, terminaltest.ErrPTYUnsupported) {
@@ -226,6 +228,9 @@ func TestReleaseRestoresRichTerminalBeforeRunningChecks(t *testing.T) {
 	waitForReleasePTYText(t, output, "Fast-forward main")
 	waitForReleasePTYText(t, output, "Validate release baseline")
 	waitForReleasePTYText(t, output, "Select release version")
+	if releaseAlternateScreenEntry(output.String()) < 0 {
+		t.Fatalf("release selection did not start Rich UI: %q", output.String())
+	}
 	writeReleasePTYInput(t, process, "\r")
 	waitForReleasePTYText(t, output, "Create release?")
 	writeReleasePTYInput(t, process, "y")
@@ -603,7 +608,22 @@ func writeReleaseVersion(t *testing.T) string {
 func runReleaseRichHandoffHelper(t *testing.T) {
 	t.Helper()
 	root := writeReleaseVersion(t)
-	prompt, err := newTerminalPrompter(os.Stdin, os.Stdout, os.Stderr)
+	invocation, err := terminal.PrepareInvocation(os.Stdin, os.Stdout, os.Stderr, os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := invocation.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+	prompt, err := newTerminalPrompter(terminal.ExperienceOptions{
+		Capabilities: invocation.Capabilities,
+		Environment:  invocation.Environment,
+		Input:        os.Stdin,
+		Output:       os.Stdout,
+		Diagnostics:  os.Stderr,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,6 +691,8 @@ func respondToReleaseTerminalQueries(t *testing.T, process *terminaltest.PTYProc
 		writeReleasePTYInput(t, process, "\x1b]11;rgb:0000/0000/0000\x1b\\\x1b[1;1R")
 	case <-output.prompt:
 		// The terminal may have enough cached capability state to render immediately.
+	case <-time.After(5 * time.Second):
+		t.Fatalf("release did not render a prompt or terminal query: %q", output.String())
 	}
 }
 
@@ -693,6 +715,14 @@ func writeReleasePTYInput(t *testing.T, process *terminaltest.PTYProcess, value 
 	}
 }
 
+func releaseAlternateScreenEntry(output string) int {
+	entry := -1
+	for _, code := range []string{"\x1b[?1049h", "\x1b[?1047h", "\x1b[?47h"} {
+		entry = max(entry, strings.Index(output, code))
+	}
+	return entry
+}
+
 func releaseAlternateScreenExit(output string) int {
 	exit := -1
 	for _, code := range []string{"\x1b[?1049l", "\x1b[?1047l", "\x1b[?47l"} {
@@ -707,8 +737,11 @@ func releasePTYEnvironment() []string {
 		"CLICOLOR":       {},
 		"CLICOLOR_FORCE": {},
 		"COLORTERM":      {},
+		"DRY_RUN":        {},
+		"FORCE_COLOR":    {},
 		"NO_COLOR":       {},
 		"TERM":           {},
+		"TTY_FORCE":      {},
 	}
 	environment := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
