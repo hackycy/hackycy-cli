@@ -351,8 +351,14 @@ func assertForkAddPlainPTYOutput(t *testing.T, output, scenario string) {
 	if strings.Contains(output, "secret-token") || terminaltest.ContainsTerminalControl([]byte(output)) {
 		t.Fatalf("Plain PTY output leaked a credential or terminal control: %q", output)
 	}
-	if strings.Contains(output, "YCY / config fork add") {
-		t.Fatalf("Plain PTY output entered the Rich console: %q", output)
+	if scenario == "success" {
+		assertForkAddOrderedOutput(t, output, []string{"Saved provider instance", "YCY / config fork add", "Add fork provider instance", "Instance work (gitlab.example) added successfully"})
+	} else {
+		for _, heading := range []string{"YCY / config fork add", "Add fork provider instance"} {
+			if strings.Contains(output, heading) {
+				t.Fatalf("Plain PTY %s unexpectedly contains a result heading: %q", scenario, output)
+			}
+		}
 	}
 	switch scenario {
 	case "success", "redirected-success":

@@ -490,8 +490,14 @@ func TestGitForkHandlerUsesEncryptedConfigAndALocalProviderArchive(t *testing.T)
 	if contents, err := os.ReadFile(filepath.Join(destination, "README.md")); err != nil || string(contents) != "archive contents\n" {
 		t.Fatalf("archive contents = %q, %v", contents, err)
 	}
-	if info, err := os.Stat(filepath.Join(destination, "bin", "run")); err != nil || info.Mode()&0o100 != 0 {
-		t.Fatalf("archive mode = (%v, %v), want no executable bit", info, err)
+	if contents, err := os.ReadFile(filepath.Join(destination, "bin", "run")); err != nil || string(contents) != "#!/bin/sh\n" {
+		t.Fatalf("archive script contents = %q, %v", contents, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(destination, "bin", "run"))
+		if err != nil || info.Mode().Perm() != 0o755 || info.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
+			t.Fatalf("archive executable permissions were not preserved safely: %v, %v", info, err)
+		}
 	}
 	text := output.String()
 	if !strings.Contains(text, "Done! Project created at "+destination) {

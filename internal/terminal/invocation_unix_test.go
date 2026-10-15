@@ -9,20 +9,18 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hackycy/hackycy-cli/internal/terminal"
 	"github.com/hackycy/hackycy-cli/internal/terminaltest"
-	"golang.org/x/term"
 )
 
 func TestUnixInvocationAutomaticPTYCapabilities(t *testing.T) {
 	const helper = "YCY_UNIX_INVOCATION_HELPER"
 	if scenario := os.Getenv(helper); scenario != "" {
-		before, err := term.GetState(int(os.Stdin.Fd()))
+		before, err := captureInvocationTerminalState(int(os.Stdin.Fd()))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,12 +51,12 @@ func TestUnixInvocationAutomaticPTYCapabilities(t *testing.T) {
 		if err := run.Close(); err != nil {
 			t.Fatal(err)
 		}
-		after, err := term.GetState(int(os.Stdin.Fd()))
+		after, err := captureInvocationTerminalState(int(os.Stdin.Fd()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !reflect.DeepEqual(before, after) {
-			t.Fatal("Unix raw input was not restored")
+		if !invocationTerminalStatesEqual(before, after) {
+			t.Fatalf("Unix raw input was not restored: before=%#v after=%#v", before, after)
 		}
 		result := runtime.Open(context.Background())
 		if err := result.Result(terminal.PresentationDocument{Blocks: []terminal.PresentationBlock{{Role: terminal.VisualRoleTitle, Text: "PTY_RESULT"}}}); err != nil {
@@ -83,7 +81,7 @@ func TestUnixInvocationAutomaticPTYCapabilities(t *testing.T) {
 			command.Env = append(command.Env, helper+"="+scenario)
 			switch scenario {
 			case "unknown-term":
-				command.Env = append(command.Env, "TERM=custom-terminal")
+				command.Env = append(command.Env, "TERM=ycy-unknown")
 			case "no-color":
 				command.Env = append(command.Env, "NO_COLOR=0")
 			case "dumb":

@@ -19,6 +19,7 @@ func TestExtractArchiveStripsOneAndPreservesFilesAndModes(t *testing.T) {
 	archive := tarFixture(t,
 		tar.Header{Name: "root/bin/", Typeflag: tar.TypeDir, Mode: 0o755},
 		tar.Header{Name: "root/bin/run", Mode: 0o6755},
+		tar.Header{Name: "root/README.md", Mode: 0o644},
 		tar.Header{Name: "root/link", Typeflag: tar.TypeSymlink, Linkname: "bin/run"},
 		tar.Header{Name: "root/hard-link", Typeflag: tar.TypeLink, Linkname: "root/bin/run"},
 		tar.Header{Name: "top-level-only"},
@@ -26,13 +27,23 @@ func TestExtractArchiveStripsOneAndPreservesFilesAndModes(t *testing.T) {
 	if err := ExtractArchive(destination, gzipArchive(t, archive)); err != nil {
 		t.Fatalf("ExtractArchive() error = %v", err)
 	}
-	if got, err := os.ReadFile(filepath.Join(destination, "bin", "run")); err != nil || string(got) != "contents" {
-		t.Fatalf("extracted run = %q, %v", got, err)
+	for _, name := range []string{"bin/run", "README.md"} {
+		if got, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(name))); err != nil || string(got) != "contents" {
+			t.Fatalf("extracted %s = %q, %v", name, got, err)
+		}
 	}
 	if runtime.GOOS != "windows" {
-		info, err := os.Stat(filepath.Join(destination, "bin", "run"))
-		if err != nil || info.Mode().Perm() != 0o755 || info.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
-			t.Fatalf("executable permissions were not preserved safely: %v, %v", info, err)
+		for _, file := range []struct {
+			name string
+			mode os.FileMode
+		}{
+			{name: "bin/run", mode: 0o755},
+			{name: "README.md", mode: 0o644},
+		} {
+			info, err := os.Stat(filepath.Join(destination, filepath.FromSlash(file.name)))
+			if err != nil || info.Mode().Perm() != file.mode || info.Mode()&(os.ModeSetuid|os.ModeSetgid) != 0 {
+				t.Fatalf("%s permissions were not preserved safely (want %o): %v, %v", file.name, file.mode, info, err)
+			}
 		}
 	}
 	for _, name := range []string{"link", "hard-link", "top-level-only"} {
