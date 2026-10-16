@@ -201,6 +201,7 @@ type releasePlan struct {
 	current    stableVersion
 	candidates []versionCandidate
 	baseHead   string
+	resume     bool
 }
 
 // confirmedRelease is the selected release plan after the user has approved it.
@@ -396,6 +397,7 @@ func prepareRelease(ctx context.Context, options releaseOptions, preflight termi
 	}
 	var current stableVersion
 	var currentTag string
+	var resume bool
 	if err := releasePreflightStep(preflight, releaseValidateBaselinePhaseID, "Reading VERSION and release tags", func() (string, error) {
 		currentText, err := os.ReadFile(filepath.Join(root, versionFile))
 		if err != nil {
@@ -407,8 +409,12 @@ func prepareRelease(ctx context.Context, options releaseOptions, preflight termi
 			return "", fmt.Errorf("%s: %w", versionFile, err)
 		}
 		currentTag = "v" + current.String()
-		if err := validateCurrentTag(ctx, options, currentTag, current); err != nil {
+		resume, err = validateCurrentTag(ctx, options, currentTag, current)
+		if err != nil {
 			return "", err
+		}
+		if resume {
+			return currentTag + " has an unfinished release", nil
 		}
 		return currentTag + " is the release baseline", nil
 	}); err != nil {
@@ -418,6 +424,10 @@ func prepareRelease(ctx context.Context, options releaseOptions, preflight termi
 	var baseHead string
 	if err := releasePreflightStep(preflight, releaseSuggestVersionPhaseID, "Scanning commits since "+currentTag, func() (string, error) {
 		var err error
+		if resume {
+			baseHead, err = gitValue(ctx, options, []string{"rev-parse", "HEAD"})
+			return "Resume " + currentTag + " without changing VERSION", err
+		}
 		conventional, err = resolveConventionalBump(ctx, options, currentTag)
 		if err != nil {
 			return "", err
@@ -438,6 +448,7 @@ func prepareRelease(ctx context.Context, options releaseOptions, preflight termi
 		current:    current,
 		candidates: candidates(current, conventional),
 		baseHead:   baseHead,
+		resume:     resume,
 	}, nil
 }
 
@@ -456,17 +467,25 @@ func releasePreflightStep(work terminal.WorkSession, id, activeDetail string, op
 }
 
 func confirmRelease(ctx context.Context, options releaseOptions, plan releasePlan) (confirmedRelease, error) {
-	selected, err := options.Prompt.Select(ctx, "Select release version", "Current version "+plan.current.String(), candidateOptions(plan.candidates))
-	if err != nil {
-		return confirmedRelease{}, fmt.Errorf("select release version: %w", err)
-	}
-	target, ok := candidateByKind(plan.candidates, bumpKind(selected))
-	if !ok {
-		return confirmedRelease{}, fmt.Errorf("unknown release selection: %s", selected)
+	target := versionCandidate{Version: plan.current.String()}
+	message := "Resume release?"
+	mutation := "reuse release commit, push main, create or reuse annotated tag, and push tag"
+	if !plan.resume {
+		selected, err := options.Prompt.Select(ctx, "Select release version", "Current version "+plan.current.String(), candidateOptions(plan.candidates))
+		if err != nil {
+			return confirmedRelease{}, fmt.Errorf("select release version: %w", err)
+		}
+		var ok bool
+		target, ok = candidateByKind(plan.candidates, bumpKind(selected))
+		if !ok {
+			return confirmedRelease{}, fmt.Errorf("unknown release selection: %s", selected)
+		}
+		message = "Create release?"
+		mutation = "update " + versionFile + ", commit, push main, create and push annotated tag"
 	}
 	targetTag := "v" + target.Version
-	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check\nMutation: update %s, commit, push main, create and push annotated tag", plan.current.String(), target.Version, targetTag, versionFile)
-	confirmed, err := options.Prompt.Confirm(ctx, "Create release?", summary)
+	summary := fmt.Sprintf("Current version: %s\nTarget version: %s\nTag: %s\nChecks: make check\nMutation: %s", plan.current.String(), target.Version, targetTag, mutation)
+	confirmed, err := options.Prompt.Confirm(ctx, message, summary)
 	if err != nil {
 		return confirmedRelease{}, fmt.Errorf("confirm release: %w", err)
 	}
@@ -481,7 +500,11 @@ func executeRelease(ctx context.Context, options releaseOptions, release confirm
 	if err := ensureReleaseState(ctx, options, release.baseHead); err != nil {
 		return err
 	}
-	if err := ensureTargetTagUnused(ctx, options, release.targetTag); err != nil {
+	resumeHead := ""
+	if release.resume {
+		resumeHead = release.baseHead
+	}
+	if _, err := ensureTargetTag(ctx, options, release.targetTag, resumeHead); err != nil {
 		return err
 	}
 	fmt.Fprintln(options.Diagnostics, "\nRelease checks")
@@ -498,31 +521,36 @@ func executeRelease(ctx context.Context, options releaseOptions, release confirm
 		return nil
 	}
 	fmt.Fprintln(options.Diagnostics, "\nRelease publishing")
-	fmt.Fprintf(options.Diagnostics, "  Updating %s...\n", versionFile)
-	if err := writeVersionAtomic(release.root, release.target.Version); err != nil {
-		return err
-	}
-	fmt.Fprintln(options.Diagnostics, "  Creating release commit...")
-	if err := runGitCommand(ctx, options, []string{"add", "--", versionFile}); err != nil {
-		return err
-	}
-	if err := runGitCommand(ctx, options, []string{"commit", "-m", "chore(release): " + release.targetTag}); err != nil {
-		return fmt.Errorf("create release commit: %w", err)
+	if !release.resume {
+		fmt.Fprintf(options.Diagnostics, "  Updating %s...\n", versionFile)
+		if err := writeVersionAtomic(release.root, release.target.Version); err != nil {
+			return err
+		}
+		fmt.Fprintln(options.Diagnostics, "  Creating release commit...")
+		if err := runGitCommand(ctx, options, []string{"add", "--", versionFile}); err != nil {
+			return err
+		}
+		if err := runGitCommand(ctx, options, []string{"commit", "-m", "chore(release): " + release.targetTag}); err != nil {
+			return fmt.Errorf("create release commit: %w", err)
+		}
 	}
 	fmt.Fprintln(options.Diagnostics, "  Pushing release commit to origin/main...")
 	if err := runGitCommand(ctx, options, []string{"push", "origin", "HEAD:main"}); err != nil {
-		return fmt.Errorf("release commit was created locally but main push failed: %w", err)
+		return fmt.Errorf("release commit was created locally but main push failed; run make release again to resume %s: %w", release.targetTag, err)
 	}
-	if err := ensureTargetTagUnused(ctx, options, release.targetTag); err != nil {
-		return err
+	tagExists, err := ensureTargetTag(ctx, options, release.targetTag, resumeHead)
+	if err != nil {
+		return fmt.Errorf("run make release again to resume %s after resolving the tag conflict: %w", release.targetTag, err)
 	}
-	fmt.Fprintf(options.Diagnostics, "  Creating annotated tag %s...\n", release.targetTag)
-	if err := runGitCommand(ctx, options, []string{"tag", "-a", release.targetTag, "-m", "chore: release " + release.targetTag}); err != nil {
-		return err
+	if !tagExists {
+		fmt.Fprintf(options.Diagnostics, "  Creating annotated tag %s...\n", release.targetTag)
+		if err := runGitCommand(ctx, options, []string{"tag", "-a", release.targetTag, "-m", "chore: release " + release.targetTag}); err != nil {
+			return fmt.Errorf("create annotated tag failed; run make release again to resume %s: %w", release.targetTag, err)
+		}
 	}
 	fmt.Fprintf(options.Diagnostics, "  Pushing refs/tags/%s...\n", release.targetTag)
 	if err := runGitCommand(ctx, options, []string{"push", "origin", "refs/tags/" + release.targetTag}); err != nil {
-		return fmt.Errorf("tag push failed; local tag %s was kept: %w", release.targetTag, err)
+		return fmt.Errorf("tag push failed; local tag %s was kept; run make release again to resume: %w", release.targetTag, err)
 	}
 	fmt.Fprintln(options.Diagnostics, "\nRelease complete")
 	fmt.Fprintf(options.Diagnostics, "  %s pushed; GitHub Actions will run the release workflow.\n", release.targetTag)
@@ -558,30 +586,88 @@ func resolveConventionalBump(ctx context.Context, options releaseOptions, curren
 	return &kind, nil
 }
 
-func validateCurrentTag(ctx context.Context, options releaseOptions, tag string, current stableVersion) error {
-	output, err := options.Git.Run(ctx, []string{"-C", options.Root, "cat-file", "-t", tag})
-	if err != nil || output.ExitCode != 0 || strings.TrimSpace(string(output.Stdout)) != "tag" {
-		return fmt.Errorf("current VERSION %s must match an annotated tag %s", current.String(), tag)
+// validateCurrentTag returns whether an existing release commit needs publishing.
+func validateCurrentTag(ctx context.Context, options releaseOptions, tag string, current stableVersion) (bool, error) {
+	output, err := options.Git.Run(ctx, []string{"-C", options.Root, "cat-file", "-t", "refs/tags/" + tag})
+	if err != nil {
+		return false, gitFailure("inspect current release tag", output, err)
+	}
+	tagExists := output.ExitCode == 0
+	if tagExists && strings.TrimSpace(string(output.Stdout)) != "tag" {
+		return false, fmt.Errorf("current tag %s is lightweight; release CI requires an annotated tag; recreate it with git tag -a at its existing commit and repair the remote tag before retrying", tag)
 	}
 	output, err = options.Git.Run(ctx, []string{"-C", options.Root, "tag", "--list", "v*"})
 	if err != nil || output.ExitCode != 0 {
-		return gitFailure("inspect stable tags", output, err)
+		return false, gitFailure("inspect stable tags", output, err)
 	}
 	highest := highestStableTag(current, strings.Fields(string(output.Stdout)))
 	output, err = options.Git.Run(ctx, []string{"-C", options.Root, "ls-remote", "--refs", "origin", "refs/tags/v*"})
 	if err != nil || output.ExitCode != 0 {
-		return gitFailure("inspect remote stable tags", output, err)
+		return false, gitFailure("inspect remote stable tags", output, err)
 	}
 	remoteTags := make([]string, 0)
+	var remoteTagID string
 	for _, line := range strings.Split(string(output.Stdout), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 {
 			remoteTags = append(remoteTags, strings.TrimPrefix(fields[1], "refs/tags/"))
+			if fields[1] == "refs/tags/"+tag {
+				remoteTagID = fields[0]
+			}
 		}
 	}
 	highest = highestStableTag(highest, remoteTags)
 	if compareStableVersions(current, highest) != 0 {
-		return fmt.Errorf("%s %s is behind the highest stable tag %s", versionFile, current.String(), highest.String())
+		return false, fmt.Errorf("%s %s is behind the highest stable tag %s", versionFile, current.String(), highest.String())
+	}
+	if remoteTagID != "" {
+		if !tagExists {
+			return false, fmt.Errorf("current tag %s exists on origin but is missing locally; fetch its annotated tag before retrying", tag)
+		}
+		localTagID, err := gitValue(ctx, options, []string{"rev-parse", "refs/tags/" + tag})
+		if err != nil {
+			return false, err
+		}
+		if localTagID != remoteTagID {
+			return false, fmt.Errorf("local and remote tag %s differ; inspect and repair the tag conflict before retrying", tag)
+		}
+		return false, nil
+	}
+	if err := validatePendingReleaseCommit(ctx, options, tag, current); err != nil {
+		return false, err
+	}
+	head, err := gitValue(ctx, options, []string{"rev-parse", "HEAD"})
+	if err != nil {
+		return false, err
+	}
+	if _, err := ensureTargetTag(ctx, options, tag, head); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validatePendingReleaseCommit(ctx context.Context, options releaseOptions, tag string, current stableVersion) error {
+	subject, err := gitValue(ctx, options, []string{"log", "-1", "--format=%s", "HEAD"})
+	if err != nil {
+		return err
+	}
+	if subject != "chore(release): "+tag {
+		return fmt.Errorf("current VERSION %s has no published annotated tag %s; automatic recovery requires HEAD to be its release commit", current.String(), tag)
+	}
+	changed, err := gitValue(ctx, options, []string{"diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"})
+	if err != nil {
+		return err
+	}
+	if changed != versionFile {
+		return fmt.Errorf("cannot resume %s: release commit must change only %s", tag, versionFile)
+	}
+	previousText, err := gitValue(ctx, options, []string{"show", "HEAD^:" + versionFile})
+	if err != nil {
+		return err
+	}
+	previous, err := parseStableVersion(previousText)
+	if err != nil || compareStableVersions(current, previous) <= 0 {
+		return fmt.Errorf("cannot resume %s: release commit must increase VERSION from a stable version", tag)
 	}
 	return nil
 }
@@ -600,22 +686,41 @@ func highestStableTag(initial stableVersion, tags []string) stableVersion {
 	return highest
 }
 
-func ensureTargetTagUnused(ctx context.Context, options releaseOptions, tag string) error {
+// A pending release may reuse only an annotated local tag at its existing HEAD.
+// Remote tags are never replaced by the release tool.
+func ensureTargetTag(ctx context.Context, options releaseOptions, tag, resumeHead string) (bool, error) {
 	output, err := options.Git.Run(ctx, []string{"-C", options.Root, "rev-parse", "--verify", "--quiet", "refs/tags/" + tag})
-	if err != nil {
-		return gitFailure("inspect local target tag", output, err)
+	if err != nil || (output.ExitCode != 0 && output.ExitCode != 1) {
+		return false, gitFailure("inspect local target tag", output, err)
 	}
-	if output.ExitCode == 0 && strings.TrimSpace(string(output.Stdout)) != "" {
-		return fmt.Errorf("local tag already exists: %s", tag)
+	tagExists := output.ExitCode == 0 && strings.TrimSpace(string(output.Stdout)) != ""
+	if tagExists {
+		if resumeHead == "" {
+			return false, fmt.Errorf("local tag already exists: %s", tag)
+		}
+		kind, err := gitValue(ctx, options, []string{"cat-file", "-t", "refs/tags/" + tag})
+		if err != nil {
+			return false, err
+		}
+		if kind != "tag" {
+			return false, fmt.Errorf("cannot resume %s: local tag is lightweight; an annotated tag is required", tag)
+		}
+		target, err := gitValue(ctx, options, []string{"rev-parse", "refs/tags/" + tag + "^{commit}"})
+		if err != nil {
+			return false, err
+		}
+		if target != resumeHead {
+			return false, fmt.Errorf("cannot resume %s: local tag points to a different commit", tag)
+		}
 	}
 	output, err = options.Git.Run(ctx, []string{"-C", options.Root, "ls-remote", "--refs", "origin", "refs/tags/" + tag})
 	if err != nil || output.ExitCode != 0 {
-		return gitFailure("inspect remote target tag", output, err)
+		return false, gitFailure("inspect remote target tag", output, err)
 	}
 	if strings.TrimSpace(string(output.Stdout)) != "" {
-		return fmt.Errorf("remote tag already exists: %s", tag)
+		return false, fmt.Errorf("remote tag already exists: %s", tag)
 	}
-	return nil
+	return tagExists, nil
 }
 
 func ensureClean(ctx context.Context, options releaseOptions) error {
