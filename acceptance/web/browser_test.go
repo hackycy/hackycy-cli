@@ -74,6 +74,9 @@ func TestBrowserAcceptanceLoadsRealServices(t *testing.T) {
 				browserClientID = createTunnelBrowserClient(t, pageURL, browserSession)
 			}
 			assertBrowserJourney(t, pageURL, testCase.readyText, testCase.apiPaths, browserSession)
+			if testCase.name == "diff" {
+				assertDiffControls(t, pageURL)
+			}
 			if testCase.name == "tunnel" {
 				assertTunnelOverviewWorkflow(t, pageURL, signInTunnelBrowserSession(t, pageURL), browserClientID)
 				assertTunnelDialogRestoresPointerEvents(t, pageURL, signInTunnelBrowserSession(t, pageURL))
@@ -186,6 +189,14 @@ func startDiffService(t *testing.T, binary string) (*runningService, string) {
 	}
 	if err := os.WriteFile(filepath.Join(target, "example.txt"), []byte("after\n"), 0o600); err != nil {
 		t.Fatalf("write Diff target: %v", err)
+	}
+	for directory, text := range map[string]string{
+		baseline: "const value = 'same';\nexport { value };\n",
+		target:   "const value = 'same';\r\nexport { value };\r\n",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, "line-endings.ts"), []byte(text), 0o600); err != nil {
+			t.Fatalf("write Diff line ending fixture: %v", err)
+		}
 	}
 	port := reserveTCPPort(t)
 	service := startService(t, binary, root, environmentWith(map[string]string{

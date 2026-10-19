@@ -1,11 +1,12 @@
 import type { ComparisonSide, Entry, EntryDetail, TextContent } from '../api'
-import { MultiFileDiff } from '@pierre/diffs/react'
+import { FileDiff } from '@pierre/diffs/react'
 import { AlertTriangle, FileWarning, ImageOff, Link as LinkIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '../../shared/components/ui/button'
 import { cn } from '../../shared/lib/utils'
 import { apiJson, blobUrl, contentUrl } from '../api'
 import { contentCache, estimateCacheBytes } from '../lib/content-cache'
+import { parseTextDiff } from '../lib/text-diff'
 
 const statusLabel = {
   added: 'Added',
@@ -144,6 +145,18 @@ export function DiffPanel({
     && baseline?.status === 'ready'
     && target?.status === 'ready'
     && baseline.text === target.text
+  const fileDiff = useMemo(() => {
+    if (loading || detail?.presentation !== 'text' || guarded || blocked || encodingOnly || !baseline || !target)
+      return undefined
+    return parseTextDiff({
+      snapshotId,
+      entryId: entry.id,
+      path: entry.path,
+      baseline: baseline.status === 'ready' ? baseline.text : '',
+      target: target.status === 'ready' ? target.text : '',
+      ignoreWhitespace,
+    })
+  }, [loading, detail?.presentation, guarded, blocked, encodingOnly, baseline, target, snapshotId, entry.id, entry.path, ignoreWhitespace])
 
   return (
     <section id={`entry-${entry.id}`} data-diff-editor className="flex min-h-full flex-col bg-background">
@@ -183,18 +196,16 @@ export function DiffPanel({
           <div className="flex min-h-28 flex-1 items-center justify-center"><Button onClick={() => void forceContent()}>Render large diff</Button></div>
         )}
         {!loading && encodingOnly && <PanelMessage icon={FileWarning} title="Only text encoding or BOM differs" />}
-        {!loading && detail?.presentation === 'text' && !guarded && !blocked && !encodingOnly && baseline && target && (
+        {fileDiff && (
           <div className="min-h-0 flex-1">
-            <MultiFileDiff
-              oldFile={{ name: entry.path, contents: baseline.status === 'ready' ? baseline.text : '', cacheKey: `${snapshotId}:${entry.id}:baseline` }}
-              newFile={{ name: entry.path, contents: target.status === 'ready' ? target.text : '', cacheKey: `${snapshotId}:${entry.id}:target` }}
+            <FileDiff
+              fileDiff={fileDiff}
               options={{
                 diffStyle,
                 overflow: wrap ? 'wrap' : 'scroll',
                 disableFileHeader: true,
                 themeType: theme,
                 unsafeCSS: overlayScrollbarCss,
-                parseDiffOptions: ignoreWhitespace ? { ignoreWhitespace: true } : undefined,
               }}
             />
           </div>
