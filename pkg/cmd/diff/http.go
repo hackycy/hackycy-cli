@@ -82,17 +82,21 @@ func (handler *diffHTTPHandler) serveState(writer http.ResponseWriter, request *
 		return
 	}
 
-	response := handler.makeHTTPStatePayload(handler.workspace.State())
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
+		return
+	}
+	response := handler.makeHTTPStatePayload(handler.workspace.State(), options)
 	writeHTTPJSON(writer, http.StatusOK, response)
 }
 
-func (handler *diffHTTPHandler) makeHTTPStatePayload(state WorkspaceState) httpStatePayload {
+func (handler *diffHTTPHandler) makeHTTPStatePayload(state WorkspaceState, options ...ComparisonOptions) httpStatePayload {
 	response := httpStatePayload{
 		Version:   1,
 		Workspace: makeHTTPWorkspaceState(state),
 	}
 	if snapshot := handler.workspace.Snapshot(); snapshot != nil {
-		summary := makeHTTPSnapshotSummary(snapshot.Summary())
+		summary := makeHTTPSnapshotSummary(snapshot.Summary(options...))
 		response.Snapshot = &summary
 	}
 	return response

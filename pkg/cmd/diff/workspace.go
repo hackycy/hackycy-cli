@@ -54,7 +54,8 @@ type RefreshRun struct {
 }
 
 type Snapshot struct {
-	summary SnapshotSummary
+	summary          SnapshotSummary
+	lineEndingCounts map[string]int
 
 	entries         []snapshotEntry
 	tree            map[string]snapshotTreeChildren
@@ -67,8 +68,10 @@ type snapshotTreeChildren struct {
 	entryIDs    []int
 }
 
-func (snapshot *Snapshot) Summary() SnapshotSummary {
-	return snapshot.summary
+func (snapshot *Snapshot) Summary(options ...ComparisonOptions) SnapshotSummary {
+	summary := snapshot.summary
+	summary.Counts = projectCounts(summary.Counts, snapshot.lineEndingCounts[""], ignoreLineEndings(options))
+	return summary
 }
 
 func (snapshot *Snapshot) List(query EntryQuery) (EntryPage, error) {
@@ -88,7 +91,7 @@ func (snapshot *Snapshot) List(query EntryQuery) (EntryPage, error) {
 	}
 	if query.Anchor != 0 {
 		anchor := snapshot.entry(query.Anchor)
-		if anchor == nil || !entryMatches(anchor.Entry, query) {
+		if anchor == nil || !entryMatches(projectEntry(anchor.Entry, query.IgnoreLineEndings), query) {
 			return EntryPage{}, errors.New("Entry anchor does not match the current filters")
 		}
 		startIndex = anchor.ID - 1
@@ -96,34 +99,34 @@ func (snapshot *Snapshot) List(query EntryQuery) (EntryPage, error) {
 
 	page := EntryPage{Entries: make([]Entry, 0, limit)}
 	for index := startIndex; index < len(snapshot.entries); index++ {
-		entry := snapshot.entries[index]
-		if !entryMatches(entry.Entry, query) {
+		entry := projectEntry(snapshot.entries[index].Entry, query.IgnoreLineEndings)
+		if !entryMatches(entry, query) {
 			continue
 		}
 		if len(page.Entries) == limit {
 			page.NextCursor = encodeEntryCursor(strconv.Itoa(index))
 			break
 		}
-		page.Entries = append(page.Entries, cloneEntry(entry.Entry))
+		page.Entries = append(page.Entries, entry)
 	}
 	return page, nil
 }
 
-func (snapshot *Snapshot) Tree(path string) TreePage {
+func (snapshot *Snapshot) Tree(path string, options ...ComparisonOptions) TreePage {
 	children := snapshot.tree[path]
 	result := TreePage{Children: make([]TreeNode, 0, len(children.directories)+len(children.entryIDs))}
 	for _, directory := range children.directories {
-		result.Children = append(result.Children, cloneTreeNode(directory))
+		result.Children = append(result.Children, snapshot.projectDirectory(directory, ignoreLineEndings(options)))
 	}
 	for _, id := range children.entryIDs {
 		if entry := snapshot.entry(id); entry != nil {
-			result.Children = append(result.Children, entryTreeNode(entry.Entry))
+			result.Children = append(result.Children, entryTreeNode(projectEntry(entry.Entry, ignoreLineEndings(options))))
 		}
 	}
 	return result
 }
 
-func (snapshot *Snapshot) Search(query string, statuses []ComparisonStatus, limit int) SearchPage {
+func (snapshot *Snapshot) Search(query string, statuses []ComparisonStatus, limit int, options ...ComparisonOptions) SearchPage {
 	if limit == 0 {
 		limit = 200
 	}
@@ -136,13 +139,15 @@ func (snapshot *Snapshot) Search(query string, statuses []ComparisonStatus, limi
 	pathSearch := strings.ToLower(strings.TrimSpace(query))
 	results := make([]TreeNode, 0)
 	for _, directory := range snapshot.directorySearch {
+		directory = snapshot.projectDirectory(directory, ignoreLineEndings(options))
 		if directoryMatchesStatuses(directory, statuses) && (pathSearch == "" || strings.Contains(strings.ToLower(directory.Path), pathSearch)) {
 			results = append(results, cloneTreeNode(directory))
 		}
 	}
-	for _, entry := range snapshot.entries {
+	for _, original := range snapshot.entries {
+		entry := projectEntry(original.Entry, ignoreLineEndings(options))
 		if entryMatchesStatuses(entry.Status, statuses) && (pathSearch == "" || strings.Contains(strings.ToLower(entry.Path), pathSearch)) {
-			results = append(results, entryTreeNode(entry.Entry))
+			results = append(results, entryTreeNode(entry))
 		}
 	}
 	sort.Slice(results, func(left, right int) bool {
@@ -235,7 +240,7 @@ func entryTreeNode(entry Entry) TreeNode {
 	if state != nil && state.Kind == EntryKindSymlink {
 		kind = TreeKindSymlink
 	}
-	return TreeNode{Kind: kind, Name: comparisonBaseName(entry.Path), Path: entry.Path, ID: entry.ID, Status: entry.Status}
+	return TreeNode{Kind: kind, Name: comparisonBaseName(entry.Path), Path: entry.Path, ID: entry.ID, Status: entry.Status, RawStatus: entry.RawStatus, LineEndings: entry.LineEndings}
 }
 
 func entryMatchesStatuses(status ComparisonStatus, statuses []ComparisonStatus) bool {
@@ -587,6 +592,7 @@ func (workspace *Workspace) buildSnapshot(ctx context.Context, run *RefreshRun) 
 			} else {
 				entry.Status = StatusModified
 			}
+			entry.LineEndings = comparison.lineEndings
 			progress.ComparedBytes += comparison.comparedBytes
 		}
 		entry.Baseline = entryState(baseline)
@@ -652,10 +658,11 @@ func (workspace *Workspace) buildSnapshot(ctx context.Context, run *RefreshRun) 
 			Counts:            counts,
 			Issues:            issueCount,
 		},
-		entries:         entries,
-		tree:            tree,
-		directorySearch: directorySearch,
-		textDiffSlots:   workspace.textDiffSlots,
+		lineEndingCounts: countLineEndings(entries),
+		entries:          entries,
+		tree:             tree,
+		directorySearch:  directorySearch,
+		textDiffSlots:    workspace.textDiffSlots,
 	}, nil
 }
 
@@ -833,6 +840,7 @@ func (discovery targetIgnoreDiscovery) blocks(comparisonPath string) bool {
 }
 
 type sourceComparison struct {
+	lineEndings   LineEndingComparison
 	baseline      *sourceEntry
 	target        *sourceEntry
 	equal         bool
@@ -842,6 +850,9 @@ type sourceComparison struct {
 func compareWithRetry(ctx context.Context, baseline, target *sourceEntry, comparisonPath, baselineRoot, targetRoot string) (sourceComparison, error) {
 	for attempt := 0; attempt < 2; attempt++ {
 		comparison, err := compareSources(ctx, baseline, target, comparisonPath, baselineRoot, targetRoot)
+		if err == nil && !comparison.equal {
+			comparison.lineEndings, err = compareLineEndings(ctx, baseline, target, comparisonPath, baselineRoot, targetRoot)
+		}
 		if err == nil {
 			return comparison, nil
 		}

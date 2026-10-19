@@ -1,5 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import { Columns2, Menu, Moon, RefreshCw, Rows3, Space, Square, WrapText } from 'lucide-react'
+import { Columns2, Menu, Moon, RefreshCw, Rows3, Space, Square, TextCursorInput, WrapText } from 'lucide-react'
 import { Button } from '../../shared/components/ui/button'
 import { Tooltip } from '../../shared/components/ui/tooltip'
 import { cn } from '../../shared/lib/utils'
@@ -7,8 +7,9 @@ import { cn } from '../../shared/lib/utils'
 const activeClass = 'border-cyan-500/40 bg-cyan-500/10 text-foreground hover:bg-cyan-500/15'
 const controlClass = 'px-2'
 
-function ToolbarToggle({ label, description, icon: Icon, active, onToggle }: {
+function ToolbarToggle({ label, text, description, icon: Icon, active, onToggle }: {
   label: string
+  text?: string
   description: string
   icon: LucideIcon
   active: boolean
@@ -18,6 +19,7 @@ function ToolbarToggle({ label, description, icon: Icon, active, onToggle }: {
     <Tooltip label={description}>
       <Button aria-label={label} aria-pressed={active} className={cn(controlClass, active && activeClass)} onClick={onToggle}>
         <Icon aria-hidden="true" className="size-4" />
+        {text && <span aria-hidden="true" className="text-xs">{text}</span>}
         <span aria-hidden="true" className={cn('rounded px-1 text-[10px] font-semibold', active ? 'bg-cyan-500/15' : 'bg-muted text-muted-foreground')}>
           {active ? 'On' : 'Off'}
         </span>
@@ -26,10 +28,12 @@ function ToolbarToggle({ label, description, icon: Icon, active, onToggle }: {
   )
 }
 
-export function DiffToolbar({ refreshing, diffStyle, wrap, ignoreWhitespace, theme, onFiles, onRefresh, onDiffStyle, onWrap, onIgnoreWhitespace, onTheme }: {
+export function DiffToolbar({ refreshing, diffStyle, wrap, ignoreWhitespace, ignoreLineEndings, theme, onFiles, onRefresh, onDiffStyle, onWrap, onIgnoreWhitespace, onIgnoreLineEndings, onTheme }: {
   refreshing: boolean
   diffStyle: 'split' | 'unified'
   wrap: boolean
+  ignoreLineEndings: boolean
+  onIgnoreLineEndings: () => void
   ignoreWhitespace: boolean
   theme: 'light' | 'dark'
   onFiles: () => void
@@ -64,6 +68,7 @@ export function DiffToolbar({ refreshing, diffStyle, wrap, ignoreWhitespace, the
         </Tooltip>
       </div>
       <ToolbarToggle label="Wrap lines" description={`Line wrapping is ${wrap ? 'on' : 'off'}. Turn it on to fit long lines within the editor.`} icon={WrapText} active={wrap} onToggle={onWrap} />
+      <ToolbarToggle label="Ignore line endings" text="LF/CRLF" description={`Ignoring LF/CRLF is ${ignoreLineEndings ? 'on' : 'off'}. On treats line-ending-only changes as Unchanged. Deselect Unchanged to hide them. Spaces, tabs and missing final newlines remain significant.`} icon={TextCursorInput} active={ignoreLineEndings} onToggle={onIgnoreLineEndings} />
       <ToolbarToggle label="Ignore whitespace" description={`Ignoring whitespace is ${ignoreWhitespace ? 'on' : 'off'}. On ignores spaces and tabs at line edges and line endings. Off shows exact differences.`} icon={Space} active={ignoreWhitespace} onToggle={onIgnoreWhitespace} />
       <ToolbarToggle label="Dark mode" description={`Dark mode is ${theme === 'dark' ? 'on' : 'off'}. Switch between dark and light appearance.`} icon={Moon} active={theme === 'dark'} onToggle={onTheme} />
     </div>

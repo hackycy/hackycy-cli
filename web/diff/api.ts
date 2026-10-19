@@ -36,7 +36,15 @@ export interface ServerState {
   snapshot?: Summary
 }
 
+export interface LineEndingComparison {
+  supported: boolean
+  only: boolean
+  reason?: string
+}
+
 export interface Entry {
+  rawStatus?: ComparisonStatus
+  lineEndings?: LineEndingComparison
   id: number
   path: string
   status: ComparisonStatus
@@ -67,6 +75,8 @@ export interface DirectoryNode {
 }
 
 export interface FileNode {
+  rawStatus?: ComparisonStatus
+  lineEndings?: LineEndingComparison
   kind: EntryKind
   name: string
   path: string
@@ -95,4 +105,13 @@ export function contentUrl(snapshotId: string, entryId: number, side: Comparison
 
 export function blobUrl(snapshotId: string, entryId: number, side: ComparisonSide): string {
   return `/api/entries/${entryId}/blob/${side}?snapshot=${encodeURIComponent(snapshotId)}`
+}
+
+export function comparisonUrl(url: string, ignoreLineEndings: boolean): string {
+  return `${url}${url.includes('?') ? '&' : '?'}ignoreLineEndings=${ignoreLineEndings}`
+}
+
+export function comparisonEntry(entry: Entry, ignoreLineEndings: boolean): Entry {
+  const rawStatus = entry.rawStatus ?? entry.status
+  return { ...entry, rawStatus, status: ignoreLineEndings && rawStatus === 'modified' && entry.lineEndings?.only ? 'unchanged' : rawStatus }
 }

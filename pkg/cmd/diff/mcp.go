@@ -70,13 +70,13 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 	openWorld := false
 	mcp.AddTool[mcpGetComparisonInput, mcpGetComparisonOutput](server, &mcp.Tool{
 		Name:        "get_comparison",
-		Description: "Return the diff service phase and current immutable Comparison Snapshot.",
+		Description: "Return the diff service phase and current immutable Comparison Snapshot, with counts for this request's ignore_line_endings option (default false).",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:  true,
 			OpenWorldHint: &openWorld,
 		},
 		OutputSchema: mcpGetComparisonOutputSchema,
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ mcpGetComparisonInput) (*mcp.CallToolResult, mcpGetComparisonOutput, error) {
+	}, func(_ context.Context, _ *mcp.CallToolRequest, input mcpGetComparisonInput) (*mcp.CallToolResult, mcpGetComparisonOutput, error) {
 		state := workspace.State()
 		output := mcpGetComparisonOutput{Phase: state.Phase, Error: state.Error}
 		snapshot := workspace.Snapshot()
@@ -86,7 +86,7 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 			}}}, output, nil
 		}
 
-		summary := snapshot.Summary()
+		summary := snapshot.Summary(ComparisonOptions{IgnoreLineEndings: input.IgnoreLineEndings})
 		output.Snapshot = &mcpSnapshot{
 			SnapshotID:        summary.ID,
 			BaselineDirectory: summary.BaselineDirectory,
@@ -121,7 +121,7 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 	})
 	mcp.AddTool[mcpListChangesInput, any](server, &mcp.Tool{
 		Name:        "list_changes",
-		Description: "List changed Comparison Entries from one immutable Comparison Snapshot. Errors include snapshot_changed and invalid_cursor.",
+		Description: "List changed Comparison Entries from one immutable Comparison Snapshot. Optional ignore_line_endings defaults to false and excludes LF/CRLF-only changes. Errors include snapshot_changed and invalid_cursor.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:  true,
 			OpenWorldHint: &openWorld,
@@ -138,11 +138,12 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 			statuses = []ComparisonStatus{StatusAdded, StatusDeleted, StatusModified}
 		}
 		page, err := snapshot.List(EntryQuery{
-			Statuses: statuses,
-			Kinds:    input.Kinds,
-			Path:     input.Path,
-			Cursor:   input.Cursor,
-			Limit:    input.Limit,
+			IgnoreLineEndings: input.IgnoreLineEndings,
+			Statuses:          statuses,
+			Kinds:             input.Kinds,
+			Path:              input.Path,
+			Cursor:            input.Cursor,
+			Limit:             input.Limit,
 		})
 		if err != nil {
 			return mcpToolErrorResult("invalid_cursor", "The cursor is invalid"), nil, nil
@@ -207,7 +208,7 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 	})
 	mcp.AddTool[mcpSearchChangesInput, any](server, &mcp.Tool{
 		Name:        "search_changes",
-		Description: "Search changed Comparison Paths by case-insensitive substring without reading file content. Returns snapshot_changed when the snapshot was replaced.",
+		Description: "Search changed Comparison Paths by case-insensitive substring without reading file content. Optional ignore_line_endings defaults to false and excludes LF/CRLF-only changes. Returns snapshot_changed when the snapshot was replaced.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:  true,
 			OpenWorldHint: &openWorld,
@@ -228,10 +229,11 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 			limit = 20
 		}
 		page, err := snapshot.List(EntryQuery{
-			Statuses: statuses,
-			Kinds:    input.Kinds,
-			Path:     strings.TrimSpace(input.Query),
-			Limit:    limit + 1,
+			IgnoreLineEndings: input.IgnoreLineEndings,
+			Statuses:          statuses,
+			Kinds:             input.Kinds,
+			Path:              strings.TrimSpace(input.Query),
+			Limit:             limit + 1,
 		})
 		if err != nil {
 			return nil, nil, err
@@ -259,7 +261,7 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 	})
 	mcp.AddTool[mcpGetTextDiffInput, any](server, &mcp.Tool{
 		Name:        "get_text_diff",
-		Description: "Generate a bounded analysis-only Unified Diff for one changed text Comparison Entry. Errors include snapshot_changed and entry_not_found.",
+		Description: "Generate a bounded analysis-only Unified Diff for one changed text Comparison Entry. Optional ignore_line_endings defaults to false; LF/CRLF-only changes return no_textual_changes with effective status unchanged. Errors include snapshot_changed and entry_not_found.",
 		Annotations: &mcp.ToolAnnotations{
 			ReadOnlyHint:  true,
 			OpenWorldHint: &openWorld,
@@ -271,7 +273,7 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 		if snapshot == nil {
 			return mcpToolErrorResult("snapshot_changed", "The requested Comparison Snapshot is no longer available"), nil, nil
 		}
-		result, err := snapshot.TextDiff(ctx, input.EntryID, &TextDiffOptions{ContextLines: input.ContextLines})
+		result, err := snapshot.TextDiff(ctx, input.EntryID, &TextDiffOptions{ContextLines: input.ContextLines, IgnoreLineEndings: input.IgnoreLineEndings})
 		if errors.Is(err, errComparisonEntryNotFound) {
 			return mcpToolErrorResult("entry_not_found", "The Comparison Entry does not exist in this snapshot"), nil, nil
 		}
@@ -285,6 +287,12 @@ func newMCPServer(workspace *Workspace, refresh *refreshCoordinator) *mcp.Server
 			text = "Text Difference ready for " + output.Path + ": +" + strconv.Itoa(*output.AddedLines) + " -" + strconv.Itoa(*output.DeletedLines)
 		case TextDiffNoTextualChanges:
 			text = "No textual changes for " + output.Path
+		}
+		if input.IgnoreLineEndings {
+			entry := snapshot.entry(input.EntryID)
+			if entry != nil && entry.LineEndings.Reason != "" {
+				text += "; " + entry.LineEndings.Reason
+			}
 		}
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, output, nil
 	})
@@ -382,17 +390,20 @@ func writeMCPOriginError(writer http.ResponseWriter) {
 	writeMCPProtocolError(writer, http.StatusForbidden, -32000, "MCP requests must be same-origin")
 }
 
-type mcpGetComparisonInput struct{}
+type mcpGetComparisonInput struct {
+	IgnoreLineEndings bool `json:"ignore_line_endings,omitempty" jsonschema:"Treat LF and CRLF as equivalent for this request; defaults to false"`
+}
 
 type mcpRefreshComparisonInput struct{}
 
 type mcpListChangesInput struct {
-	SnapshotID string             `json:"snapshot_id"`
-	Statuses   []ComparisonStatus `json:"statuses,omitempty"`
-	Kinds      []EntryItemKind    `json:"kinds,omitempty"`
-	Path       string             `json:"path,omitempty"`
-	Cursor     string             `json:"cursor,omitempty"`
-	Limit      int                `json:"limit,omitempty"`
+	IgnoreLineEndings bool               `json:"ignore_line_endings,omitempty"`
+	SnapshotID        string             `json:"snapshot_id"`
+	Statuses          []ComparisonStatus `json:"statuses,omitempty"`
+	Kinds             []EntryItemKind    `json:"kinds,omitempty"`
+	Path              string             `json:"path,omitempty"`
+	Cursor            string             `json:"cursor,omitempty"`
+	Limit             int                `json:"limit,omitempty"`
 }
 
 type mcpListIssuesInput struct {
@@ -403,17 +414,19 @@ type mcpListIssuesInput struct {
 }
 
 type mcpSearchChangesInput struct {
-	SnapshotID string             `json:"snapshot_id"`
-	Query      string             `json:"query"`
-	Statuses   []ComparisonStatus `json:"statuses,omitempty"`
-	Kinds      []EntryItemKind    `json:"kinds,omitempty"`
-	Limit      int                `json:"limit,omitempty"`
+	IgnoreLineEndings bool               `json:"ignore_line_endings,omitempty"`
+	SnapshotID        string             `json:"snapshot_id"`
+	Query             string             `json:"query"`
+	Statuses          []ComparisonStatus `json:"statuses,omitempty"`
+	Kinds             []EntryItemKind    `json:"kinds,omitempty"`
+	Limit             int                `json:"limit,omitempty"`
 }
 
 type mcpGetTextDiffInput struct {
-	SnapshotID   string `json:"snapshot_id"`
-	EntryID      int    `json:"entry_id"`
-	ContextLines *int   `json:"context_lines,omitempty"`
+	IgnoreLineEndings bool   `json:"ignore_line_endings,omitempty"`
+	SnapshotID        string `json:"snapshot_id"`
+	EntryID           int    `json:"entry_id"`
+	ContextLines      *int   `json:"context_lines,omitempty"`
 }
 
 type mcpGetComparisonOutput struct {
@@ -503,6 +516,7 @@ type mcpToolError struct {
 var mcpListChangesInputSchema = &jsonschema.Schema{
 	Type: "object",
 	Properties: map[string]*jsonschema.Schema{
+		"ignore_line_endings": {Type: "boolean", Default: json.RawMessage("false"), Description: "Treat LF and CRLF as equivalent for this request"},
 		"snapshot_id": {
 			Type:      "string",
 			MinLength: jsonschema.Ptr(1),
@@ -563,6 +577,7 @@ var mcpListIssuesInputSchema = &jsonschema.Schema{
 var mcpSearchChangesInputSchema = &jsonschema.Schema{
 	Type: "object",
 	Properties: map[string]*jsonschema.Schema{
+		"ignore_line_endings": {Type: "boolean", Default: json.RawMessage("false"), Description: "Treat LF and CRLF as equivalent for this request"},
 		"snapshot_id": {
 			Type:      "string",
 			MinLength: jsonschema.Ptr(1),
@@ -601,6 +616,7 @@ var mcpSearchChangesInputSchema = &jsonschema.Schema{
 var mcpGetTextDiffInputSchema = &jsonschema.Schema{
 	Type: "object",
 	Properties: map[string]*jsonschema.Schema{
+		"ignore_line_endings": {Type: "boolean", Default: json.RawMessage("false"), Description: "Treat LF and CRLF as equivalent for this request"},
 		"snapshot_id": {
 			Type:      "string",
 			MinLength: jsonschema.Ptr(1),
@@ -700,8 +716,9 @@ var mcpTextDiffOutputSchema = mcpStrictObjectSchema(map[string]*jsonschema.Schem
 		string(TextDiffUnavailable),
 	),
 	"path":              {Type: "string"},
-	"comparison_status": mcpChangedStatusSchema(),
+	"comparison_status": mcpStringEnumSchema(string(StatusAdded), string(StatusDeleted), string(StatusModified), string(StatusUnchanged)),
 	"reason": mcpStringEnumSchema(
+		string(TextDiffLineEndingsOnly),
 		string(TextDiffEncodingOrBOMOnly),
 		string(TextDiffNonText),
 		string(TextDiffMixedEntryKinds),

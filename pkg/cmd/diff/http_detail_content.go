@@ -32,7 +32,11 @@ func (handler *diffHTTPHandler) serveEntryDetail(writer http.ResponseWriter, req
 	if !ok {
 		return
 	}
-	detail, err := snapshot.Detail(id)
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
+		return
+	}
+	detail, err := snapshot.Detail(id, options)
 	if err != nil {
 		writeHTTPError(writer, http.StatusNotFound, "ENTRY_NOT_FOUND", err.Error())
 		return
@@ -96,21 +100,25 @@ func parseHTTPComparisonSide(writer http.ResponseWriter, raw string) (Comparison
 }
 
 type httpEntryDetail struct {
-	ID                 int               `json:"id"`
-	Path               string            `json:"path"`
-	Status             ComparisonStatus  `json:"status"`
-	Kind               EntryItemKind     `json:"kind"`
-	BaselineSize       *int64            `json:"baselineSize,omitempty"`
-	TargetSize         *int64            `json:"targetSize,omitempty"`
-	Message            string            `json:"message,omitempty"`
-	Presentation       EntryPresentation `json:"presentation"`
-	BaselineLinkTarget *string           `json:"baselineLinkTarget,omitempty"`
-	TargetLinkTarget   *string           `json:"targetLinkTarget,omitempty"`
+	RawStatus          ComparisonStatus     `json:"rawStatus,omitempty"`
+	LineEndings        LineEndingComparison `json:"lineEndings,omitzero"`
+	ID                 int                  `json:"id"`
+	Path               string               `json:"path"`
+	Status             ComparisonStatus     `json:"status"`
+	Kind               EntryItemKind        `json:"kind"`
+	BaselineSize       *int64               `json:"baselineSize,omitempty"`
+	TargetSize         *int64               `json:"targetSize,omitempty"`
+	Message            string               `json:"message,omitempty"`
+	Presentation       EntryPresentation    `json:"presentation"`
+	BaselineLinkTarget *string              `json:"baselineLinkTarget,omitempty"`
+	TargetLinkTarget   *string              `json:"targetLinkTarget,omitempty"`
 }
 
 func makeHTTPEntryDetail(detail EntryDetail) httpEntryDetail {
 	entry := makeHTTPListItem(detail.Entry)
 	result := httpEntryDetail{
+		RawStatus:    entry.RawStatus,
+		LineEndings:  entry.LineEndings,
 		ID:           entry.ID,
 		Path:         entry.Path,
 		Status:       entry.Status,

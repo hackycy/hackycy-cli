@@ -1,10 +1,10 @@
 import type { ComparisonSide, Entry, EntryDetail, TextContent } from '../api'
 import { FileDiff } from '@pierre/diffs/react'
 import { AlertTriangle, FileWarning, ImageOff, Link as LinkIcon } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '../../shared/components/ui/button'
 import { cn } from '../../shared/lib/utils'
-import { apiJson, blobUrl, contentUrl } from '../api'
+import { apiJson, blobUrl, comparisonUrl, contentUrl } from '../api'
 import { contentCache, estimateCacheBytes } from '../lib/content-cache'
 import { parseTextDiff } from '../lib/text-diff'
 
@@ -84,6 +84,7 @@ export function DiffPanel({
   diffStyle,
   wrap,
   ignoreWhitespace,
+  ignoreLineEndings,
   theme,
 }: {
   entry: Entry
@@ -91,44 +92,59 @@ export function DiffPanel({
   diffStyle: 'split' | 'unified'
   wrap: boolean
   ignoreWhitespace: boolean
+  ignoreLineEndings: boolean
   theme: 'light' | 'dark'
 }): React.JSX.Element {
+  const requestGeneration = useRef(0)
   const [detail, setDetail] = useState<EntryDetail>()
   const [contents, setContents] = useState<Partial<Record<ComparisonSide, TextContent>>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     const controller = new AbortController()
+    requestGeneration.current++
     setLoading(true)
     setDetail(undefined)
     setContents({})
-    cachedJson<EntryDetail>(
-      `${snapshotId}:${entry.id}:detail`,
-      `/api/entries/${entry.id}?snapshot=${encodeURIComponent(snapshotId)}`,
-      controller.signal,
+    apiJson<EntryDetail>(
+      comparisonUrl(`/api/entries/${entry.id}?snapshot=${encodeURIComponent(snapshotId)}`, ignoreLineEndings),
+      { signal: controller.signal },
     )
       .then(async (nextDetail) => {
+        if (controller.signal.aborted)
+          return
         setDetail(nextDetail)
-        if (nextDetail.presentation !== 'text')
+        if (nextDetail.presentation !== 'text' || (ignoreLineEndings && nextDetail.lineEndings?.only))
           return
         const [baseline, target] = await Promise.all([
           cachedJson<TextContent>(`${snapshotId}:${entry.id}:baseline`, contentUrl(snapshotId, entry.id, 'baseline'), controller.signal),
           cachedJson<TextContent>(`${snapshotId}:${entry.id}:target`, contentUrl(snapshotId, entry.id, 'target'), controller.signal),
         ])
-        setContents({ baseline, target })
+        if (!controller.signal.aborted)
+          setContents({ baseline, target })
       })
-      .catch(() => setDetail(current => current ?? (entry.status === 'issue'
-        ? { ...entry, presentation: 'issue' }
-        : { ...entry, presentation: 'stale' })))
-      .finally(() => setLoading(false))
-    return () => controller.abort()
-  }, [entry, snapshotId])
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setDetail(current => current ?? (entry.status === 'issue' ? { ...entry, presentation: 'issue' } : { ...entry, presentation: 'stale' }))
+      })
+      .finally(() => {
+        if (!controller.signal.aborted)
+          setLoading(false)
+      })
+    return () => {
+      controller.abort()
+      requestGeneration.current++
+    }
+  }, [entry, snapshotId, ignoreLineEndings])
 
   const forceContent = async (): Promise<void> => {
+    const generation = requestGeneration.current
     const [baseline, target] = await Promise.all([
       apiJson<TextContent>(contentUrl(snapshotId, entry.id, 'baseline', true)),
       apiJson<TextContent>(contentUrl(snapshotId, entry.id, 'target', true)),
     ])
+    if (generation !== requestGeneration.current)
+      return
     contentCache.set(`${snapshotId}:${entry.id}:baseline`, baseline, estimateCacheBytes(baseline))
     contentCache.set(`${snapshotId}:${entry.id}:target`, target, estimateCacheBytes(target))
     setContents({ baseline, target })
@@ -139,6 +155,7 @@ export function DiffPanel({
   const guarded = baseline?.status === 'guarded' || target?.status === 'guarded'
   const blocked = baseline?.status === 'blocked' || target?.status === 'blocked'
   const stale = detail?.presentation === 'stale' || baseline?.status === 'stale' || target?.status === 'stale'
+  const lineEndingsOnly = ignoreLineEndings && !!detail?.lineEndings?.only && !stale
   const baselineSize = detail?.baselineSize ?? entry.baselineSize
   const targetSize = detail?.targetSize ?? entry.targetSize
   const encodingOnly = entry.status === 'modified'
@@ -146,7 +163,7 @@ export function DiffPanel({
     && target?.status === 'ready'
     && baseline.text === target.text
   const fileDiff = useMemo(() => {
-    if (loading || detail?.presentation !== 'text' || guarded || blocked || encodingOnly || !baseline || !target)
+    if (loading || detail?.presentation !== 'text' || guarded || blocked || encodingOnly || lineEndingsOnly || stale || !baseline || !target)
       return undefined
     return parseTextDiff({
       snapshotId,
@@ -155,8 +172,9 @@ export function DiffPanel({
       baseline: baseline.status === 'ready' ? baseline.text : '',
       target: target.status === 'ready' ? target.text : '',
       ignoreWhitespace,
+      ignoreLineEndings: ignoreLineEndings && !!detail.lineEndings?.supported,
     })
-  }, [loading, detail?.presentation, guarded, blocked, encodingOnly, baseline, target, snapshotId, entry.id, entry.path, ignoreWhitespace])
+  }, [loading, detail?.presentation, guarded, blocked, encodingOnly, lineEndingsOnly, stale, baseline, target, snapshotId, entry.id, entry.path, ignoreWhitespace, ignoreLineEndings, detail?.lineEndings?.supported])
 
   return (
     <section id={`entry-${entry.id}`} data-diff-editor className="flex min-h-full flex-col bg-background">
@@ -191,10 +209,12 @@ export function DiffPanel({
             <LinkTarget label="Target" value={detail.targetLinkTarget} />
           </div>
         )}
-        {!loading && (detail?.presentation === 'oversized' || blocked) && <PanelMessage icon={FileWarning} title="Text diff exceeds the rendering limit" />}
-        {!loading && guarded && (
+        {!loading && !lineEndingsOnly && (detail?.presentation === 'oversized' || blocked) && <PanelMessage icon={FileWarning} title="Text diff exceeds the rendering limit" />}
+        {!loading && !lineEndingsOnly && guarded && (
           <div className="flex min-h-28 flex-1 items-center justify-center"><Button onClick={() => void forceContent()}>Render large diff</Button></div>
         )}
+        {!loading && lineEndingsOnly && <PanelMessage icon={FileWarning} title="No differences when ignoring LF/CRLF" />}
+        {!loading && !stale && ignoreLineEndings && detail?.lineEndings?.reason && <PanelMessage icon={FileWarning} title={detail.lineEndings.reason} />}
         {!loading && encodingOnly && <PanelMessage icon={FileWarning} title="Only text encoding or BOM differs" />}
         {fileDiff && (
           <div className="min-h-0 flex-1">

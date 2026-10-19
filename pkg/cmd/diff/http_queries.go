@@ -14,6 +14,10 @@ func (handler *diffHTTPHandler) serveEntries(writer http.ResponseWriter, request
 	if !requireHTTPMethod(writer, request, http.MethodGet) {
 		return
 	}
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
+		return
+	}
 	snapshot, ok := handler.requestSnapshot(writer, request)
 	if !ok {
 		return
@@ -42,11 +46,12 @@ func (handler *diffHTTPHandler) serveEntries(writer http.ResponseWriter, request
 	}
 
 	entryQuery := EntryQuery{
-		Cursor:           query.Get("cursor"),
-		IncludeUnchanged: query.Get("includeUnchanged") == "true",
-		Statuses:         statuses,
-		Kinds:            kinds,
-		Path:             query.Get("path"),
+		IgnoreLineEndings: options.IgnoreLineEndings,
+		Cursor:            query.Get("cursor"),
+		IncludeUnchanged:  query.Get("includeUnchanged") == "true",
+		Statuses:          statuses,
+		Kinds:             kinds,
+		Path:              query.Get("path"),
 	}
 	if hasLimit {
 		entryQuery.Limit = limit
@@ -70,11 +75,15 @@ func (handler *diffHTTPHandler) serveTree(writer http.ResponseWriter, request *h
 	if !requireHTTPMethod(writer, request, http.MethodGet) {
 		return
 	}
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
+		return
+	}
 	snapshot, ok := handler.requestSnapshot(writer, request)
 	if !ok {
 		return
 	}
-	page := snapshot.Tree(request.URL.Query().Get("path"))
+	page := snapshot.Tree(request.URL.Query().Get("path"), options)
 	children := make([]httpTreeItem, 0, len(page.Children))
 	for _, child := range page.Children {
 		children = append(children, makeHTTPTreeItem(child))
@@ -84,6 +93,10 @@ func (handler *diffHTTPHandler) serveTree(writer http.ResponseWriter, request *h
 
 func (handler *diffHTTPHandler) serveSearch(writer http.ResponseWriter, request *http.Request) {
 	if !requireHTTPMethod(writer, request, http.MethodGet) {
+		return
+	}
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
 		return
 	}
 	snapshot, ok := handler.requestSnapshot(writer, request)
@@ -108,7 +121,7 @@ func (handler *diffHTTPHandler) serveSearch(writer http.ResponseWriter, request 
 	} else if present {
 		limit = value
 	}
-	page := snapshot.Search(search, statuses, limit)
+	page := snapshot.Search(search, statuses, limit, options)
 	results := make([]httpTreeItem, 0, len(page.Results))
 	for _, result := range page.Results {
 		results = append(results, makeHTTPTreeItem(result))
@@ -226,17 +239,19 @@ type httpEntryPage struct {
 }
 
 type httpListItem struct {
-	ID           int              `json:"id"`
-	Path         string           `json:"path"`
-	Status       ComparisonStatus `json:"status"`
-	Kind         EntryItemKind    `json:"kind"`
-	BaselineSize *int64           `json:"baselineSize,omitempty"`
-	TargetSize   *int64           `json:"targetSize,omitempty"`
-	Message      string           `json:"message,omitempty"`
+	RawStatus    ComparisonStatus     `json:"rawStatus,omitempty"`
+	LineEndings  LineEndingComparison `json:"lineEndings,omitzero"`
+	ID           int                  `json:"id"`
+	Path         string               `json:"path"`
+	Status       ComparisonStatus     `json:"status"`
+	Kind         EntryItemKind        `json:"kind"`
+	BaselineSize *int64               `json:"baselineSize,omitempty"`
+	TargetSize   *int64               `json:"targetSize,omitempty"`
+	Message      string               `json:"message,omitempty"`
 }
 
 func makeHTTPListItem(entry Entry) httpListItem {
-	result := httpListItem{ID: entry.ID, Path: entry.Path, Status: entry.Status}
+	result := httpListItem{ID: entry.ID, Path: entry.Path, Status: entry.Status, RawStatus: entry.RawStatus, LineEndings: entry.LineEndings}
 	if entry.Status == StatusIssue {
 		result.Kind = ItemKindIssue
 		result.Message = entry.Message
@@ -270,14 +285,16 @@ type httpSearchPage struct {
 }
 
 type httpTreeItem struct {
-	Kind    TreeKind          `json:"kind"`
-	Name    string            `json:"name"`
-	Path    string            `json:"path"`
-	Counts  *httpStatusCounts `json:"counts,omitempty"`
-	Issues  *int              `json:"issues,omitempty"`
-	ID      int               `json:"id,omitempty"`
-	Status  ComparisonStatus  `json:"status,omitempty"`
-	Message string            `json:"message,omitempty"`
+	RawStatus   ComparisonStatus     `json:"rawStatus,omitempty"`
+	LineEndings LineEndingComparison `json:"lineEndings,omitzero"`
+	Kind        TreeKind             `json:"kind"`
+	Name        string               `json:"name"`
+	Path        string               `json:"path"`
+	Counts      *httpStatusCounts    `json:"counts,omitempty"`
+	Issues      *int                 `json:"issues,omitempty"`
+	ID          int                  `json:"id,omitempty"`
+	Status      ComparisonStatus     `json:"status,omitempty"`
+	Message     string               `json:"message,omitempty"`
 }
 
 func makeHTTPTreeItem(node TreeNode) httpTreeItem {
@@ -294,8 +311,22 @@ func makeHTTPTreeItem(node TreeNode) httpTreeItem {
 		result.Issues = &issues
 		return result
 	}
+	result.RawStatus = node.RawStatus
+	result.LineEndings = node.LineEndings
 	result.ID = node.ID
 	result.Status = node.Status
 	result.Message = node.Message
 	return result
+}
+
+func parseHTTPComparisonOptions(writer http.ResponseWriter, request *http.Request) (ComparisonOptions, bool) {
+	values, present := request.URL.Query()["ignoreLineEndings"]
+	if !present {
+		return ComparisonOptions{}, true
+	}
+	if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+		writeHTTPError(writer, http.StatusBadRequest, "INVALID_REQUEST", "ignoreLineEndings must be true or false")
+		return ComparisonOptions{}, false
+	}
+	return ComparisonOptions{IgnoreLineEndings: values[0] == "true"}, true
 }

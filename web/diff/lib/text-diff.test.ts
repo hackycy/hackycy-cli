@@ -70,9 +70,12 @@ afterEach(() => {
 })
 
 const fixtures = [
-  { name: 'line endings', baseline: 'a\n', target: 'a\r\n', ignoredRows: 0, expectedText: ['a'] },
-  { name: 'trailing whitespace', baseline: 'a \n', target: 'a\n', ignoredRows: 0, expectedText: ['a'] },
-  { name: 'text changes', baseline: 'before \n', target: 'after\n', ignoredRows: 1, expectedText: ['before', 'after'] },
+  { name: 'line endings', baseline: 'a\n', target: 'a\r\n', ignoredRows: 0, lineEndingRows: 0, expectedText: ['a'] },
+  { name: 'trailing whitespace', baseline: 'a \n', target: 'a\n', ignoredRows: 0, lineEndingRows: 1, expectedText: ['a'] },
+  { name: 'missing final newline', markerRows: 1, baseline: 'a', target: 'a\r\n', ignoredRows: 0, lineEndingRows: 1, expectedText: ['a'] },
+  { name: 'bare CR', markerRows: 1, baseline: 'a\r', target: 'a\n', ignoredRows: 0, lineEndingRows: 1, expectedText: ['a'] },
+  { name: 'text changes', baseline: 'before \n', target: 'after\n', ignoredRows: 1, lineEndingRows: 1, expectedText: ['before', 'after'] },
+  { name: 'content changes among converted context', baseline: 'head\nbefore\ntail\n', target: 'head\r\nafter\r\ntail\r\n', ignoredRows: 1, lineEndingRows: 1, exactRows: 3, contextRows: 2, expectedText: ['head', 'before', 'after', 'tail'] },
 ]
 
 it('scopes parsed diff identity by snapshot, entry and comparison options while preserving source text', () => {
@@ -82,9 +85,13 @@ it('scopes parsed diff identity by snapshot, entry and comparison options while 
   expect(parseTextDiff({ ...input, snapshotId: 'next' }).cacheKey).not.toBe(diff.cacheKey)
   expect(parseTextDiff({ ...input, entryId: 2 }).cacheKey).not.toBe(diff.cacheKey)
   expect(parseTextDiff({ ...input, ignoreWhitespace: true }).cacheKey).not.toBe(diff.cacheKey)
+  const modes = [false, true].flatMap(ignoreWhitespace => [false, true].map(ignoreLineEndings => parseTextDiff({ ...input, ignoreWhitespace, ignoreLineEndings }).cacheKey))
+  expect(new Set(modes).size).toBe(4)
   expect(diff.deletionLines).toEqual(['a\n'])
   expect(diff.additionLines).toEqual(['a\r\n'])
 })
+
+const comparisonModes: Array<[boolean, boolean]> = [[true, true], [false, false], [false, true], [true, false], [false, false], [false, true]]
 
 describe.each(['split', 'unified'] as const)('text diff with the real worker (%s)', (diffStyle) => {
   describe.each([true, false])('reuse renderer: %s', (reuseRenderer) => {
@@ -94,7 +101,7 @@ describe.each(['split', 'unified'] as const)('text diff with the real worker (%s
       let onUpdate = (): void => {}
       try {
         await pool.initialize()
-        for (const [index, ignoreWhitespace] of [true, false, true, false].entries()) {
+        for (const [index, [ignoreWhitespace, ignoreLineEndings]] of comparisonModes.entries()) {
           if (!renderer || !reuseRenderer) {
             renderer?.cleanUp()
             renderer = new DiffHunksRenderer({ diffStyle, disableFileHeader: true }, () => onUpdate(), pool)
@@ -109,6 +116,7 @@ describe.each(['split', 'unified'] as const)('text diff with the real worker (%s
             baseline: fixture.baseline,
             target: fixture.target,
             ignoreWhitespace,
+            ignoreLineEndings,
           })
           renderer.renderDiff(diff)
           if (!pool.getDiffResultCache(diff))
@@ -116,8 +124,16 @@ describe.each(['split', 'unified'] as const)('text diff with the real worker (%s
           const result = renderer.renderDiff(diff)
           if (!result)
             throw new Error('Worker did not produce a diff')
-          const expectedRows = (ignoreWhitespace ? fixture.ignoredRows : 1) * (diffStyle === 'unified' ? 2 : 1)
+          const changeRows = ignoreWhitespace ? fixture.ignoredRows : ignoreLineEndings ? fixture.lineEndingRows : fixture.exactRows ?? 1
+          const contextRows = ignoreWhitespace || ignoreLineEndings ? fixture.contextRows ?? 0 : 0
+          const expectedRows = changeRows * (diffStyle === 'unified' ? 2 : 1) + contextRows + (changeRows ? fixture.markerRows ?? 0 : 0)
           expect(result.rowCount).toBe(expectedRows)
+          if (fixture.contextRows) {
+            expect(diff.hunks.reduce((total, hunk) => total + hunk.additionLines, 0)).toBe(changeRows)
+            expect(diff.hunks.reduce((total, hunk) => total + hunk.deletionLines, 0)).toBe(changeRows)
+            expect(diff.additionLines.join('')).toBe(fixture.target)
+            expect(diff.deletionLines.join('')).toBe(fixture.baseline)
+          }
           if (expectedRows > 0) {
             for (const text of fixture.expectedText)
               expect(renderedText(result)).toContain(text)

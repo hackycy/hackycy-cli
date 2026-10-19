@@ -75,12 +75,14 @@ type EntryState struct {
 }
 
 type Entry struct {
-	ID       int
-	Path     string
-	Status   ComparisonStatus
-	Baseline *EntryState
-	Target   *EntryState
-	Message  string
+	RawStatus   ComparisonStatus
+	LineEndings LineEndingComparison
+	ID          int
+	Path        string
+	Status      ComparisonStatus
+	Baseline    *EntryState
+	Target      *EntryState
+	Message     string
 }
 
 // ComparisonSide identifies one fixed root in a Comparison Workspace.
@@ -136,7 +138,8 @@ type TextContent struct {
 }
 
 type TextDiffOptions struct {
-	ContextLines *int
+	IgnoreLineEndings bool
+	ContextLines      *int
 }
 
 type TextDiffStatus string
@@ -150,6 +153,7 @@ const (
 type TextDiffReason string
 
 const (
+	TextDiffLineEndingsOnly   TextDiffReason = "line_endings_only"
 	TextDiffEncodingOrBOMOnly TextDiffReason = "encoding_or_bom_only"
 	TextDiffNonText           TextDiffReason = "non_text"
 	TextDiffMixedEntryKinds   TextDiffReason = "mixed_entry_kinds"
@@ -195,13 +199,14 @@ type BlobContent struct {
 }
 
 type EntryQuery struct {
-	IncludeUnchanged bool
-	Cursor           string
-	Anchor           int
-	Limit            int
-	Statuses         []ComparisonStatus
-	Kinds            []EntryItemKind
-	Path             string
+	IgnoreLineEndings bool
+	IncludeUnchanged  bool
+	Cursor            string
+	Anchor            int
+	Limit             int
+	Statuses          []ComparisonStatus
+	Kinds             []EntryItemKind
+	Path              string
 }
 
 type EntryPage struct {
@@ -219,14 +224,16 @@ const (
 )
 
 type TreeNode struct {
-	Kind    TreeKind
-	Name    string
-	Path    string
-	Counts  StatusCounts
-	Issues  int
-	ID      int
-	Status  ComparisonStatus
-	Message string
+	RawStatus   ComparisonStatus
+	LineEndings LineEndingComparison
+	Kind        TreeKind
+	Name        string
+	Path        string
+	Counts      StatusCounts
+	Issues      int
+	ID          int
+	Status      ComparisonStatus
+	Message     string
 }
 
 type TreePage struct {

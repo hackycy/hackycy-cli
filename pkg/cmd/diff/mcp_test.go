@@ -336,7 +336,7 @@ func TestMCPHandlerPublishesDiffToolSchemas(t *testing.T) {
 	assertMCPSchemaRequired(t, textDiffOutput, "status", "path", "comparison_status")
 	textDiffProperties := mcpSchemaProperties(t, textDiffOutput)
 	assertMCPSchemaEnum(t, textDiffProperties["status"], []string{"ready", "no_textual_changes", "unavailable"})
-	assertMCPSchemaEnum(t, textDiffProperties["comparison_status"], []string{"added", "deleted", "modified"})
+	assertMCPSchemaEnum(t, textDiffProperties["comparison_status"], []string{"added", "deleted", "modified", "unchanged"})
 
 	comparison := mcpToolCall(t, server.URL, "2", "get_comparison", `{}`)
 	assertMCPResponseHeaders(t, comparison)

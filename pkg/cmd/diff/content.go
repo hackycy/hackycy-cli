@@ -25,17 +25,25 @@ var (
 	errInvalidComparisonSide   = errors.New("Comparison side must be baseline or target")
 )
 
-func (snapshot *Snapshot) Detail(entryID int) (EntryDetail, error) {
+func (snapshot *Snapshot) Detail(entryID int, options ...ComparisonOptions) (EntryDetail, error) {
 	entry := snapshot.entry(entryID)
 	if entry == nil {
 		return EntryDetail{}, errComparisonEntryNotFound
 	}
 
-	detail := EntryDetail{Entry: cloneEntry(entry.Entry)}
+	detail := EntryDetail{Entry: projectEntry(entry.Entry, ignoreLineEndings(options))}
 	if entry.Status == StatusIssue {
 		detail.Presentation = PresentationIssue
 		return detail, nil
 	}
+	if ignoreLineEndings(options) && entry.LineEndings.Only {
+		detail.Presentation = PresentationText
+		if !pathResolvesTo(absoluteComparisonPath(snapshot.summary.BaselineDirectory, entry.Path)) || !pathResolvesTo(absoluteComparisonPath(snapshot.summary.TargetDirectory, entry.Path)) || assertSourceStable(snapshot.summary.BaselineDirectory, entry.Path, entry.baseline) != nil || assertSourceStable(snapshot.summary.TargetDirectory, entry.Path, entry.target) != nil {
+			detail.Presentation = PresentationStale
+		}
+		return detail, nil
+	}
+
 	detail.Presentation = snapshot.presentation(entry)
 	return detail, nil
 }

@@ -41,6 +41,18 @@ func (snapshot *Snapshot) TextDiff(parent context.Context, entryID int, options 
 	if err := parent.Err(); err != nil {
 		return TextDiffResult{}, err
 	}
+	if options != nil && options.IgnoreLineEndings && entry.LineEndings.Only {
+		if !pathResolvesTo(absoluteComparisonPath(snapshot.summary.BaselineDirectory, entry.Path)) || !pathResolvesTo(absoluteComparisonPath(snapshot.summary.TargetDirectory, entry.Path)) {
+			return unavailableTextDiff(entry, TextDiffStale), nil
+		}
+		if err := assertSourceStable(snapshot.summary.BaselineDirectory, entry.Path, entry.baseline); err != nil {
+			return unavailableTextDiff(entry, TextDiffStale), nil
+		}
+		if err := assertSourceStable(snapshot.summary.TargetDirectory, entry.Path, entry.target); err != nil {
+			return unavailableTextDiff(entry, TextDiffStale), nil
+		}
+		return TextDiffResult{Status: TextDiffNoTextualChanges, Path: entry.Path, ComparisonStatus: StatusUnchanged, Reason: TextDiffLineEndingsOnly}, nil
+	}
 	if !snapshot.acquireTextDiffSlot() {
 		return unavailableTextDiff(entry, TextDiffServerBusy), nil
 	}
@@ -86,6 +98,11 @@ func (snapshot *Snapshot) TextDiff(parent context.Context, entryID int, options 
 			BaselineEncoding: textEncodingPointer(baseline.Encoding),
 			TargetEncoding:   textEncodingPointer(target.Encoding),
 		}, nil
+	}
+
+	if options != nil && options.IgnoreLineEndings && entry.LineEndings.Supported {
+		baselineText = strings.ReplaceAll(baselineText, "\r\n", "\n")
+		targetText = strings.ReplaceAll(targetText, "\r\n", "\n")
 	}
 
 	operations, err := calculateTextDiff(ctx, splitTextDiffLines(baselineText), splitTextDiffLines(targetText))

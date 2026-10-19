@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Input } from '../../shared/components/ui/input'
 import { ScrollArea } from '../../shared/components/ui/scroll-area'
 import { cn } from '../../shared/lib/utils'
-import { apiJson } from '../api'
+import { apiJson, comparisonUrl } from '../api'
 
 interface VisibleNode {
   node: TreeNode
@@ -22,6 +22,7 @@ const statusClass = {
 
 export function Sidebar({
   snapshotId,
+  ignoreLineEndings,
   search,
   statuses,
   activeId,
@@ -29,22 +30,49 @@ export function Sidebar({
   onSelect,
 }: {
   snapshotId: string
+  ignoreLineEndings: boolean
   search: string
   statuses: Set<ComparisonStatus>
   activeId?: number
   onSearch: (value: string) => void
   onSelect: (entry: FileNode) => void
 }): React.JSX.Element {
+  const directoryRequests = useRef(new Set<AbortController>())
   const [children, setChildren] = useState<Map<string, TreeNode[]>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [searchPage, setSearchPage] = useState<SearchPage>()
   const [searching, setSearching] = useState(false)
+  const [loadError, setLoadError] = useState<string>()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const loadDirectory = useCallback(async (directory: string) => {
-    const response = await apiJson<{ children: TreeNode[] }>(`/api/tree?snapshot=${encodeURIComponent(snapshotId)}&path=${encodeURIComponent(directory)}`)
-    setChildren(current => new Map(current).set(directory, response.children))
-  }, [snapshotId])
+    const controller = new AbortController()
+    directoryRequests.current.add(controller)
+    setLoadError(undefined)
+    try {
+      const response = await apiJson<{ children: TreeNode[] }>(comparisonUrl(`/api/tree?snapshot=${encodeURIComponent(snapshotId)}&path=${encodeURIComponent(directory)}`, ignoreLineEndings), { signal: controller.signal })
+      if (controller.signal.aborted)
+        return false
+      setChildren(current => new Map(current).set(directory, response.children))
+      return true
+    }
+    catch (error) {
+      if (!controller.signal.aborted)
+        setLoadError(error instanceof Error ? error.message : 'Could not load comparison files')
+      return false
+    }
+    finally {
+      directoryRequests.current.delete(controller)
+    }
+  }, [snapshotId, ignoreLineEndings])
+
+  useEffect(() => {
+    const requests = directoryRequests.current
+    return () => {
+      for (const controller of requests)
+        controller.abort()
+    }
+  }, [])
 
   useEffect(() => {
     setChildren(new Map())
@@ -63,11 +91,14 @@ export function Sidebar({
     setSearching(true)
     setSearchPage(undefined)
     const timer = setTimeout(() => {
-      const query = new URLSearchParams({ snapshot: snapshotId, q: queryText, limit: '200' })
+      const query = new URLSearchParams({ snapshot: snapshotId, q: queryText, limit: '200', ignoreLineEndings: String(ignoreLineEndings) })
       for (const status of statuses)
         query.append('status', status)
       void apiJson<SearchPage>(`/api/search?${query}`, { signal: controller.signal })
-        .then(setSearchPage)
+        .then((page) => {
+          if (!controller.signal.aborted)
+            setSearchPage(page)
+        })
         .catch(() => {
           if (!controller.signal.aborted)
             setSearchPage({ results: [], truncated: false })
@@ -81,7 +112,7 @@ export function Sidebar({
       clearTimeout(timer)
       controller.abort()
     }
-  }, [search, snapshotId, statuses])
+  }, [search, snapshotId, statuses, ignoreLineEndings])
 
   const matchesStatuses = useCallback((node: TreeNode): boolean => {
     if (node.kind !== 'directory')
@@ -128,7 +159,9 @@ export function Sidebar({
   const revealDirectory = async (directory: string): Promise<void> => {
     const parts = directory.split('/')
     const directories = parts.map((_, index) => parts.slice(0, index + 1).join('/'))
-    await Promise.all(['', ...directories].filter(value => !children.has(value)).map(loadDirectory))
+    const loaded = await Promise.all(['', ...directories].filter(value => !children.has(value)).map(loadDirectory))
+    if (loaded.some(success => !success))
+      return
     setExpanded(current => new Set([...current, ...directories]))
     onSearch('')
   }
@@ -144,6 +177,7 @@ export function Sidebar({
         </div>
       </div>
       <ScrollArea viewportRef={scrollRef} className="min-h-0 flex-1" viewportClassName="py-1">
+        {loadError && <div role="status" className="px-3 py-6 text-center text-xs text-muted-foreground">{loadError}</div>}
         {!searching && search.trim() && displayedNodes.length === 0 && (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">No matching files or folders</div>
         )}

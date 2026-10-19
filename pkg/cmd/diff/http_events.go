@@ -23,6 +23,10 @@ func (handler *diffHTTPHandler) serveEvents(writer http.ResponseWriter, request 
 	if !requireHTTPMethod(writer, request, http.MethodGet) {
 		return
 	}
+	options, ok := parseHTTPComparisonOptions(writer, request)
+	if !ok {
+		return
+	}
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Content-Security-Policy", diffAPICSP)
 	writer.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -32,7 +36,7 @@ func (handler *diffHTTPHandler) serveEvents(writer http.ResponseWriter, request 
 
 	queue := newHTTPEventQueue()
 	unsubscribe := handler.workspace.Subscribe(func(state WorkspaceState) {
-		queue.enqueue(handler.makeHTTPStatePayload(state))
+		queue.enqueue(handler.makeHTTPStatePayload(state, options))
 	})
 	defer unsubscribe()
 	defer queue.close()

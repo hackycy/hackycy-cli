@@ -7,7 +7,7 @@ import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panel
 import { ScrollArea } from '../shared/components/ui/scroll-area'
 import { Sheet, SheetContent } from '../shared/components/ui/sheet'
 import { cn } from '../shared/lib/utils'
-import { apiJson } from './api'
+import { apiJson, comparisonEntry, comparisonUrl } from './api'
 import { DiffPanel } from './components/diff-panel'
 import { DiffToolbar } from './components/diff-toolbar'
 import { EditorTabs } from './components/editor-tabs'
@@ -75,6 +75,7 @@ export function App(): React.JSX.Element {
   const [mobileSidebar, setMobileSidebar] = useState(false)
   const [diffStyle, setDiffStyle] = useStoredValue<'split' | 'unified'>('ycy-diff-style', 'split', ['split', 'unified'])
   const [wrap, setWrap] = useStoredValue('ycy-diff-wrap', false, [false, true])
+  const [ignoreLineEndings, setIgnoreLineEndings] = useStoredValue('ycy-diff-line-endings', false, [false, true])
   const [ignoreWhitespace, setIgnoreWhitespace] = useStoredValue('ycy-diff-whitespace', false, [false, true])
   const [theme, setTheme] = useStoredValue<'light' | 'dark'>('ycy-diff-theme', 'light', ['light', 'dark'])
   const [mobile, setMobile] = useState(matchMedia('(max-width: 899px)').matches)
@@ -85,7 +86,8 @@ export function App(): React.JSX.Element {
     storage: layoutStorage,
   })
   const snapshotId = state?.snapshot?.id
-  const activeEntry = openTabs.find(entry => entry.id === activeEntryId)
+  const visibleTabs = useMemo(() => openTabs.map(entry => comparisonEntry(entry, ignoreLineEndings)), [openTabs, ignoreLineEndings])
+  const activeEntry = visibleTabs.find(entry => entry.id === activeEntryId)
   const refreshing = ['discovering', 'comparing', 'publishing'].includes(state?.workspace.phase ?? '')
 
   useEffect(() => {
@@ -106,11 +108,28 @@ export function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    void apiJson<ServerState>('/api/state').then(setState)
-    const events = new EventSource('/api/events')
-    events.onmessage = event => setState(JSON.parse(event.data) as ServerState)
-    return () => events.close()
-  }, [])
+    const controller = new AbortController()
+    let active = true
+    let receivedEvent = false
+    void apiJson<ServerState>(comparisonUrl('/api/state', ignoreLineEndings), { signal: controller.signal })
+      .then((next) => {
+        if (active && !receivedEvent)
+          setState(next)
+      })
+      .catch(() => {})
+    const events = new EventSource(comparisonUrl('/api/events', ignoreLineEndings))
+    events.onmessage = (event) => {
+      if (active) {
+        receivedEvent = true
+        setState(JSON.parse(event.data) as ServerState)
+      }
+    }
+    return () => {
+      active = false
+      controller.abort()
+      events.close()
+    }
+  }, [ignoreLineEndings])
 
   const toggleStatus = (status: ComparisonStatus): void => {
     setStatuses((current) => {
@@ -168,7 +187,8 @@ export function App(): React.JSX.Element {
   const sidebar = snapshotId
     ? (
         <Sidebar
-          key={snapshotId}
+          key={`${snapshotId}:${ignoreLineEndings}`}
+          ignoreLineEndings={ignoreLineEndings}
           snapshotId={snapshotId}
           search={search}
           statuses={statuses}
@@ -186,7 +206,7 @@ export function App(): React.JSX.Element {
   const rootName = (value: string): string => value.split(/[\\/]/).at(-1) ?? value
   const editor = (
     <main className="flex h-full min-h-0 flex-col bg-feed">
-      <EditorTabs tabs={openTabs} activeId={activeEntryId} onSelect={entry => setActiveEntryId(entry.id)} onClose={closeEntry} onCloseOthers={closeOtherEntries} onCloseToRight={closeEntriesToRight} onCloseAll={closeAllEntries} />
+      <EditorTabs tabs={visibleTabs} activeId={activeEntryId} onSelect={entry => setActiveEntryId(entry.id)} onClose={closeEntry} onCloseOthers={closeOtherEntries} onCloseToRight={closeEntriesToRight} onCloseAll={closeAllEntries} />
       <ScrollArea className="min-h-0 flex-1 bg-background" scrollbars="both">
         {!snapshotId && (
           <EmptyState
@@ -195,7 +215,7 @@ export function App(): React.JSX.Element {
           />
         )}
         {snapshotId && activeEntry && (
-          <DiffPanel key={`${snapshotId}:${activeEntry.id}`} entry={activeEntry} snapshotId={snapshotId} diffStyle={effectiveStyle} wrap={wrap} ignoreWhitespace={ignoreWhitespace} theme={theme} />
+          <DiffPanel key={`${snapshotId}:${activeEntry.id}`} entry={activeEntry} snapshotId={snapshotId} diffStyle={effectiveStyle} wrap={wrap} ignoreWhitespace={ignoreWhitespace} ignoreLineEndings={ignoreLineEndings} theme={theme} />
         )}
         {snapshotId && !activeEntry && <EmptyState title="Select a file to compare" />}
       </ScrollArea>
@@ -221,6 +241,8 @@ export function App(): React.JSX.Element {
             diffStyle={effectiveStyle}
             wrap={wrap}
             ignoreWhitespace={ignoreWhitespace}
+            ignoreLineEndings={ignoreLineEndings}
+            onIgnoreLineEndings={() => setIgnoreLineEndings(!ignoreLineEndings)}
             theme={theme}
             onFiles={() => setMobileSidebar(true)}
             onRefresh={() => void (refreshing ? cancelRefresh() : refresh())}
