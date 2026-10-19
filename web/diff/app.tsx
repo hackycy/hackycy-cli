@@ -1,16 +1,15 @@
 import type { ComparisonStatus, Entry, FileNode, ServerState } from './api'
 import { WorkerPoolContextProvider } from '@pierre/diffs/react'
 import diffWorkerUrl from '@pierre/diffs/worker/worker-portable.js?url'
-import { AlertTriangle, Columns2, GitCompareArrows, List, Menu, Moon, RefreshCw, Square, Sun, Text, WrapText } from 'lucide-react'
+import { AlertTriangle, GitCompareArrows, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels'
-import { Button } from '../shared/components/ui/button'
 import { ScrollArea } from '../shared/components/ui/scroll-area'
 import { Sheet, SheetContent } from '../shared/components/ui/sheet'
-import { Tooltip } from '../shared/components/ui/tooltip'
 import { cn } from '../shared/lib/utils'
 import { apiJson } from './api'
 import { DiffPanel } from './components/diff-panel'
+import { DiffToolbar } from './components/diff-toolbar'
 import { EditorTabs } from './components/editor-tabs'
 import { Sidebar } from './components/sidebar'
 import { contentCache } from './lib/content-cache'
@@ -26,9 +25,6 @@ const statusOptions: Array<{ status: ComparisonStatus, letter: string, label: st
   { status: 'unchanged', letter: 'U', label: 'Unchanged' },
   { status: 'issue', letter: '!', label: 'Issues' },
 ]
-
-const toolbarButtonClass = 'size-8 text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-const toolbarActiveClass = 'bg-muted text-foreground'
 
 function useStoredValue<T>(key: string, fallback: T, allowedValues: readonly T[]): [T, (value: T) => void] {
   const [value, setValue] = useState<T>(() => {
@@ -209,10 +205,10 @@ export function App(): React.JSX.Element {
   return (
     <WorkerPoolContextProvider poolOptions={{ poolSize: Math.min(navigator.hardwareConcurrency || 2, 4), workerFactory: createDiffWorker }} highlighterOptions={{}}>
       <div data-diff-style={effectiveStyle} className="flex h-dvh min-w-0 flex-col bg-background text-foreground">
-        <header className="z-30 flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3">
-          <div className="flex min-w-0 items-center gap-2 font-semibold">
+        <header className="z-30 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-background px-3 py-2">
+          <div className="flex min-w-0 grow basis-80 items-center gap-2 font-semibold">
             <GitCompareArrows className="size-4 shrink-0 text-cyan-600" />
-            <span className="shrink-0">HACKYCY CLI — DIFF SERVER</span>
+            <span className="shrink-0 text-sm">HACKYCY CLI — DIFF SERVER</span>
             <span className="hidden text-border sm:inline">/</span>
             <span className="hidden min-w-0 items-center gap-1 text-xs font-normal sm:flex">
               <span className="max-w-40 truncate" title={roots.baseline}>{rootName(roots.baseline)}</span>
@@ -220,34 +216,19 @@ export function App(): React.JSX.Element {
               <span className="max-w-40 truncate" title={roots.target}>{rootName(roots.target)}</span>
             </span>
           </div>
-          <div role="toolbar" aria-label="Diff controls" className="ml-auto flex items-center gap-0.5">
-            <div className="flex items-center gap-0.5">
-              <Tooltip label="Files"><Button aria-label="Files" className={cn(toolbarButtonClass, 'min-[900px]:hidden')} size="icon" variant="ghost" onClick={() => setMobileSidebar(true)}><Menu className="size-4" /></Button></Tooltip>
-              <Tooltip label={refreshing ? 'Cancel comparison refresh' : 'Refresh comparison'}>
-                <Button
-                  aria-label={refreshing ? 'Cancel comparison refresh' : 'Refresh comparison'}
-                  size="icon"
-                  variant="ghost"
-                  className={toolbarButtonClass}
-                  onClick={() => void (refreshing ? cancelRefresh() : refresh())}
-                >
-                  {refreshing ? <Square className="size-3.5" /> : <RefreshCw className="size-4" />}
-                </Button>
-              </Tooltip>
-            </div>
-            <span aria-hidden="true" className="mx-1 hidden h-4 w-px bg-border/70 sm:block" />
-            <div className="hidden items-center gap-0.5 sm:flex">
-              <Tooltip label="Split diff"><Button aria-label="Split diff" aria-pressed={diffStyle === 'split'} size="icon" variant="ghost" className={cn(toolbarButtonClass, diffStyle === 'split' && toolbarActiveClass)} onClick={() => setDiffStyle('split')}><Columns2 className="size-3.5" /></Button></Tooltip>
-              <Tooltip label="Unified diff"><Button aria-label="Unified diff" aria-pressed={diffStyle === 'unified'} size="icon" variant="ghost" className={cn(toolbarButtonClass, diffStyle === 'unified' && toolbarActiveClass)} onClick={() => setDiffStyle('unified')}><List className="size-3.5" /></Button></Tooltip>
-            </div>
-            <span aria-hidden="true" className="mx-1 hidden h-4 w-px bg-border/70 sm:block" />
-            <div className="flex items-center gap-0.5">
-              <Tooltip label={wrap ? 'Disable line wrapping' : 'Wrap long lines'}><Button aria-label={wrap ? 'Disable line wrapping' : 'Wrap long lines'} aria-pressed={wrap} size="icon" variant="ghost" className={cn(toolbarButtonClass, wrap && toolbarActiveClass)} onClick={() => setWrap(!wrap)}><WrapText className="size-4" /></Button></Tooltip>
-              <Tooltip label={ignoreWhitespace ? 'Show exact diff' : 'Ignore whitespace'}><Button aria-label={ignoreWhitespace ? 'Show exact diff' : 'Ignore whitespace'} aria-pressed={ignoreWhitespace} size="icon" variant="ghost" className={cn(toolbarButtonClass, ignoreWhitespace && toolbarActiveClass)} onClick={() => setIgnoreWhitespace(!ignoreWhitespace)}><Text className="size-4" /></Button></Tooltip>
-            </div>
-            <span aria-hidden="true" className="mx-1 h-4 w-px bg-border/70" />
-            <Tooltip label={`Use ${theme === 'light' ? 'dark' : 'light'} theme`}><Button aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} theme`} aria-pressed={theme === 'dark'} size="icon" variant="ghost" className={cn(toolbarButtonClass, theme === 'dark' && toolbarActiveClass)} onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon className="size-4" /> : <Sun className="size-4" />}</Button></Tooltip>
-          </div>
+          <DiffToolbar
+            refreshing={refreshing}
+            diffStyle={effectiveStyle}
+            wrap={wrap}
+            ignoreWhitespace={ignoreWhitespace}
+            theme={theme}
+            onFiles={() => setMobileSidebar(true)}
+            onRefresh={() => void (refreshing ? cancelRefresh() : refresh())}
+            onDiffStyle={setDiffStyle}
+            onWrap={() => setWrap(!wrap)}
+            onIgnoreWhitespace={() => setIgnoreWhitespace(!ignoreWhitespace)}
+            onTheme={() => setTheme(theme === 'light' ? 'dark' : 'light')}
+          />
         </header>
 
         <div className="summary-bar z-20 flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border bg-muted/35 px-3">

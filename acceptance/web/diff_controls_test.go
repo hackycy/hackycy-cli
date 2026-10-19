@@ -60,9 +60,9 @@ func assertDiffControls(t *testing.T, pageURL string) {
 		chromedp.WaitVisible(`button[title="line-endings.ts"]`, chromedp.ByQuery),
 		chromedp.Click(`button[title="line-endings.ts"]`, chromedp.ByQuery),
 		chromedp.WaitReady(`diffs-container`, chromedp.ByQuery),
-		chromedp.Click(`button[aria-label="Wrap long lines"]`, chromedp.ByQuery),
+		chromedp.Click(`button[aria-label="Wrap lines"][aria-pressed="false"]`, chromedp.ByQuery),
 		chromedp.Poll(`window.diffHighlightCompletions >= 1`, nil),
-		chromedp.Click(`button[aria-label="Disable line wrapping"]`, chromedp.ByQuery),
+		chromedp.Click(`button[aria-label="Wrap lines"][aria-pressed="true"]`, chromedp.ByQuery),
 	)
 	assertDiffLines := func(exact bool) {
 		t.Helper()
@@ -82,17 +82,17 @@ func assertDiffControls(t *testing.T, pageURL string) {
 	assertDiffLines(false)
 	// The empty ignored diff must reach the shared worker cache before exact
 	// mode is opened. Waiting for worker completion avoids a timing-only repro.
-	run("switch to exact comparison", chromedp.Click(`button[aria-label="Show exact diff"]`, chromedp.ByQuery), chromedp.Poll(`window.diffHighlightCompletions >= 2`, nil))
+	run("switch to exact comparison", chromedp.Click(`button[aria-label="Ignore whitespace"][aria-pressed="true"]`, chromedp.ByQuery), chromedp.Poll(`window.diffHighlightCompletions >= 2`, nil))
 	assertDiffLines(true)
-	for _, style := range []string{"Split diff", "Unified diff"} {
+	for _, style := range []string{"Side-by-side diff", "Unified diff"} {
 		run("select "+style, chromedp.Click(`button[aria-label="`+style+`"]`, chromedp.ByQuery))
 		for range 2 {
-			run("enable line wrapping", chromedp.Click(`button[aria-label="Wrap long lines"]`, chromedp.ByQuery), chromedp.Poll(`document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre')?.dataset.overflow === 'wrap'`, nil))
+			run("enable line wrapping", chromedp.Click(`button[aria-label="Wrap lines"][aria-pressed="false"]`, chromedp.ByQuery), chromedp.Poll(`document.querySelector('diffs-container')?.shadowRoot?.querySelector('pre')?.dataset.overflow === 'wrap'`, nil))
 			assertDiffLines(true)
-			run("ignore whitespace", chromedp.Click(`button[aria-label="Ignore whitespace"]`, chromedp.ByQuery))
+			run("ignore whitespace", chromedp.Click(`button[aria-label="Ignore whitespace"][aria-pressed="false"]`, chromedp.ByQuery))
 			assertDiffLines(false)
-			run("disable line wrapping", chromedp.Click(`button[aria-label="Disable line wrapping"]`, chromedp.ByQuery))
-			run("show exact diff", chromedp.Click(`button[aria-label="Show exact diff"]`, chromedp.ByQuery))
+			run("disable line wrapping", chromedp.Click(`button[aria-label="Wrap lines"][aria-pressed="true"]`, chromedp.ByQuery))
+			run("show exact diff", chromedp.Click(`button[aria-label="Ignore whitespace"][aria-pressed="true"]`, chromedp.ByQuery))
 			assertDiffLines(true)
 			run("reopen file using the shared cache",
 				chromedp.Click(`button[aria-label="Close line-endings.ts"]`, chromedp.ByQuery),
@@ -102,8 +102,8 @@ func assertDiffControls(t *testing.T, pageURL string) {
 			assertDiffLines(true)
 		}
 	}
-	for _, label := range []string{"Use dark theme", "Use light theme"} {
-		run(label, chromedp.Click(`button[aria-label="`+label+`"]`, chromedp.ByQuery))
+	for _, wasDark := range []bool{false, true} {
+		run("toggle dark mode", chromedp.Click(fmt.Sprintf(`button[aria-label="Dark mode"][aria-pressed="%t"]`, wasDark), chromedp.ByQuery))
 		assertDiffLines(true)
 	}
 	if err := observer.assertClean(pageURL, nil, []string{"/api/state", "/api/tree"}); err != nil {
