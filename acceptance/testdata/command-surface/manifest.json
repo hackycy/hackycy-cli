@@ -1712,50 +1712,6 @@
       ]
     },
     {
-      "path": "ycy run",
-      "use": "run [path]",
-      "aliases": [],
-      "hidden": false,
-      "deprecated": "",
-      "flags": [
-        {
-          "name": "help",
-          "shorthand": "h",
-          "type": "bool",
-          "default": "false",
-          "noOptDefault": "true",
-          "scope": "local"
-        },
-        {
-          "name": "log-format",
-          "type": "string",
-          "default": "",
-          "scope": "inherited"
-        },
-        {
-          "name": "log-level",
-          "type": "string",
-          "default": "",
-          "scope": "inherited"
-        },
-        {
-          "name": "quiet",
-          "type": "bool",
-          "default": "false",
-          "noOptDefault": "true",
-          "scope": "inherited"
-        },
-        {
-          "name": "verbose",
-          "shorthand": "v",
-          "type": "bool",
-          "default": "false",
-          "noOptDefault": "true",
-          "scope": "inherited"
-        }
-      ]
-    },
-    {
       "path": "ycy tunnel",
       "use": "tunnel",
       "aliases": [],

@@ -15,7 +15,6 @@ import (
 	fscommand "github.com/hackycy/hackycy-cli/pkg/cmd/fs"
 	gitcommand "github.com/hackycy/hackycy-cli/pkg/cmd/git"
 	rmcommand "github.com/hackycy/hackycy-cli/pkg/cmd/rm"
-	runcommand "github.com/hackycy/hackycy-cli/pkg/cmd/run"
 	tunnelcommand "github.com/hackycy/hackycy-cli/pkg/cmd/tunnel"
 	upgradecommand "github.com/hackycy/hackycy-cli/pkg/cmd/upgrade"
 	zipcommand "github.com/hackycy/hackycy-cli/pkg/cmd/zip"
@@ -165,7 +164,7 @@ func (app *App) rootCommandWithPresentationError(controls diagnosticControls, ca
 	root.SetErr(app.diagnostics())
 	root.PersistentPreRunE = func(command *cobra.Command, _ []string) error {
 		switch command.CommandPath() {
-		case "ycy diff", "ycy fs", "ycy rm", "ycy export env", "ycy run", "ycy zip", "ycy tunnel server", "ycy tunnel connect", "ycy tunnel node",
+		case "ycy diff", "ycy fs", "ycy rm", "ycy export env", "ycy zip", "ycy tunnel server", "ycy tunnel connect", "ycy tunnel node",
 			"ycy upgrade",
 			"ycy git heat", "ycy git pulse", "ycy git fork", "ycy git cm",
 			"ycy config fork list", "ycy config fork add", "ycy config fork remove",
@@ -185,7 +184,6 @@ func (app *App) rootCommandWithPresentationError(controls diagnosticControls, ca
 	configCommand := configcommand.NewCmdConfig(app.factory)
 	root.AddCommand(configCommand)
 	root.AddCommand(rmcommand.NewCmdRM(app.factory, nil))
-	root.AddCommand(runcommand.NewCmdRun(app.factory, nil))
 	root.AddCommand(zipcommand.NewCmdZIP(app.factory, nil))
 	root.AddCommand(gitcommand.NewCmdGit(app.factory))
 	root.AddCommand(diffcommand.NewCmdDiff(app.factory, nil))

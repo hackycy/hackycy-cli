@@ -94,7 +94,6 @@ var approvedPackageInventory = []string{
 	"pkg/cmd/git/pulse",
 	"pkg/cmd/rm",
 	"pkg/cmd/root",
-	"pkg/cmd/run",
 	"pkg/cmd/tunnel",
 	"pkg/cmd/tunnel/connect",
 	"pkg/cmd/tunnel/node",
@@ -327,7 +326,7 @@ func assertFinalPaths(t *testing.T, root string) {
 	for _, name := range []string{
 		"config.go", "configcm.go", "configfork.go", "exportenv.go",
 		"gitcm.go", "gitfork.go", "githeat.go", "gitpulse.go", "tunnel.go",
-		"diff.go", "fs.go", "rm.go", "run.go", "upgrade.go", "zip.go",
+		"diff.go", "fs.go", "rm.go", "upgrade.go", "zip.go",
 	} {
 		if _, err := os.Lstat(filepath.Join(rootDirectory, name)); err == nil {
 			t.Fatalf("obsolete flat root command file is present: pkg/cmd/root/%s", name)

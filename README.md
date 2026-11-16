@@ -39,7 +39,6 @@ Commands:
   diff [options] <baseline-directory> <target-directory>
                                Compare two directories in a browser
   zip [options] [directory]    Zip a directory into a zip file
-  run [path]                   Run package.json scripts
   tunnel                       Manage trusted tunnel clients and tunnel definitions
   upgrade                      Upgrade cli to the latest version
   help [command]               display help for command

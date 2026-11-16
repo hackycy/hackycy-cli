@@ -10,7 +10,6 @@ Commands:
   fs	Browse a directory in a browser
   git	Git utilities
   rm	Remove files/dirs, or smartly clean project artifacts when no path given
-  run	Run package.json scripts
   tunnel	Manage trusted tunnel clients and tunnel definitions
   upgrade	Update ycy to the latest release
   zip	Zip a directory into a zip file
