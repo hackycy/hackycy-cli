@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -44,6 +45,7 @@ func TestStandaloneNPMPackageSettings(t *testing.T) {
 if [ "$1" = 'open' ]; then shift; fi
 printf '%s\n' "$1" >> "$YCY_NPM_TEST_LOG"
 case "$1" in */example-beta/access) if [ "$YCY_NPM_TEST_FAIL" = 1 ]; then exit 4; fi;; esac
+if [ "$YCY_NPM_TEST_FAIL" = slow ]; then /bin/sleep 0.6; fi
 `)
 		if err := os.Chmod(filepath.Join(bin, launcher), 0o700); err != nil {
 			t.Fatal(err)
@@ -92,30 +94,35 @@ case "$1" in */example-beta/access) if [ "$YCY_NPM_TEST_FAIL" = 1 ]; then exit 4
 		assertNPMOpenLog(t, log, addresses)
 	})
 	for _, test := range []struct {
-		name, term, input string
-		interrupt         bool
-		continueAll       bool
+		name, term, fail string
+		selectKeys       string
+		steps            []string
+		interrupt        bool
+		wantLog          string
+		wantResult       []string
+		wantCode         int
 	}{
-		{name: "plain decline", term: "dumb", input: "n\r"},
-		{name: "plain interrupt", term: "dumb", interrupt: true},
-		{name: "rich continue", term: "xterm-256color", input: "\r", continueAll: true},
-		{name: "rich cancel", term: "xterm-256color", input: "\x1b"},
+		{name: "plain stop", term: "dumb", selectKeys: "\r", steps: []string{"n\r"}, wantResult: []string{"Pending 3"}},
+		{name: "plain interrupt", term: "dumb", selectKeys: "\r", interrupt: true, wantResult: []string{"Pending 3"}, wantCode: 1},
+		{name: "rich cancel selection", term: "xterm-256color", selectKeys: "\x1b", wantResult: []string{"Pending 3"}},
+		{name: "rich select subset", term: "xterm-256color", selectKeys: "\x1b[B \r", steps: []string{"\r", "\r"}, wantLog: "https://www.npmjs.com/package/@example/a/access\nhttps://www.npmjs.com/package/example-gamma/access\n", wantResult: []string{"Opened 2", "Not selected 1", "Not selected  example-beta"}},
+		{name: "rich stop after first", term: "xterm-256color", fail: "slow", selectKeys: "\r", steps: []string{"\r", "\x1b"}, wantLog: "https://www.npmjs.com/package/@example/a/access\n", wantResult: []string{"Opened 1", "Pending 2"}},
+		{name: "rich continue after failure", term: "xterm-256color", fail: "1", selectKeys: "\r", steps: []string{"\r", "\r", "\r"}, wantLog: addresses, wantResult: []string{"Opened 2", "Failed 1"}, wantCode: 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 			defer cancel()
 			log := filepath.Join(t.TempDir(), "open.log")
-			command := newCommand(ctx, log, test.term, "")
+			command := newCommand(ctx, log, test.term, test.fail)
 			var stdout bytes.Buffer
 			command.Stdout = &stdout
-			process, err := terminaltest.StartPTYWithSize(command, 120, 30)
+			process, err := terminaltest.StartPTYWithSize(command, 100, 22)
 			if err != nil {
 				if errors.Is(err, terminaltest.ErrPTYUnsupported) {
 					t.Skip(err)
 				}
 				t.Fatal(err)
 			}
-			defer process.Close()
 			var screen npmPTYBuffer
 			readDone := make(chan struct{})
 			go func() {
@@ -124,43 +131,120 @@ case "$1" in */example-beta/access) if [ "$YCY_NPM_TEST_FAIL" = 1 ]; then exit 4
 			}()
 			defer func() { _ = process.Close(); <-readDone }()
 			rich := test.term != "dumb"
-			waitForNPMPrompt(t, ctx, process, &screen, "example-beta", rich)
-			first := strings.SplitAfterN(addresses, "\n", 2)[0]
-			assertNPMOpenLog(t, log, first)
+			waitForNPMPrompt(t, ctx, process, &screen, "All selected by default", rich)
+			assertNPMOpenLog(t, log, "")
+			if _, err := io.WriteString(process.Terminal(), test.selectKeys); err != nil {
+				t.Fatal(err)
+			}
 			if test.interrupt {
+				waitForNPMPrompt(t, ctx, process, &screen, "Enter to open", false)
+				assertNPMOpenLog(t, log, "")
 				if err := command.Process.Signal(os.Interrupt); err != nil {
 					t.Fatal(err)
 				}
-			} else if _, err := io.WriteString(process.Terminal(), test.input); err != nil {
-				t.Fatal(err)
 			}
-			wantLog := first
-			if test.continueAll {
-				waitForNPMPrompt(t, ctx, process, &screen, "example-gamma", false)
-				if _, err := io.WriteString(process.Terminal(), test.input); err != nil {
+			for index, keys := range test.steps {
+				want := "Enter to open"
+				if rich {
+					want = "Enter [Open next]"
+					if index == 1 {
+						want = "Opened 1 · Pending"
+					} else if index == 2 {
+						want = "Failed 1"
+					}
+				}
+				waitForNPMPrompt(t, ctx, process, &screen, want, false)
+				assertNPMOpenLog(t, log, strings.Join(strings.SplitAfter(test.wantLog, "\n")[:index], ""))
+				if _, err := io.WriteString(process.Terminal(), keys); err != nil {
 					t.Fatal(err)
 				}
-				wantLog = addresses
+				if test.fail == "slow" && index == 0 {
+					waitForNPMPrompt(t, ctx, process, &screen, "Opening 1", false)
+					if _, err := io.WriteString(process.Terminal(), "\r"); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			err = process.Wait()
-			wantCode := 0
-			if test.interrupt {
-				wantCode = 1
-			}
-			if ctx.Err() != nil || exitCode(err) != wantCode || stdout.String() != list {
+			if ctx.Err() != nil || exitCode(err) != test.wantCode {
 				t.Fatalf("interactive exit = %v, context %v, stdout %q, terminal %q", err, ctx.Err(), stdout.String(), screen.String())
 			}
-			assertNPMOpenLog(t, log, wantLog)
+			for _, status := range test.wantResult {
+				if !strings.Contains(stdout.String(), status) {
+					t.Errorf("stdout is missing %q: %q", status, stdout.String())
+				}
+			}
+			assertNPMOpenLog(t, log, test.wantLog)
 			if rich {
 				waitForNPMPrompt(t, ctx, process, &screen, "\x1b[?1049l", false)
+				waitForNPMPrompt(t, ctx, process, &screen, "\x1b[?1002l", false)
 			}
 		})
 	}
+	t.Run("rich long checklist scrolls and keeps every result", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+		defer cancel()
+		workspace := t.TempDir()
+		writeStandaloneZIPFile(t, workspace, "package.json", `{"private":true,"workspaces":["packages/*"]}`)
+		for index := 0; index < 72; index++ {
+			name := fmt.Sprintf("scroll-package-%02d", index)
+			if index == 71 {
+				name = "workspace-last-package"
+			}
+			writeStandaloneZIPFile(t, workspace, filepath.Join("packages", name, "package.json"), fmt.Sprintf(`{"name":%q}`, name))
+		}
+		log := filepath.Join(t.TempDir(), "open.log")
+		command := newCommand(ctx, log, "xterm-256color", "")
+		command.Dir = workspace
+		var stdout bytes.Buffer
+		command.Stdout = &stdout
+		process, err := terminaltest.StartPTYWithSize(command, 60, 13)
+		if err != nil {
+			if errors.Is(err, terminaltest.ErrPTYUnsupported) {
+				t.Skip(err)
+			}
+			t.Fatal(err)
+		}
+		var screen npmPTYBuffer
+		readDone := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(&screen, process.Terminal())
+			close(readDone)
+		}()
+		defer func() { _ = process.Close(); <-readDone }()
+		send := func(keys string) {
+			t.Helper()
+			if _, err := io.WriteString(process.Terminal(), keys); err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitForNPMPrompt(t, ctx, process, &screen, "scroll-package-00", true)
+		send("\r")
+		waitForNPMPrompt(t, ctx, process, &screen, "Enter [Open next]", false)
+		if strings.Contains(screen.String(), "workspace-last-package") {
+			t.Fatal("last row was shown before scrolling")
+		}
+		send("\x1b[F") // End scrolls to the final row without changing the next package.
+		waitForNPMPrompt(t, ctx, process, &screen, "workspace-last-package", false)
+		assertNPMOpenLog(t, log, "")
+		send("\r")
+		waitForNPMPrompt(t, ctx, process, &screen, "Opened 1 · Pending 71", false)
+		send("\x1b[D\r") // Choose the Stop button rather than opening the next package.
+		if err := process.Wait(); err != nil {
+			t.Fatalf("stop = %v; terminal %q", err, screen.String())
+		}
+		assertNPMOpenLog(t, log, "https://www.npmjs.com/package/scroll-package-00/access\n")
+		result := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+		if len(result) != 73 || !strings.Contains(result[1], "Opened        scroll-package-00") || !strings.Contains(result[72], "Pending       workspace-last-package") {
+			t.Fatalf("final result did not retain all 72 package statuses: %q", stdout.String())
+		}
+		waitForNPMPrompt(t, ctx, process, &screen, "\x1b[?1049l", false)
+	})
 }
 
 func assertNPMOpenLog(t *testing.T, file, want string) {
 	t.Helper()
-	if got, err := os.ReadFile(file); err != nil || string(got) != want {
+	if got, err := os.ReadFile(file); (err != nil && !(want == "" && errors.Is(err, os.ErrNotExist))) || string(got) != want {
 		t.Fatalf("browser log = %q, %v; want %q", got, err, want)
 	}
 }

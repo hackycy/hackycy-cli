@@ -262,16 +262,16 @@ func (controller *richController) milestone(document PresentationDocument) error
 }
 
 func (controller *richController) startTrack(label string, phases []OperationPhase, requestCancel func() error) error {
-	return controller.startTrackWithFormCatalog(label, phases, requestCancel, false)
+	return controller.startTrackWithFormCatalog(label, phases, requestCancel, false, nil)
 }
 
-func (controller *richController) startWork(label string, phases []OperationPhase, requestCancel func() error) error {
-	return controller.startTrackWithFormCatalog(label, phases, requestCancel, true)
+func (controller *richController) startWork(label string, phases []OperationPhase, requestCancel func() error, checklist *WorkChecklistLabels) error {
+	return controller.startTrackWithFormCatalog(label, phases, requestCancel, true, checklist)
 }
 
-func (controller *richController) startTrackWithFormCatalog(label string, phases []OperationPhase, requestCancel func() error, retainFormCatalog bool) error {
+func (controller *richController) startTrackWithFormCatalog(label string, phases []OperationPhase, requestCancel func() error, retainFormCatalog bool, checklist *WorkChecklistLabels) error {
 	ack := make(chan struct{})
-	return controller.send(richStartTrackMsg{label: label, phases: phases, requestCancel: requestCancel, retainFormCatalog: retainFormCatalog, ack: ack}, ack)
+	return controller.send(richStartTrackMsg{label: label, phases: phases, requestCancel: requestCancel, retainFormCatalog: retainFormCatalog, checklist: checklist, ack: ack}, ack)
 }
 
 func (controller *richController) updateTrack(phase OperationPhase) error {
@@ -417,6 +417,7 @@ type richRootModel struct {
 	response         chan<- richAskResult
 	track            *trackedState
 	trackRetainsForm bool
+	checklist        *WorkChecklistLabels
 	outcome          FinishRequest
 	formRows         []consoleFormStep
 	spin             spinner.Model
@@ -609,9 +610,14 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.clearTrack()
 		}
 		model.trackRetainsForm = value.retainFormCatalog
+		model.checklist = value.checklist
 		model.mode = richTrackMode
 		model.scroll.following = true
 		model.scroll.unread = 0
+		if model.checklist != nil {
+			model.scroll.following = false
+			model.scroll.reveal = true
+		}
 		model.track = &trackedState{
 			label:  value.label,
 			phases: append([]OperationPhase(nil), value.phases...),
@@ -620,6 +626,9 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			},
 		}
 		close(value.ack)
+		if model.checklist != nil {
+			return model, nil
+		}
 		return model, model.startPulse()
 	case richTrackPhaseMsg:
 		if model.mode == richOutcomeMode {
@@ -628,6 +637,10 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if model.track != nil {
 			model.track.applyPhase(value.phase)
+			if model.checklist != nil && value.phase.State == PhaseActive {
+				model.scroll.following = false
+				model.scroll.reveal = true
+			}
 		}
 		close(value.ack)
 		return model, nil
@@ -656,11 +669,10 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			close(value.ack)
 			return model, nil
 		}
-		readingHistory := model.form == nil && !model.scroll.following
+		readingHistory := model.checklist == nil && model.form == nil && !model.scroll.following
 		// Outcome is a terminal projection, so later form/work messages are
 		// acknowledged but cannot replace it.
-		model.track = nil
-		model.trackRetainsForm = false
+		model.clearTrack()
 		model.form = nil
 		model.formID = 0
 		model.answer = nil
@@ -713,7 +725,13 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.tooSmall() && value.String() != "esc" && value.String() != "ctrl+c" {
 			return model, nil
 		}
-		if model.form != nil {
+		if model.checklistConfirm() {
+			switch value.String() {
+			case "enter", "left", "right", "esc", "ctrl+c":
+			default:
+				return model, nil
+			}
+		} else if model.form != nil {
 			model.scroll.reveal = true
 			switch value.String() {
 			case "enter", "tab", "shift+tab":
@@ -737,7 +755,7 @@ func (model *richRootModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				model.scroll.following = true
 			case "esc":
 				model.scroll.following = true
-				if model.track.cancelArmed {
+				if model.checklist != nil || model.track.cancelArmed {
 					model.track.requestCancellation()
 				} else {
 					model.track.cancelArmed = true
@@ -929,6 +947,8 @@ func consoleStateLabel(state PhaseState) (string, string) {
 		return "⊘", "CANCELLED"
 	case PhaseFailed:
 		return "✕", "FAILED"
+	case PhaseSkipped:
+		return "—", "SKIPPED"
 	default:
 		return "○", "PENDING"
 	}
@@ -969,10 +989,11 @@ func lineCount(value string) int {
 func (model *richRootModel) clearTrack() {
 	model.track = nil
 	model.trackRetainsForm = false
+	model.checklist = nil
 }
 
 func (model *richRootModel) clearForm() tea.Cmd {
-	model.scroll.following = true
+	model.scroll.following = model.checklist == nil
 	model.scroll.unread = 0
 	if model.track != nil && model.trackRetainsForm {
 		model.mode = richTrackMode
@@ -980,6 +1001,9 @@ func (model *richRootModel) clearForm() tea.Cmd {
 		model.form = nil
 		model.answer = nil
 		model.response = nil
+		if model.checklist != nil {
+			return nil
+		}
 		return model.startPulse()
 	}
 	model.mode = richNoticeMode
@@ -1041,6 +1065,7 @@ type richStartTrackMsg struct {
 	phases            []OperationPhase
 	requestCancel     func() error
 	retainFormCatalog bool
+	checklist         *WorkChecklistLabels
 	ack               chan struct{}
 }
 

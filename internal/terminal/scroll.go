@@ -105,6 +105,9 @@ func (model *richRootModel) scrollHelp() string {
 }
 
 func (model *richRootModel) scrollFooter() string {
+	if model.checklist != nil {
+		return model.checklistFooter()
+	}
 	v := &model.scroll.viewport
 	toggle := "ctrl+g copy"
 	if model.mouseDisabled {
@@ -158,7 +161,15 @@ func (model *richRootModel) prepareScroll() {
 		model.scroll.viewport.SetYOffset(model.scroll.viewport.YOffset())
 	}
 	model.scroll.focus = -1
-	if model.form != nil {
+	if model.checklist != nil {
+		id := "work-" + checklistFocus(model.track.phases)
+		for index, anchor := range model.scroll.anchors {
+			if anchor.block == id {
+				model.scroll.focus = index
+				break
+			}
+		}
+	} else if model.form != nil {
 		focus := 0
 		if form, ok := model.form.(*richHuhForm); ok {
 			focus = form.focusLine()
@@ -188,6 +199,9 @@ func (model *richRootModel) prepareScroll() {
 }
 
 func (model *richRootModel) scrollBlocks(width int) []scrollBlock {
+	if model.checklist != nil {
+		return model.checklistBlocks()
+	}
 	styles := richStyles(model.color)
 	var blocks []scrollBlock
 	// Keep the full command target accessible when the fixed header abbreviates it.
@@ -277,7 +291,7 @@ func (model *richRootModel) handleScroll(message tea.Msg) bool {
 		}
 	case tea.KeyPressMsg:
 		key := value.String()
-		if model.form != nil {
+		if model.form != nil && !model.checklistConfirm() {
 			// These bindings do not conflict with text editing or list selection.
 			switch key {
 			case "alt+up":
@@ -308,7 +322,7 @@ func (model *richRootModel) handleScroll(message tea.Msg) bool {
 		if model.track != nil {
 			model.track.cancelArmed = false
 		}
-		model.scroll.following = model.form == nil && v.AtBottom()
+		model.scroll.following = model.checklist == nil && model.form == nil && v.AtBottom()
 		if model.scroll.following {
 			model.scroll.unread = 0
 		}

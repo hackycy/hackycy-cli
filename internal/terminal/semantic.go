@@ -159,6 +159,8 @@ type PresentationDocument struct {
 type PhaseDefinition struct {
 	ID   string
 	Name string
+	// Skipped starts the phase in a terminal state without reporting an attempt.
+	Skipped bool
 }
 
 // Phase is a compatibility alias for callers that use the shorter catalog name.
@@ -173,6 +175,7 @@ const (
 	PhaseCompleted
 	PhaseCancelled
 	PhaseFailed
+	PhaseSkipped
 )
 
 func (state PhaseState) String() string {
@@ -187,6 +190,8 @@ func (state PhaseState) String() string {
 		return "cancelled"
 	case PhaseFailed:
 		return "failed"
+	case PhaseSkipped:
+		return "skipped"
 	default:
 		return "unknown"
 	}
@@ -223,6 +228,14 @@ type WorkCatalog struct {
 	Label         string
 	Phases        []PhaseDefinition
 	RequestCancel func()
+	Checklist     *WorkChecklistLabels
+}
+
+// WorkChecklistLabels opts into a full, scrollable phase list that remains
+// visible during confirmation. Empty labels use the default work terminology.
+type WorkChecklistLabels struct {
+	Active, Completed, Skipped string
+	Confirm, Decline           string
 }
 
 // WorkSession accepts serialized updates for one previously declared Work

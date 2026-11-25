@@ -50,3 +50,24 @@ func TestPhaseProtocolRejectsConflictingUpdateIDs(t *testing.T) {
 		t.Fatalf("PhaseID-only update = (%#v, %v), want canonical phase", phase, err)
 	}
 }
+
+func TestPhaseProtocolSkippedPhaseIsNeverAttempted(t *testing.T) {
+	protocol, err := newPhaseProtocol(TrackedOperation{Phases: []PhaseDefinition{
+		{ID: "skip", Name: "Skip", Skipped: true}, {ID: "work", Name: "Work"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if phase := protocol.snapshot()[0]; phase.State != PhaseSkipped || phase.State.String() != "skipped" {
+		t.Fatalf("skipped phase = %+v", phase)
+	}
+	if _, err := protocol.apply(OperationPhase{ID: "skip", State: PhaseActive}); !errors.Is(err, ErrInvalidPhaseProtocol) {
+		t.Fatalf("activating a skipped phase = %v", err)
+	}
+	if _, err := protocol.apply(OperationPhase{ID: "work", State: PhaseActive}); err != nil {
+		t.Fatal(err)
+	}
+	if reached := protocol.finalSnapshot(); len(reached) != 1 || reached[0].ID != "work" {
+		t.Fatalf("reached phases = %+v", reached)
+	}
+}

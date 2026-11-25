@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type focusStep struct {
@@ -46,6 +47,9 @@ func (model *richRootModel) focusBodyTop() int {
 func (model *richRootModel) focusTrail(width int) string {
 	if model.mode == richOutcomeMode {
 		return ""
+	}
+	if model.checklist != nil {
+		return ansi.Wrap(model.checklist.summary(model.track.phases), width, "")
 	}
 	rows := make([]focusStep, 0, len(model.formRows))
 	for _, step := range model.formRows {

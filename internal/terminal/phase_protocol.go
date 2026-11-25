@@ -46,7 +46,11 @@ func newPhaseProtocol(operation TrackedOperation) (*phaseProtocol, error) {
 			return nil, phaseProtocolError("phase ID %q is duplicated", definition.ID)
 		}
 		protocol.index[definition.ID] = index
-		protocol.phases[index] = OperationPhase{ID: definition.ID, Name: definition.Name, State: PhasePending}
+		state := PhasePending
+		if definition.Skipped {
+			state = PhaseSkipped
+		}
+		protocol.phases[index] = OperationPhase{ID: definition.ID, Name: definition.Name, State: state}
 	}
 	return protocol, nil
 }
@@ -128,7 +132,7 @@ func (protocol *phaseProtocol) snapshot() []OperationPhase {
 
 func validPhaseState(state PhaseState) bool {
 	switch state {
-	case PhasePending, PhaseActive, PhaseCompleted, PhaseCancelled, PhaseFailed:
+	case PhasePending, PhaseActive, PhaseCompleted, PhaseCancelled, PhaseFailed, PhaseSkipped:
 		return true
 	default:
 		return false
@@ -150,7 +154,7 @@ func validPhaseTransition(current, next PhaseState) bool {
 }
 
 func isTerminalPhaseState(state PhaseState) bool {
-	return state == PhaseCompleted || state == PhaseCancelled || state == PhaseFailed
+	return state == PhaseCompleted || state == PhaseCancelled || state == PhaseFailed || state == PhaseSkipped
 }
 
 func phaseProtocolError(format string, arguments ...any) error {

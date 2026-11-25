@@ -10,8 +10,6 @@ import (
 	"github.com/hackycy/hackycy-cli/internal/terminal"
 )
 
-const continueStep = "continue-opening"
-
 func runPackageSettings(options *Options) error {
 	directory, err := options.WorkingDirectory()
 	if err != nil {
@@ -22,7 +20,10 @@ func runPackageSettings(options *Options) error {
 		return err
 	}
 	if len(names) > 0 && !options.Batch && options.Terminal.Capabilities().Interaction == terminal.Automation {
-		return errors.New("opening package settings one at a time requires an interactive terminal; use --batch to open all listed packages")
+		return errors.New("selecting npm packages requires an interactive terminal; use --batch to open all listed packages")
+	}
+	if len(names) > 0 && !options.Batch {
+		return openInteractively(options, names)
 	}
 	if err := terminal.WritePlain(options.Output, packageList(names)); err != nil {
 		return fmt.Errorf("write package list: %w", err)
@@ -30,13 +31,7 @@ func runPackageSettings(options *Options) error {
 	if len(names) == 0 {
 		return nil
 	}
-	if options.Batch {
-		return openBatch(options, names)
-	}
-	if err := openPackage(options, names[0]); err != nil || len(names) == 1 {
-		return err
-	}
-	return openRemaining(options, names)
+	return openBatch(options, names)
 }
 
 func packageList(names []string) terminal.PresentationDocument {
@@ -71,58 +66,6 @@ func openBatch(options *Options, names []string) error {
 	document := terminal.PresentationDocument{Blocks: failures}
 	reportErr := terminal.WritePlain(options.Terminal.DiagnosticWriter(), document)
 	return errors.Join(fmt.Errorf("failed to open %d npm package settings page(s)", len(failures)), reportErr, options.Context.Err())
-}
-
-func openRemaining(options *Options, names []string) (runErr error) {
-	run, err := options.Terminal.OpenConsole(options.Context, terminal.ConsoleDescriptor{
-		Command: "ycy npm open package-settings",
-		FormCatalog: []terminal.ConsoleFormStep{
-			{ID: continueStep, Name: "Open the next package"},
-		},
-	})
-	if err != nil {
-		return err
-	}
-	outcome := terminal.Succeeded
-	defer func() {
-		if options.Context.Err() != nil {
-			outcome = terminal.Cancelled
-		} else if runErr != nil {
-			outcome = terminal.Failed
-		}
-		runErr = errors.Join(runErr, run.Finish(terminal.FinishRequest{Outcome: outcome}), run.Close())
-	}()
-
-	for index, name := range names[1:] {
-		if err := options.Context.Err(); err != nil {
-			return err
-		}
-		message := fmt.Sprintf("Open settings for %s?", name)
-		answer, err := run.Ask(terminal.InteractionRequest{
-			Kind:            terminal.InteractionConfirm,
-			Message:         message,
-			Description:     fmt.Sprintf("[%d/%d] Requested settings for %s", index+1, len(names), names[index]),
-			PlainPrompt:     message + " [Y/n, Enter to continue]: ",
-			HasDefault:      true,
-			Default:         terminal.InteractionAnswer{Confirmed: true},
-			ConsoleStepID:   continueStep,
-			TranscriptLabel: "Open next package",
-		})
-		if err := options.Context.Err(); err != nil {
-			return err
-		}
-		if errors.Is(err, terminal.ErrInteractionCancelled) || (err == nil && !answer.Confirmed) {
-			outcome = terminal.Cancelled
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if err := openPackage(options, name); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func openPackage(options *Options, name string) error {

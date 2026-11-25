@@ -13,6 +13,7 @@ import (
 type runtimeWorkSession struct {
 	run           *runtimeRun
 	protocol      *phaseProtocol
+	checklist     *WorkChecklistLabels
 	requestCancel func() error
 	done          chan struct{}
 	closed        bool
@@ -52,10 +53,14 @@ func (run *runtimeRun) StartWork(catalog WorkCatalog) (WorkSession, error) {
 		done:          make(chan struct{}),
 		transcripted:  make(map[string]bool, len(catalog.Phases)),
 	}
+	if catalog.Checklist != nil {
+		labels := catalog.Checklist.normalized()
+		session.checklist = &labels
+	}
 	if run.richEnabled() {
 		controller, err := run.ensureRich()
 		if err == nil {
-			err = controller.startWork(catalog.Label, protocol.snapshot(), session.requestCancel)
+			err = controller.startWork(catalog.Label, protocol.snapshot(), session.requestCancel, session.checklist)
 			if err != nil && controller.stopped() {
 				err = run.recoverRichFailure(err)
 			}
@@ -119,6 +124,9 @@ func (session *runtimeWorkSession) present(phase OperationPhase) error {
 	}
 	if run.runtime.capabilities.Interaction == Automation {
 		return nil
+	}
+	if session.checklist != nil {
+		return run.writeDiagnostic(PresentationDocument{Blocks: []PresentationBlock{session.checklist.row(phase, false)}})
 	}
 	return run.presentPhase(run.runtime.diagnostics, phase)
 }

@@ -49,34 +49,43 @@ func TestPackageSettingsOpeningSequence(t *testing.T) {
 		"https://www.npmjs.com/package/gamma/access",
 	}
 	for _, test := range []struct {
-		name      string
-		input     string
-		mode      terminal.InteractionMode
-		batch     bool
-		fail      bool
-		wantOpen  int
-		wantAsk   int
-		wantError string
+		name, input string
+		batch, fail bool
+		wantOpen    []int
+		wantResult  []string
+		wantError   string
 	}{
-		{name: "continue by default", input: "\n\n", mode: terminal.PlainInteractive, wantOpen: 3, wantAsk: 2},
-		{name: "stop", input: "n\n", mode: terminal.PlainInteractive, wantOpen: 1, wantAsk: 1},
-		{name: "dismiss", mode: terminal.PlainInteractive, wantOpen: 1, wantAsk: 1},
-		{name: "interactive failure", input: "y\n\n", mode: terminal.PlainInteractive, fail: true, wantOpen: 2, wantAsk: 1, wantError: addresses[1]},
-		{name: "noninteractive", mode: terminal.Automation, wantError: "use --batch"},
-		{name: "batch", mode: terminal.Automation, batch: true, wantOpen: 3},
-		{name: "batch failures", mode: terminal.Automation, batch: true, fail: true, wantOpen: 3, wantError: "failed to open 2"},
+		{name: "confirm requires a second enter", input: "\n", wantResult: []string{"Pending 3"}},
+		{name: "continue by default", input: "\n\n\n\n", wantOpen: []int{0, 1, 2}, wantResult: []string{"Opened 3"}},
+		{name: "subset in catalog order", input: "3,1,3\n\n\n", wantOpen: []int{0, 2}, wantResult: []string{"Opened 2", "Not selected 1", "Not selected  beta"}},
+		{name: "stop after one", input: "\n\nn\n", wantOpen: []int{0}, wantResult: []string{"Opened 1", "Pending 2"}},
+		{name: "cancel selection", input: "q\n", wantResult: []string{"Pending 3"}},
+		{name: "empty selection", input: "none\n\n", wantResult: []string{"Not selected 3"}},
+		{name: "invalid input reprompts", input: "4\n2\n\n", wantOpen: []int{1}, wantResult: []string{"Opened 1", "Not selected 2"}},
+		{name: "failure still permits next", input: "\n\n\n\n", fail: true, wantOpen: []int{0, 1, 2}, wantResult: []string{"Opened 2", "Failed 1"}, wantError: "failed to open 1"},
+		{name: "batch", batch: true, wantOpen: []int{0, 1, 2}},
+		{name: "batch failures", batch: true, fail: true, wantOpen: []int{0, 1, 2}, wantError: "failed to open 1"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var out, diagnostics bytes.Buffer
-			options := testOptions(t, workspace, test.mode, test.input, &out, &diagnostics)
+			mode := terminal.PlainInteractive
+			if test.batch {
+				mode = terminal.Automation
+			}
+			options := testOptions(t, workspace, mode, test.input, &out, &diagnostics)
 			options.Batch = test.batch
+			const batchList = "Found 3 npm packages:\n  @example/a\n  beta\n  gamma\n"
 			var requests []string
 			options.OpenURL = func(_ context.Context, address string) error {
-				if got, want := out.String(), "Found 3 npm packages:\n  @example/a\n  beta\n  gamma\n"; got != want {
+				want := ""
+				if test.batch {
+					want = batchList
+				}
+				if got := out.String(); got != want {
 					t.Fatalf("stdout at open = %q, want %q", got, want)
 				}
 				requests = append(requests, address)
-				if test.fail && address != addresses[0] {
+				if test.fail && address == addresses[1] {
 					return errors.New("launcher failed")
 				}
 				return nil
@@ -85,18 +94,23 @@ func TestPackageSettingsOpeningSequence(t *testing.T) {
 			if test.wantError == "" && err != nil || test.wantError != "" && (err == nil || !strings.Contains(err.Error(), test.wantError)) {
 				t.Fatalf("runPackageSettings() error = %v, want %q", err, test.wantError)
 			}
-			if !slices.Equal(requests, addresses[:test.wantOpen]) {
-				t.Errorf("opener requests = %v, want %v", requests, addresses[:test.wantOpen])
+			var want []string
+			for _, index := range test.wantOpen {
+				want = append(want, addresses[index])
 			}
-			if got := strings.Count(diagnostics.String(), "Enter to continue"); got != test.wantAsk {
-				t.Errorf("got %d prompts, want %d: %q", got, test.wantAsk, diagnostics.String())
+			if !slices.Equal(requests, want) {
+				t.Errorf("opener requests = %v, want %v", requests, want)
 			}
-			if test.batch && test.fail {
-				for _, address := range addresses[1:] {
-					if !strings.Contains(diagnostics.String(), address) {
-						t.Errorf("batch failures are missing %q: %s", address, diagnostics.String())
-					}
+			if test.batch && out.String() != batchList {
+				t.Errorf("batch output = %q", out.String())
+			}
+			for _, status := range test.wantResult {
+				if !strings.Contains(out.String(), status) {
+					t.Errorf("result missing %q: %s", status, out.String())
 				}
+			}
+			if test.fail && !strings.Contains(diagnostics.String(), addresses[1]) {
+				t.Errorf("failure reason missing from stderr: %s", diagnostics.String())
 			}
 		})
 	}
@@ -106,10 +120,12 @@ func TestPackageSettingsSingleEmptyAndInvalid(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		content string
+		input   string
 		error   bool
 		opens   int
 	}{
-		{name: "single", content: `{"name":"example"}`, opens: 1},
+		{name: "single", content: `{"name":"example"}`, input: "\n\n", opens: 1},
+		{name: "single confirmation only", content: `{"name":"example"}`, input: "\n"},
 		{name: "empty", content: `{"name":"example","private":true}`},
 		{name: "invalid", content: `{`, error: true},
 	} {
@@ -117,11 +133,11 @@ func TestPackageSettingsSingleEmptyAndInvalid(t *testing.T) {
 			root := t.TempDir()
 			writeFixture(t, root, "package.json", test.content)
 			var out, diagnostics bytes.Buffer
-			options := testOptions(t, root, terminal.PlainInteractive, "", &out, &diagnostics)
+			options := testOptions(t, root, terminal.PlainInteractive, test.input, &out, &diagnostics)
 			var opens int
 			options.OpenURL = func(context.Context, string) error { opens++; return nil }
 			err := runPackageSettings(options)
-			if (err != nil) != test.error || opens != test.opens || diagnostics.Len() != 0 {
+			if (err != nil) != test.error || opens != test.opens || (test.input == "" && diagnostics.Len() != 0) {
 				t.Fatalf("runPackageSettings() = %v, %d opens, diagnostics %q", err, opens, diagnostics.String())
 			}
 			if test.name == "empty" && out.String() != "No npm packages to open.\n" {
@@ -178,5 +194,28 @@ func testOptions(t *testing.T, directory string, mode terminal.InteractionMode, 
 			Capabilities: terminal.Capabilities{Interaction: mode},
 			Input:        strings.NewReader(input), Output: output, Diagnostics: diagnostics,
 		}),
+	}
+}
+
+func TestPackageSettingsKeepsPendingRowsWhenLaunchIsInterrupted(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "package.json", `{"name":"first","workspaces":["second"]}`)
+	writeFixture(t, root, "second/package.json", `{"name":"second"}`)
+	var out, diagnostics bytes.Buffer
+	options := testOptions(t, root, terminal.PlainInteractive, "\n\n\n", &out, &diagnostics)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	options.Context = ctx
+	var requests []string
+	options.OpenURL = func(ctx context.Context, address string) error {
+		requests = append(requests, address)
+		cancel()
+		return ctx.Err()
+	}
+	if err := runPackageSettings(options); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted launch = %v, want context cancellation", err)
+	}
+	if !slices.Equal(requests, []string{settingsURL("first")}) || !strings.Contains(out.String(), "Opened 0 · Pending 2 · Failed 0") {
+		t.Fatalf("interrupted launch requested %v, result %q", requests, out.String())
 	}
 }

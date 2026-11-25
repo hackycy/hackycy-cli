@@ -211,6 +211,11 @@ func (run *runtimeRun) Ask(request InteractionRequest) (InteractionAnswer, error
 		}
 		run.disableRich()
 	}
+	if run.work != nil && run.work.checklist != nil && request.Kind == InteractionConfirm && run.runtime.capabilities.Interaction != Automation {
+		if err := run.writeDiagnostic(run.work.checklist.document(run.work.protocol.phases)); err != nil {
+			return InteractionAnswer{}, err
+		}
+	}
 	answer, askErr := run.interactions.Ask(run.ctx, request)
 	run.recordInteraction(request, answer, askErr)
 	return answer, askErr

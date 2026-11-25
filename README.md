@@ -45,7 +45,7 @@ Commands:
   help [command]               display help for command
 ```
 
-在单包项目或 monorepo 中运行 `ycy npm open package-settings`，可逐个打开 npm 包的设置页。加 `--batch` 一次打开清单中的所有页面。
+在单包项目或 monorepo 中运行 `ycy npm open package-settings`，先从默认全选的清单中勾选要打开的包（`↑/↓` 移动、`Space` 切换，`Enter` 确认）。确认后按 `Enter` 逐个打开设置页，清单会显示打开、未打开、失败和未勾选的包；按 `Esc` 可提前结束。普通终端用编号选择（回车全选，`none` 清空），随后每次回车打开下一项，输入 `n` 停止。加 `--batch` 可无提示打开清单中的所有页面，也适用于非交互环境。
 
 ## License
 
