@@ -34,6 +34,7 @@ Commands:
   export                       Export utilities
   config                        Manage ycy configuration
   git                          Git utilities
+  npm                          npm utilities
   rm [options] [paths...]      Remove files/dirs, or smartly clean project artifacts when no path given
   fs [options] [directory]     Browse files in a directory (defaults to current directory)
   diff [options] <baseline-directory> <target-directory>
@@ -43,6 +44,8 @@ Commands:
   upgrade                      Upgrade cli to the latest version
   help [command]               display help for command
 ```
+
+在单包项目或 monorepo 中运行 `ycy npm open package-settings`，可逐个打开 npm 包的设置页。加 `--batch` 一次打开清单中的所有页面。
 
 ## License
 

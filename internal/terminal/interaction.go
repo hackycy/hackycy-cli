@@ -35,6 +35,7 @@ type InteractionHandler struct {
 	capabilities Capabilities
 	input        io.Reader
 	lines        *bufio.Reader
+	lineInput    *plainLineReader
 	diagnostics  io.Writer
 }
 
@@ -48,10 +49,12 @@ func NewInteractionHandler(options InteractionOptions) *InteractionHandler {
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
+	lineInput := &plainLineReader{input: input}
 	return &InteractionHandler{
 		capabilities: options.Capabilities,
 		input:        input,
-		lines:        bufio.NewReader(input),
+		lines:        bufio.NewReader(lineInput),
+		lineInput:    lineInput,
 		diagnostics:  diagnostics,
 	}
 }
@@ -347,6 +350,8 @@ func (handler *InteractionHandler) readPlainSecret(ctx context.Context, request 
 }
 
 func (handler *InteractionHandler) readPlainLine(ctx context.Context) (string, error) {
+	handler.lineInput.ctx = ctx
+	defer func() { handler.lineInput.ctx = nil }()
 	line, err := handler.lines.ReadString('\n')
 	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
 	if err != nil && line == "" {

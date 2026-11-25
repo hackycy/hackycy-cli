@@ -1,0 +1,12 @@
+ycy npm
+npm utilities
+Usage:
+  ycy npm [flags]
+Commands:
+  open	Open pages on the npm website
+Flags:
+  -h, --help	help for npm
+  --log-format	Diagnostic format: text or json
+  --log-level	Log level: debug, info, warn, or error
+  --quiet	Only emit error diagnostics (short form: -q)
+  -v, --verbose	Enable debug diagnostics

@@ -66,7 +66,7 @@ check-locks: ensure-web-deps
 check: check-locks check-go
 
 check-terminal:
-	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 $(GO) test -count=1 ./internal/terminal ./internal/terminaltest ./pkg/cmd/root ./pkg/cmd/export/env ./pkg/cmd/config/fork/... ./pkg/cmd/config/cm/... ./pkg/cmd/git/... ./pkg/cmd/diff ./pkg/cmd/fs ./pkg/cmd/rm ./pkg/cmd/tunnel/... ./pkg/cmd/upgrade ./pkg/cmd/zip
+	@GOTOOLCHAIN=$(GO_TOOLCHAIN) GOWORK=off CGO_ENABLED=0 $(GO) test -count=1 ./internal/terminal ./internal/terminaltest ./pkg/cmd/root ./pkg/cmd/export/env ./pkg/cmd/config/fork/... ./pkg/cmd/config/cm/... ./pkg/cmd/git/... ./pkg/cmd/npm/... ./pkg/cmd/diff ./pkg/cmd/fs ./pkg/cmd/rm ./pkg/cmd/tunnel/... ./pkg/cmd/upgrade ./pkg/cmd/zip
 
 acceptance:
 	@GOTOOLCHAIN=go1.26.7 GOWORK=off CGO_ENABLED=0 go test -count=1 -tags=acceptance ./acceptance/...

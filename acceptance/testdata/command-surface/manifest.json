@@ -1653,6 +1653,145 @@
       ]
     },
     {
+      "path": "ycy npm",
+      "use": "npm",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy npm open",
+      "use": "open",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
+      "path": "ycy npm open package-settings",
+      "use": "package-settings",
+      "aliases": [],
+      "hidden": false,
+      "deprecated": "",
+      "flags": [
+        {
+          "name": "batch",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "help",
+          "shorthand": "h",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "local"
+        },
+        {
+          "name": "log-format",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "log-level",
+          "type": "string",
+          "default": "",
+          "scope": "inherited"
+        },
+        {
+          "name": "quiet",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        },
+        {
+          "name": "verbose",
+          "shorthand": "v",
+          "type": "bool",
+          "default": "false",
+          "noOptDefault": "true",
+          "scope": "inherited"
+        }
+      ]
+    },
+    {
       "path": "ycy rm",
       "use": "rm [paths...]",
       "aliases": [],

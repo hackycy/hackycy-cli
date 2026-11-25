@@ -9,6 +9,7 @@ Commands:
   export	Export command output
   fs	Browse a directory in a browser
   git	Git utilities
+  npm	npm utilities
   rm	Remove files/dirs, or smartly clean project artifacts when no path given
   tunnel	Manage trusted tunnel clients and tunnel definitions
   upgrade	Update ycy to the latest release
